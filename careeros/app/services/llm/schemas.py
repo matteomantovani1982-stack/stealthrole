@@ -185,10 +185,59 @@ class NetworkingStrategy(BaseModel):
     seven_day_action_plan: list[str] = Field(default_factory=list)
 
 
+class InterviewStage(BaseModel):
+    """A single stage in the expected interview process."""
+    stage: str = ""
+    format: str = ""
+    who: str = ""
+    duration: str = ""
+    what_to_expect: str = ""
+
+
+class BehaviouralQuestion(BaseModel):
+    question: str = ""
+    why_they_ask: str = ""
+    your_story: str = ""
+    key_points: list[str] = Field(default_factory=list)
+
+
+class BusinessCaseQuestion(BaseModel):
+    question: str = ""
+    case_type: str = ""
+    how_to_frame: str = ""
+    watch_out: str = ""
+
+
+class SituationalQuestion(BaseModel):
+    question: str = ""
+    what_they_want: str = ""
+    suggested_answer_angle: str = ""
+
+
+class CultureQuestion(BaseModel):
+    question: str = ""
+    ideal_answer_angle: str = ""
+
+
+class QuestionBank(BaseModel):
+    behavioural: list[BehaviouralQuestion] = Field(default_factory=list)
+    business_case: list[BusinessCaseQuestion] = Field(default_factory=list)
+    situational: list[SituationalQuestion] = Field(default_factory=list)
+    culture_and_motivation: list[CultureQuestion] = Field(default_factory=list)
+
+
+class QuestionToAsk(BaseModel):
+    question: str = ""
+    why_powerful: str = ""
+
+
 class ApplicationStrategy(BaseModel):
     """Tactical application advice for this specific role."""
     positioning_headline: str = ""
     cover_letter_angle: str = ""
+    interview_process: list[InterviewStage] = Field(default_factory=list)
+    question_bank: QuestionBank = Field(default_factory=QuestionBank)
+    questions_to_ask_them: list[QuestionToAsk] = Field(default_factory=list)
     interview_prep_themes: list[str] = Field(default_factory=list)
     thirty_sixty_ninety: dict[str, str] = Field(
         default_factory=dict,

@@ -10,7 +10,7 @@ NC='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND="$SCRIPT_DIR/careeros"
 FRONTEND="$SCRIPT_DIR/cvlab-frontend"
-COMPOSE="docker compose -f $BACKEND/docker/docker-compose.yml"
+COMPOSE_FILE="$BACKEND/docker/docker-compose.yml"
 
 echo ""
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -56,7 +56,7 @@ echo -e "${GREEN}✓ API keys found${NC}"
 
 # ── 4. Clean slate — stop old containers + wipe volumes ───
 echo -e "${YELLOW}[3/5] Resetting Docker state (ensures clean DB)...${NC}"
-$COMPOSE down -v --remove-orphans 2>/dev/null || true
+docker compose -f "$COMPOSE_FILE" down -v --remove-orphans 2>/dev/null || true
 echo -e "${GREEN}✓ Clean slate ready${NC}"
 
 # ── 5. Build + start ──────────────────────────────────────
@@ -65,7 +65,7 @@ echo -e "${YELLOW}[4/5] Building and starting backend...${NC}"
 echo "  First time: ~5 min. Subsequent runs: ~20 sec."
 echo ""
 cd "$BACKEND"
-$COMPOSE up --build -d
+docker compose -f "$COMPOSE_FILE" up --build -d
 
 # ── 6. Wait for API ───────────────────────────────────────
 echo ""
@@ -87,7 +87,7 @@ done
 if [ $ELAPSED -ge $MAX_WAIT ]; then
   echo ""
   echo -e "${RED}✗ Backend didn't start in time. Last logs:${NC}"
-  $COMPOSE logs --tail=40 api
+  docker compose -f "$COMPOSE_FILE" logs --tail=40 api
   exit 1
 fi
 

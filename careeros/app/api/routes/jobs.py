@@ -193,7 +193,7 @@ async def update_pipeline_stage(
         raise HTTPException(status_code=400, detail=f"Invalid stage. Must be one of: {VALID_STAGES}")
 
     result = await db.execute(
-        select(JobRun).where(JobRun.id == run_id, JobRun.user_id == uuid.UUID(x_user_id))
+        select(JobRun).where(JobRun.id == run_id, JobRun.user_id == x_user_id)
     )
     job_run = result.scalar_one_or_none()
     if not job_run:

@@ -303,6 +303,11 @@ function StrengthsTab({ positioning }: { positioning: PositioningOutput | null |
                   <div className={s.angleTitle}>{a.title || a.angle}</div>
                   <div className={s.angleBody}>{a.explanation || a.why_it_matters_here}</div>
                   {a.how_to_play_it && <div className={s.angleBody} style={{marginTop:4,opacity:0.8}}>▶ {a.how_to_play_it}</div>}
+                  {a.evidence?.length > 0 && (
+                    <ul style={{margin:'6px 0 0 16px',fontSize:13,opacity:0.7}}>
+                      {a.evidence.map((e: string, j: number) => <li key={j}>{e}</li>)}
+                    </ul>
+                  )}
                 </div>
               </div>
             ))}
@@ -322,6 +327,23 @@ function StrengthsTab({ positioning }: { positioning: PositioningOutput | null |
                 <div>
                   <div className={s.gapText}>{g.gap}</div>
                   <div className={s.gapFix}>{g.mitigation}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {(positioning as any).red_flags_and_responses?.length > 0 && (
+        <>
+          <div className={s.tabSectionLabel} style={{ marginTop: 24 }}>Red flags interviewers will raise</div>
+          <div className={s.gapList}>
+            {(positioning as any).red_flags_and_responses.map((rf: any, i: number) => (
+              <div key={i} className={s.gapCard}>
+                <div className={[s.sevTag, s.sev_high].join(' ')}>Flag</div>
+                <div>
+                  <div className={s.gapText}>{rf.red_flag}</div>
+                  <div className={s.gapFix}>{rf.response}</div>
                 </div>
               </div>
             ))}

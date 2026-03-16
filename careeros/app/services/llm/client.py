@@ -196,6 +196,36 @@ _DEMO_REPORT_PACK = {
     "application": {
         "positioning_headline": "The operator who builds the machine, then runs it.",
         "cover_letter_angle": "Open with the Saudi expansion. Show you understand what they are trying to build and that you have done it before. Keep it to 3 paragraphs — founders do not read long letters.",
+        "interview_process": [
+            {"stage": "Recruiter Screen", "format": "video", "who": "Head of Talent", "duration": "30 min", "what_to_expect": "Culture fit, salary expectations, availability. They are screening for MENA experience and startup pace tolerance."},
+            {"stage": "Hiring Manager Deep Dive", "format": "video", "who": "CEO / Co-founder", "duration": "60 min", "what_to_expect": "Commercial strategy discussion. Expect to walk through a specific market entry plan. They want to see how you think, not just what you have done."},
+            {"stage": "Case Study", "format": "in-person", "who": "VP Product + VP Sales", "duration": "90 min", "what_to_expect": "Live case: design a GTM strategy for Saudi expansion with constraints. They are assessing commercial thinking and cross-functional collaboration."},
+            {"stage": "Founder / Board Interview", "format": "in-person", "who": "CEO + Board observer", "duration": "45 min", "what_to_expect": "Vision alignment and culture. They want to know you will stay and build, not just optimise and leave."}
+        ],
+        "question_bank": {
+            "behavioural": [
+                {"question": "Tell me about a time you entered a market where you had no existing relationships or infrastructure.", "why_they_ask": "Saudi expansion is their top priority — they need someone who has done cold market entry.", "your_story": "Use the GCC expansion at your previous role — 6 new markets, $12M ARR, 200+ clients in 18 months.", "key_points": ["How you identified the first 10 clients", "The local hiring strategy", "Revenue ramp timeline with specific numbers"]},
+                {"question": "Describe a situation where you had to rebuild an underperforming sales team.", "why_they_ask": "LinkedIn data shows high sales turnover — they likely have this problem now.", "your_story": "Use the team restructuring story — 45-person team, 95% retention after changes.", "key_points": ["How you diagnosed the problem", "The changes you made to comp structure", "Retention metrics before and after"]},
+                {"question": "Tell me about your biggest commercial failure and what you learned.", "why_they_ask": "Series B companies need leaders who can fail fast and course correct.", "your_story": "Use a real example — be honest about what went wrong and specific about the pivot.", "key_points": ["The decision that led to the failure", "How quickly you identified it", "The recovery and what changed"]}
+            ],
+            "business_case": [
+                {"question": "We want to hit $50M ARR in Saudi within 24 months. Walk us through your approach.", "case_type": "market entry + growth strategy", "how_to_frame": "Start with market sizing, then go-to-market channels, then unit economics. Show you think in systems, not just tactics.", "watch_out": "Do not present a generic playbook. Reference Saudi-specific challenges — regulatory, Saudization, enterprise procurement cycles."},
+                {"question": "Our enterprise sales cycle is 9 months. How would you cut it to 4?", "case_type": "operational problem", "how_to_frame": "Diagnose before prescribing. Ask about deal stages, where deals stall, and current team structure. Then propose 2-3 structural changes.", "watch_out": "Do not say 'just hire more SDRs'. They want strategic thinking about the pipeline architecture."}
+            ],
+            "situational": [
+                {"question": "You discover our top-performing AE is also the most toxic team member. What do you do?", "what_they_want": "Culture vs revenue trade-off — they want someone who protects culture even at revenue cost.", "suggested_answer_angle": "Lead with the principle that culture scales, individuals do not. Give a specific framework: document, coach, set a deadline, act."},
+                {"question": "The founders disagree with your commercial strategy. How do you handle it?", "what_they_want": "Can you influence without authority? Will you be a partner or just an executor?", "suggested_answer_angle": "Show you have navigated founder dynamics before. Use data to align, but respect that founders have context you do not."}
+            ],
+            "culture_and_motivation": [
+                {"question": "Why leave a big company for a Series B?", "ideal_answer_angle": "Frame it as going back to building — you have done the big company thing and want to create something from scratch again. Reference their specific mission."},
+                {"question": "What does success look like for you in 12 months?", "ideal_answer_angle": "Be specific to their context: Saudi office operational, X revenue milestone, team of Y hired and performing. Show you have already thought about this."}
+            ]
+        },
+        "questions_to_ask_them": [
+            {"question": "What does the current pipeline in Saudi look like, and what is the biggest bottleneck?", "why_powerful": "Shows you are already thinking about the problem. Forces them to reveal the real challenge."},
+            {"question": "How involved are the founders in enterprise deal cycles today?", "why_powerful": "Signals you understand founder-led sales dynamics and are thinking about the transition."},
+            {"question": "What happened with the last person in this role — or is this a new position?", "why_powerful": "Reveals whether this is a replacement (potential red flag) or growth (good sign). Shows you do diligence."}
+        ],
         "interview_prep_themes": ["90-day commercial plan", "Team building in a new market", "How you have handled underperforming salespeople", "Your view on PLG vs enterprise sales"],
         "thirty_sixty_ninety": {
             "30": "Listen, map the current commercial motion, identify the 3 biggest gaps, and earn trust with the team.",
@@ -301,6 +331,25 @@ def _build_demo_report_pack(user_prompt: str) -> dict:
         "application": {
             "positioning_headline": f"The right candidate for {role[:50]}",
             "cover_letter_angle": f"Open by referencing what drew you to {company} specifically. Show you understand their current priorities. Keep it to 3 paragraphs — decision makers do not read long letters.",
+            "interview_process": [
+                {"stage": "Recruiter Screen", "format": "video", "who": "HR / Talent team", "duration": "30 min", "what_to_expect": "Demo — real interview process mapping available with API credits."},
+                {"stage": "Hiring Manager Interview", "format": "video", "who": "Direct manager", "duration": "60 min", "what_to_expect": "Demo — add API credits for detailed stage-by-stage prep."},
+            ],
+            "question_bank": {
+                "behavioural": [
+                    {"question": "Tell me about a time you drove significant results under pressure.", "why_they_ask": "Demo — real questions tailored to this JD with API credits.", "your_story": "Demo — your specific stories will be mapped to questions in production.", "key_points": ["Add API credits for personalised coaching"]}
+                ],
+                "business_case": [
+                    {"question": f"How would you approach the key challenge facing {company}?", "case_type": "strategic", "how_to_frame": "Demo — real case prep available with API credits.", "watch_out": "Demo mode."}
+                ],
+                "situational": [],
+                "culture_and_motivation": [
+                    {"question": f"Why {company}? Why now?", "ideal_answer_angle": "Demo — personalised answer angles available with API credits."}
+                ]
+            },
+            "questions_to_ask_them": [
+                {"question": "What does success look like in the first 6 months?", "why_powerful": "Demo — real strategic questions tailored to this role with API credits."}
+            ],
             "interview_prep_themes": [
                 "Your experience relevant to this role",
                 "Why this company at this stage",

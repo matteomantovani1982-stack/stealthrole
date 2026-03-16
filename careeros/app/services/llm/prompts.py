@@ -415,10 +415,21 @@ TASK:
 Produce a comprehensive Application Intelligence Pack for this specific
 candidate applying to this specific role.
 
-Be specific, not generic. Every insight should be actionable.
-Named contacts in the research data are REAL people — use them in the networking section.
-Salary figures should be in AED for UAE roles (or local currency for other regions).
-Outreach messages should be ≤300 characters, ready to copy-paste into LinkedIn.
+QUALITY BAR — this is what makes this product worth paying for:
+- Be SPECIFIC, not generic. Every insight must reference THIS company, THIS role, THIS candidate.
+- "Strong leadership skills" is worthless. "Your Baly zero-to-scale story directly addresses their need for someone who has built operating models at pace" is valuable.
+- Company intel must go BEYOND what's on the careers page. Infer strategic priorities from funding, hiring patterns, news, and JD language.
+- Red flags should be things a candidate would never find on their own — leadership turnover, glassdoor patterns, reorg signals.
+- Interview questions must be realistic for THIS specific role and company, not generic competency questions.
+- For each behavioural question: map it to a SPECIFIC story from the candidate's background. Tell them exactly which experience to use and what metrics to mention.
+- Business case questions should reflect the actual strategic challenges this company faces based on the research data.
+- Contacts must include real names from the research data with personalised outreach messages.
+- Outreach messages must be ≤300 characters, ready to copy-paste into LinkedIn.
+- Salary figures should be in AED for UAE roles (or local currency for other regions).
+- The 30/60/90 plan should be specific to THIS company's situation, not a template.
+
+The value of this pack is that it gives the candidate intelligence they could never assemble on their own
+without spending days going site by site. Make every field count.
 
 Return ONLY the JSON intelligence pack.
 """.strip()

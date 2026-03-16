@@ -115,10 +115,18 @@ export interface JobRunSummary {
 export interface PositioningOutput {
   positioning_headline: string
   narrative_thread: string
-  strongest_angles: Array<{ title: string; explanation: string }>
+  strongest_angles: Array<{
+    angle: string
+    title?: string
+    why_it_matters_here: string
+    explanation?: string
+    how_to_play_it: string
+    evidence: string[]
+  }>
   gaps_to_address: Array<{ gap: string; severity: 'low' | 'medium' | 'high'; mitigation: string }>
   interview_themes: string[]
-  red_flags_to_preempt: string[]
+  red_flags_and_responses: Array<{ red_flag: string; response: string }>
+  cover_letter_angle: string
 }
 
 export interface NamedContact {

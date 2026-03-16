@@ -285,7 +285,14 @@ def build_positioning_strategy_prompt(
 {jd_text[:6000]}
 
 Based on the candidate's FULL story above (not just their CV), produce the Positioning Strategy JSON.
-Remember: 3 strongest angles, ordered by impact. Be specific — reference their actual experiences.
+
+QUALITY BAR:
+- 3 strongest angles, ordered by impact. Each must reference SPECIFIC experiences by name with real outcomes.
+- Gaps must be honest. If a gap is serious, say so — and give a real mitigation strategy (reframe, bridge experience, or acknowledge + redirect), not false reassurance.
+- The narrative thread should be a compelling one-paragraph story arc that makes their entire career make sense for THIS role.
+- Red flags must be things a hiring manager would actually think when reviewing this candidate — then give them the exact words to neutralise it.
+- Evidence lists should cite specific metrics, company names, and outcomes from their profile.
+- This is the intelligence a $500/hour career strategist would give. Generic advice is worthless.
 """.strip()
 
     return POSITIONING_SYSTEM_PROMPT, user_prompt
