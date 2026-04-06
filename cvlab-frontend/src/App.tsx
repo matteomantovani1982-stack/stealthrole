@@ -12,6 +12,8 @@ import Home from './pages/Home'
 import Applications from './pages/Applications'
 import NewApplication from './pages/NewApplication'
 import IntelPack from './pages/IntelPack'
+import Outreach from './pages/Outreach'
+import ShadowPack from './pages/ShadowPack'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import './styles/globals.css'
@@ -57,6 +59,8 @@ export default function App() {
             <Route path="applications" element={<Applications />} />
             <Route path="applications/new" element={<NewApplication />} />
             <Route path="applications/:runId" element={<IntelPack />} />
+            <Route path="outreach" element={<Outreach />} />
+            <Route path="shadow/:shadowId" element={<ShadowPack />} />
             {/* Profile / billing stubs */}
             <Route path="profile"  element={<Profile />} />
             <Route path="billing"  element={<Billing />} />

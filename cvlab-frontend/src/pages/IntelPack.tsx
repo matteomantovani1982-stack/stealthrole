@@ -34,6 +34,9 @@ export default function IntelPack() {
     refetchInterval: (query) => {
       const data = query.state.data
       if (!data) return 3000
+      // Keep polling while detail phase is still loading (even after COMPLETED)
+      const detailPhase = (data.reports as any)?.__detail_phase
+      if (TERMINAL.includes(data.status) && detailPhase === 'quick') return 5000
       return TERMINAL.includes(data.status) ? false : 3000
     },
     enabled: !!runId,
@@ -72,6 +75,8 @@ export default function IntelPack() {
 
   const reports = run.reports as ReportPack | null
   const positioning = run.positioning as PositioningOutput | null
+  const detailPhase = (run.reports as any)?.__detail_phase as string | undefined
+  const isDetailLoading = detailPhase === 'quick'
 
   const headline = reports?.application?.positioning_headline
     ?? positioning?.positioning_headline
@@ -127,6 +132,16 @@ export default function IntelPack() {
           <div className={s.failedBanner}>
             Something went wrong during processing.
             {run.error_message && <div className={s.failedDetail}>{run.error_message}</div>}
+          </div>
+        )}
+
+        {run.status === 'completed' && isDetailLoading && (
+          <div className={s.processingBanner} style={{background:'var(--surface-2, #f0f4ff)', borderColor:'var(--accent, #4f6ef7)'}}>
+            <div className={s.processingSpinner} />
+            <div>
+              <div className={s.processingTitle}>Enriching with detailed analysis…</div>
+              <div className={s.processingSub}>Your quick pack is ready below. Full company intel, interview prep, and positioning strategy are loading.</div>
+            </div>
           </div>
         )}
 

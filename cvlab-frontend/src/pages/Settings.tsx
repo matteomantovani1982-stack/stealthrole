@@ -1,8 +1,15 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuthStore } from '../store/auth'
 import { api } from '../api/client'
 import { Button } from '../components/ui/Button'
 import s from './Settings.module.css'
+
+type NotifPrefs = {
+  pack_complete_email: boolean
+  scout_digest_email: boolean
+  hidden_market_email: boolean
+  shadow_ready_email: boolean
+}
 
 export default function Settings() {
   const { user, logout } = useAuthStore()
@@ -138,6 +145,9 @@ export default function Settings() {
         )}
       </div>
 
+      {/* Notifications */}
+      <NotificationSettings />
+
       {/* Sign out */}
       <div className={s.section}>
         <div className={s.sectionTitle}>Session</div>
@@ -149,6 +159,67 @@ export default function Settings() {
           <Button variant="ghost" loading={loggingOut} onClick={handleLogout}>Sign out</Button>
         </div>
       </div>
+    </div>
+  )
+}
+
+function NotificationSettings() {
+  const [prefs, setPrefs] = useState<NotifPrefs | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    api.get('/api/v1/auth/me/notifications')
+      .then((r) => setPrefs(r.data.notification_preferences))
+      .catch(() => {})
+  }, [])
+
+  const toggle = async (key: keyof NotifPrefs) => {
+    if (!prefs) return
+    const updated = { ...prefs, [key]: !prefs[key] }
+    setPrefs(updated)
+    setSaving(true)
+    try {
+      await api.put('/api/v1/auth/me/notifications', { [key]: updated[key] })
+    } catch {
+      setPrefs(prefs) // revert on error
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!prefs) return null
+
+  const items: { key: keyof NotifPrefs; label: string; desc: string }[] = [
+    { key: 'pack_complete_email', label: 'Pack completion', desc: 'Email when your Intelligence Pack is ready' },
+    { key: 'scout_digest_email', label: 'Scout digest', desc: 'Periodic digest of new job opportunities' },
+    { key: 'hidden_market_email', label: 'Hidden market alerts', desc: 'Email when hidden market signals are detected' },
+    { key: 'shadow_ready_email', label: 'Shadow application ready', desc: 'Email when a Shadow Application completes' },
+  ]
+
+  return (
+    <div className={s.section}>
+      <div className={s.sectionTitle}>Notifications</div>
+      {items.map((item) => (
+        <div key={item.key} className={s.row} style={{ cursor: 'pointer' }} onClick={() => toggle(item.key)}>
+          <div>
+            <div className={s.rowLabel}>{item.label}</div>
+            <div className={s.rowHint}>{item.desc}</div>
+          </div>
+          <div style={{
+            width: 40, height: 22, borderRadius: 11,
+            background: prefs[item.key] ? 'var(--accent)' : 'var(--border)',
+            position: 'relative', transition: 'background 0.2s',
+            flexShrink: 0, opacity: saving ? 0.6 : 1,
+          }}>
+            <div style={{
+              width: 18, height: 18, borderRadius: 9,
+              background: 'white', position: 'absolute',
+              top: 2, left: prefs[item.key] ? 20 : 2,
+              transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+            }} />
+          </div>
+        </div>
+      ))}
     </div>
   )
 }

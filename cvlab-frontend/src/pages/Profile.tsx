@@ -191,6 +191,9 @@ export default function Profile() {
       setImportLoading(true)
       try {
         const pid = await ensure()
+        // Brief delay to ensure the CV record is fully committed in the DB
+        // before the import endpoint tries to look it up
+        await new Promise(r => setTimeout(r, 1000))
         const r = await profileApi.importFromCV(pid, cv.id)
         if (!r || typeof r !== 'object') { setImportError('Server returned empty response'); return }
         // Apply immediately

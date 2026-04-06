@@ -11,6 +11,7 @@ const NAV = [
       { to: '/',             label: 'Home',         icon: <HomeIcon /> },
       { to: '/dashboard',    label: 'Job Scout',    icon: <GridIcon /> },
       { to: '/applications', label: 'Applications', icon: <FileIcon /> },
+      { to: '/outreach',     label: 'Outreach',     icon: <SendIcon /> },
       { to: '/profile',      label: 'My Profile',   icon: <UserIcon /> },
     ],
   },
@@ -149,6 +150,13 @@ function CardIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
       <rect x="1" y="4" width="22" height="16" rx="2" /><line x1="1" y1="10" x2="23" y2="10" />
+    </svg>
+  )
+}
+function SendIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
     </svg>
   )
 }

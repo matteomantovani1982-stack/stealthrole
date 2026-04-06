@@ -2,12 +2,14 @@ import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
 import { useQuery } from '@tanstack/react-query'
 import { profileApi } from '../api/profile'
+import { analyticsApi } from '../api/analytics'
 import s from './Home.module.css'
 
 export default function Home() {
   const navigate = useNavigate()
   const { user } = useAuthStore()
   const { data: usage } = useQuery({ queryKey: ['usage'], queryFn: profileApi.usage, staleTime: 60_000 })
+  const { data: dash } = useQuery({ queryKey: ['dashboard'], queryFn: analyticsApi.dashboard, staleTime: 30_000 })
 
   const firstName = user?.full_name?.split(' ')[0] ?? 'there'
   const hour = new Date().getHours()
@@ -121,6 +123,44 @@ export default function Home() {
         </div>
       </div>
 
+      {/* Dashboard stats */}
+      {dash && (
+        <div className={s.section}>
+          <div className={s.sectionTitle}>Your Dashboard</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, marginTop: 12 }}>
+            <StatCard label="Radar Opportunities" value={dash.radar_total} onClick={() => navigate('/dashboard')} />
+            <StatCard label="Applications" value={dash.total_applications} onClick={() => navigate('/applications')} />
+            <StatCard label="Shadow Apps" value={dash.total_shadow_applications} />
+            <StatCard label="Profile Strength" value={`${Math.round(dash.profile_completeness * 100)}%`} onClick={() => navigate('/profile')} />
+          </div>
+          {dash.recent_shadow_applications.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginBottom: 8 }}>Recent Shadow Applications</div>
+              {dash.recent_shadow_applications.map((sa: any) => (
+                <div
+                  key={sa.id}
+                  onClick={() => navigate(`/shadow/${sa.id}`)}
+                  style={{
+                    padding: '8px 12px', background: 'var(--bg)', border: '1px solid var(--border)',
+                    borderRadius: 8, marginBottom: 6, cursor: 'pointer', fontSize: 13,
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  }}
+                >
+                  <span><strong>{sa.hypothesis_role || sa.company}</strong> at {sa.company}</span>
+                  <span style={{
+                    fontSize: 11, padding: '2px 6px', borderRadius: 4,
+                    background: sa.status === 'completed' ? '#D1FAE5' : sa.status === 'failed' ? '#FEE2E2' : '#FEF3C7',
+                    color: sa.status === 'completed' ? '#065F46' : sa.status === 'failed' ? '#991B1B' : '#92400E',
+                  }}>
+                    {sa.status}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Usage strip */}
       {usage && (
         <div className={s.usageStrip}>
@@ -140,6 +180,21 @@ export default function Home() {
         </div>
       )}
 
+    </div>
+  )
+}
+
+function StatCard({ label, value, onClick }: { label: string; value: number | string; onClick?: () => void }) {
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        padding: '16px 14px', background: 'var(--bg)', border: '1px solid var(--border)',
+        borderRadius: 10, cursor: onClick ? 'pointer' : 'default', textAlign: 'center',
+      }}
+    >
+      <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--text)' }}>{value}</div>
+      <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 4 }}>{label}</div>
     </div>
   )
 }
