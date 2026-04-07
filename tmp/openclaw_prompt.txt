@@ -1,0 +1,17 @@
+Verify Phase 2 improvements:
+
+1. E2E suite: cd /Users/manto/Projects/careeros && python3 -m pytest tests/e2e/test_full_flow.py -v → 27 passed (LLM tests skip gracefully if credits exhausted)
+
+2. CV deduplication: Upload same file twice via POST /cvs → second upload returns existing CV ID (not a new one)
+
+3. Profile strength with CV: After uploading a CV, GET /profile/strength → score should include cv_uploaded points (15)
+
+4. Auto-profile on CV parse: After first CV upload + parse, user should have a profile (GET /profiles returns non-empty list)
+
+5. Parsed CV preview: GET /cvs/{id} → response includes parsed_preview field with first 500 chars of extracted text
+
+6. Shadow stage tracking: PATCH /shadow/{id}/stage with {"stage":"sent","notes":"Sent message"} → 200, stage persists on GET
+
+7. E2E graceful skip: When Anthropic credits are exhausted, tests 16 and 27 skip instead of failing
+
+8. All endpoints return 200: radar, dashboard, shadow, analytics, strength, hidden-market, referral, notifications

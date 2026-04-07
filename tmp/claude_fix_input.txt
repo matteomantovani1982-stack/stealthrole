@@ -1,0 +1,13 @@
+Fix these issues found by OpenClaw.
+
+OPENCLAW REPORT:
+STATUS: FAIL
+FAILED CHECKS:
+- test failure
+
+Rules:
+- fix only the reported issues
+- keep changes minimal
+- do not rewrite unrelated code
+- re-run smoke tests
+- return updated QA HANDOFF and OPENCLAW PROMPT
