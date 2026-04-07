@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StealthRole — Hidden Opportunity</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    background:#0d0f1e;
+    color:#fff;
+    min-height:100vh;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:24px;
+  }
+
+  /* Card */
+  .card{
+    background:#1a1d35;
+    border:1px solid rgba(77,142,245,.2);
+    border-radius:14px;
+    width:100%;
+    max-width:420px;
+    overflow:hidden;
+  }
+
+  /* Header */
+  .card-header{padding:22px 22px 0}
+  .card-header__top{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+  .badge{
+    font-size:10px;
+    font-weight:700;
+    letter-spacing:.8px;
+    text-transform:uppercase;
+    background:#4d8ef5;
+    color:#fff;
+    padding:4px 10px;
+    border-radius:4px;
+  }
+  .match-score{font-size:22px;font-weight:700;color:#34d399}
+
+  .job-title{font-size:16px;font-weight:500;margin-bottom:2px}
+  .company{color:rgba(255,255,255,.55);font-size:14px;margin-bottom:8px}
+  .signal-hint{font-style:italic;color:rgba(255,255,255,.4);font-size:13px;margin-bottom:10px}
+  .source-tag{
+    display:inline-block;
+    font-size:11px;
+    font-weight:600;
+    color:#f59e0b;
+    background:rgba(245,158,11,.12);
+    padding:3px 10px;
+    border-radius:100px;
+    margin-bottom:18px;
+  }
+
+  /* Divider */
+  .divider{height:1px;background:rgba(255,255,255,.07);margin:0 22px}
+
+  /* Action buttons */
+  .actions{padding:12px 22px}
+  .action-btn{
+    width:100%;
+    display:flex;
+    align-items:center;
+    gap:14px;
+    background:rgba(255,255,255,.04);
+    border:1px solid rgba(255,255,255,.06);
+    border-radius:10px;
+    padding:14px 16px;
+    margin-bottom:8px;
+    cursor:pointer;
+    transition:background .2s;
+    text-align:left;
+    color:#fff;
+    font-family:inherit;
+    font-size:inherit;
+  }
+  .action-btn:last-child{margin-bottom:0}
+  .action-btn:hover{background:rgba(77,142,245,.08)}
+  .action-btn.active{background:rgba(77,142,245,.1);border-color:rgba(77,142,245,.25)}
+
+  .action-icon{
+    flex-shrink:0;
+    width:38px;height:38px;
+    border-radius:10px;
+    display:flex;align-items:center;justify-content:center;
+    background:rgba(77,142,245,.12);
+  }
+  .action-icon svg{width:18px;height:18px;color:#4d8ef5}
+
+  .action-text{flex:1;min-width:0}
+  .action-label{font-size:14px;font-weight:500}
+  .action-sublabel{font-size:12px;color:rgba(255,255,255,.4);margin-top:2px}
+
+  .action-chevron{
+    flex-shrink:0;
+    transition:transform .3s ease;
+    color:rgba(255,255,255,.25);
+  }
+  .action-btn.active .action-chevron{transform:rotate(180deg)}
+
+  /* Panels */
+  .panel{
+    max-height:0;
+    overflow:hidden;
+    transition:max-height .3s ease, opacity .3s ease;
+    opacity:0;
+  }
+  .panel.open{opacity:1}
+  .panel-inner{padding:0 22px 14px}
+
+  /* --- Relevant Info panel --- */
+  .info-row{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.06)}
+  .info-row:last-child{border-bottom:none}
+  .info-label{font-size:12px;color:rgba(255,255,255,.45)}
+  .info-value{font-size:13px;font-weight:500;text-align:right}
+
+  .urgency-bar-wrap{margin:12px 0}
+  .urgency-bar-label{font-size:12px;color:rgba(255,255,255,.45);margin-bottom:6px}
+  .urgency-bar{height:6px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden}
+  .urgency-bar-fill{height:100%;width:78%;border-radius:3px;background:#f59e0b}
+
+  .match-reasons{margin-top:10px}
+  .match-reasons h4{font-size:12px;color:rgba(255,255,255,.45);margin-bottom:6px}
+  .match-reasons li{font-size:13px;color:rgba(255,255,255,.75);margin-bottom:4px;list-style:none;padding-left:16px;position:relative}
+  .match-reasons li::before{content:"";position:absolute;left:0;top:7px;width:6px;height:6px;border-radius:50%;background:#4d8ef5}
+
+  /* --- People panel --- */
+  .contact-card{
+    display:flex;flex-direction:column;gap:0;
+    padding:12px 0;
+    border-bottom:1px solid rgba(255,255,255,.06);
+  }
+  .contact-card:last-child{border-bottom:none}
+  .contact-card-row{display:flex;align-items:center;gap:12px}
+  .avatar{
+    flex-shrink:0;width:40px;height:40px;border-radius:50%;
+    background:rgba(77,142,245,.15);color:#4d8ef5;
+    display:flex;align-items:center;justify-content:center;
+    font-size:14px;font-weight:700;
+  }
+  .contact-info{flex:1;min-width:0}
+  .contact-name{font-size:13px;font-weight:500}
+  .contact-role{font-size:12px;color:rgba(255,255,255,.4)}
+  .contact-actions{display:flex;gap:6px}
+  .contact-btn{
+    background:rgba(255,255,255,.06);
+    border:none;border-radius:8px;
+    color:#fff;font-size:11px;font-weight:500;
+    padding:6px 10px;cursor:pointer;
+    display:flex;align-items:center;gap:4px;
+    transition:background .2s;
+    font-family:inherit;
+    white-space:nowrap;
+  }
+  .contact-btn:hover{background:rgba(77,142,245,.15)}
+  .contact-btn svg{width:13px;height:13px}
+
+  /* Connection path */
+  .connection-path{
+    display:flex;align-items:center;gap:6px;
+    margin-top:8px;padding:8px 10px;
+    background:rgba(77,142,245,.06);
+    border-radius:8px;
+    font-size:11px;color:rgba(255,255,255,.55);
+  }
+  .connection-path svg{flex-shrink:0;width:14px;height:14px;color:#4d8ef5;opacity:.7}
+  .path-nodes{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+  .path-node{
+    background:rgba(255,255,255,.08);
+    padding:2px 8px;border-radius:4px;
+    font-weight:500;color:rgba(255,255,255,.7);
+    white-space:nowrap;
+  }
+  .path-node.you{background:rgba(77,142,245,.15);color:#4d8ef5}
+  .path-arrow{color:rgba(255,255,255,.2);font-size:10px}
+
+  /* --- Track panel --- */
+  .toggle-row{display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid rgba(255,255,255,.06)}
+  .toggle-row:last-of-type{border-bottom:none}
+  .toggle{
+    flex-shrink:0;width:42px;height:24px;border-radius:12px;
+    background:rgba(255,255,255,.12);cursor:pointer;
+    position:relative;transition:background .2s;border:none;padding:0;
+  }
+  .toggle.on{background:#4d8ef5}
+  .toggle::after{
+    content:"";position:absolute;top:3px;left:3px;
+    width:18px;height:18px;border-radius:50%;background:#fff;
+    transition:transform .2s;
+  }
+  .toggle.on::after{transform:translateX(18px)}
+  .toggle-text{flex:1}
+  .toggle-title{font-size:13px;font-weight:500}
+  .toggle-desc{font-size:12px;color:rgba(255,255,255,.4);margin-top:2px}
+
+  .phone-input{
+    width:100%;margin-top:10px;padding:10px 14px;
+    border-radius:8px;border:1px solid rgba(255,255,255,.1);
+    background:rgba(255,255,255,.05);color:#fff;font-size:13px;
+    font-family:inherit;outline:none;
+  }
+  .phone-input:focus{border-color:rgba(77,142,245,.4)}
+
+  .activate-btn{
+    width:100%;margin-top:10px;padding:12px;
+    border:none;border-radius:8px;
+    background:#4d8ef5;color:#fff;font-size:14px;font-weight:600;
+    cursor:pointer;font-family:inherit;transition:opacity .2s;
+  }
+  .activate-btn:hover{opacity:.9}
+  .activate-btn:disabled{opacity:.6;cursor:default}
+
+  .track-note{font-size:11px;color:rgba(255,255,255,.3);text-align:center;margin-top:8px}
+
+  .tracking-active{
+    display:none;
+    align-items:center;justify-content:center;gap:8px;
+    padding:14px;
+    font-size:13px;font-weight:600;color:#34d399;
+  }
+  .tracking-active.show{display:flex}
+  .pulse-dot{
+    width:8px;height:8px;border-radius:50%;background:#34d399;
+    animation:pulse 1.5s ease-in-out infinite;
+  }
+  @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.7)}}
+
+  .track-form.hidden{display:none}
+
+  /* Footer */
+  .card-footer{
+    display:flex;gap:10px;
+    padding:16px 22px 22px;
+  }
+  .btn{
+    flex:1;padding:12px 10px;border-radius:8px;
+    font-size:13px;font-weight:600;cursor:pointer;
+    text-align:center;font-family:inherit;transition:opacity .2s;
+    border:none;
+  }
+  .btn-outline{background:transparent;border:1px solid rgba(255,255,255,.15);color:#fff}
+  .btn-outline:hover{background:rgba(255,255,255,.05)}
+  .btn-primary{background:#4d8ef5;color:#fff}
+  .btn-primary:hover{opacity:.9}
+
+  /* Toast */
+  .toast{
+    position:fixed;bottom:32px;left:50%;transform:translateX(-50%) translateY(20px);
+    background:#1e2140;border:1px solid rgba(77,142,245,.3);
+    color:#fff;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:500;
+    opacity:0;transition:opacity .25s,transform .25s;pointer-events:none;
+    z-index:100;
+  }
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  /* Responsive */
+  @media(max-width:480px){
+    body{padding:12px}
+    .card-header{padding:18px 16px 0}
+    .divider{margin:0 16px}
+    .actions{padding:10px 16px}
+    .panel-inner{padding:0 16px 12px}
+    .card-footer{padding:14px 16px 18px}
+    .contact-actions{flex-direction:column}
+  }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <!-- Header -->
+  <div class="card-header">
+    <div class="card-header__top">
+      <span class="badge">Hidden Opportunity</span>
+      <span class="match-score">91%</span>
+    </div>
+    <div class="job-title">Head of Growth</div>
+    <div class="company">Tabby</div>
+    <div class="signal-hint">Raised $200M — no ops leader yet</div>
+    <span class="source-tag">Not posted publicly</span>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- Actions -->
+  <div class="actions">
+    <!-- Relevant Info -->
+    <button class="action-btn" data-panel="panel-info" onclick="togglePanel(this)">
+      <span class="action-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+      </span>
+      <span class="action-text">
+        <div class="action-label">Relevant Info</div>
+        <div class="action-sublabel">Key intel on this company &amp; role</div>
+      </span>
+      <svg class="action-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+    </button>
+
+    <div class="panel" id="panel-info">
+      <div class="panel-inner">
+        <div class="info-row">
+          <span class="info-label">Stage</span>
+          <span class="info-value">Series C &middot; ~500 employees</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Recent News</span>
+          <span class="info-value">Raised $200M Series C — March 2026</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Role Signals</span>
+          <span class="info-value">No ops hire in 18 months</span>
+        </div>
+        <div class="urgency-bar-wrap">
+          <div class="urgency-bar-label">Hiring Urgency</div>
+          <div class="urgency-bar"><div class="urgency-bar-fill"></div></div>
+        </div>
+        <div class="match-reasons">
+          <h4>Why you match</h4>
+          <ul>
+            <li>8+ years scaling ops at high-growth startups</li>
+            <li>Led GTM at a fintech that grew 4x in 12 months</li>
+            <li>Strong overlap with their current tech stack</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Connect with Key People -->
+    <button class="action-btn" data-panel="panel-people" onclick="togglePanel(this)">
+      <span class="action-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      </span>
+      <span class="action-text">
+        <div class="action-label">Connect with Key People</div>
+        <div class="action-sublabel">Surfaces relevant contacts at this company</div>
+      </span>
+      <svg class="action-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+    </button>
+
+    <div class="panel" id="panel-people">
+      <div class="panel-inner">
+        <div class="contact-card">
+          <div class="contact-card-row">
+            <div class="avatar">AK</div>
+            <div class="contact-info">
+              <div class="contact-name">Arjun Kapoor</div>
+              <div class="contact-role">CEO &amp; Co-founder</div>
+            </div>
+            <div class="contact-actions">
+              <a class="contact-btn" href="https://linkedin.com" target="_blank" rel="noopener">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+                LinkedIn
+              </a>
+              <button class="contact-btn" onclick="copyIntro('Arjun','CEO')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                Copy intro
+              </button>
+            </div>
+          </div>
+          <div class="connection-path">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+            <div class="path-nodes">
+              <span class="path-node you">You</span>
+              <span class="path-arrow">&rarr;</span>
+              <span class="path-node">Dan Rosen (ex-Stripe)</span>
+              <span class="path-arrow">&rarr;</span>
+              <span class="path-node">Arjun Kapoor</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="contact-card">
+          <div class="contact-card-row">
+            <div class="avatar">RL</div>
+            <div class="contact-info">
+              <div class="contact-name">Rachel Liu</div>
+              <div class="contact-role">Head of Talent</div>
+            </div>
+            <div class="contact-actions">
+              <a class="contact-btn" href="https://linkedin.com" target="_blank" rel="noopener">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+                LinkedIn
+              </a>
+              <button class="contact-btn" onclick="copyIntro('Rachel','Head of Talent')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                Copy intro
+              </button>
+            </div>
+          </div>
+          <div class="connection-path">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+            <div class="path-nodes">
+              <span class="path-node you">You</span>
+              <span class="path-arrow">&rarr;</span>
+              <span class="path-node">Rachel Liu</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="contact-card">
+          <div class="contact-card-row">
+            <div class="avatar">MS</div>
+            <div class="contact-info">
+              <div class="contact-name">Maya Singh</div>
+              <div class="contact-role">VP Strategy</div>
+            </div>
+            <div class="contact-actions">
+              <a class="contact-btn" href="https://linkedin.com" target="_blank" rel="noopener">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+                LinkedIn
+              </a>
+              <button class="contact-btn" onclick="copyIntro('Maya','VP Strategy')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                Copy intro
+              </button>
+            </div>
+          </div>
+          <div class="connection-path">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+            <div class="path-nodes">
+              <span class="path-node you">You</span>
+              <span class="path-arrow">&rarr;</span>
+              <span class="path-node">Lisa Chen (Sequoia)</span>
+              <span class="path-arrow">&rarr;</span>
+              <span class="path-node">Priya Mehta (Tabby board)</span>
+              <span class="path-arrow">&rarr;</span>
+              <span class="path-node">Maya Singh</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Track Signals -->
+    <button class="action-btn" data-panel="panel-track" onclick="togglePanel(this)">
+      <span class="action-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+      </span>
+      <span class="action-text">
+        <div class="action-label">Track Signals &amp; Opportunity</div>
+        <div class="action-sublabel">Get WhatsApp alerts on news &amp; job postings</div>
+      </span>
+      <svg class="action-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+    </button>
+
+    <div class="panel" id="panel-track">
+      <div class="panel-inner">
+        <div class="track-form" id="trackForm">
+          <div class="toggle-row">
+            <button class="toggle on" onclick="this.classList.toggle('on')" aria-label="Toggle company news alerts"></button>
+            <div class="toggle-text">
+              <div class="toggle-title">Company news alerts</div>
+              <div class="toggle-desc">Get a WhatsApp message every time there's news about Tabby</div>
+            </div>
+          </div>
+          <div class="toggle-row">
+            <button class="toggle on" onclick="this.classList.toggle('on')" aria-label="Toggle job posting alerts"></button>
+            <div class="toggle-text">
+              <div class="toggle-title">Job posting alerts</div>
+              <div class="toggle-desc">Get notified the moment this role posts on LinkedIn, Indeed, or anywhere else</div>
+            </div>
+          </div>
+          <input class="phone-input" type="tel" placeholder="+1 (555) 000-0000" value="">
+          <button class="activate-btn" onclick="activateTracking()">Activate WhatsApp Alerts</button>
+          <div class="track-note">We'll only message you when something relevant happens</div>
+        </div>
+        <div class="tracking-active" id="trackingActive">
+          <span class="pulse-dot"></span> Tracking active
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- Footer -->
+  <div class="card-footer">
+    <button class="btn btn-outline">View Opportunity</button>
+    <button class="btn btn-primary">Apply with AI Pack (2 credits)</button>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast">Copied!</div>
+
+<script>
+  let openPanel = null;
+
+  function togglePanel(btn) {
+    const panelId = btn.dataset.panel;
+    const panel = document.getElementById(panelId);
+
+    // Close currently open panel
+    if (openPanel && openPanel !== panel) {
+      openPanel.style.maxHeight = '0px';
+      openPanel.classList.remove('open');
+      openPanel.previousElementSibling.classList.remove('active');
+    }
+
+    if (panel.classList.contains('open')) {
+      panel.style.maxHeight = '0px';
+      panel.classList.remove('open');
+      btn.classList.remove('active');
+      openPanel = null;
+    } else {
+      panel.classList.add('open');
+      panel.style.maxHeight = panel.scrollHeight + 'px';
+      btn.classList.add('active');
+      openPanel = panel;
+    }
+  }
+
+  function copyIntro(name, role) {
+    const msg = `Hi ${name}, I came across your profile and was impressed by your work as ${role} at Tabby. I'd love to connect — I have a background in scaling growth ops at high-growth startups and think there could be some great synergies. Would you be open to a brief chat?`;
+    navigator.clipboard.writeText(msg).then(() => showToast('Copied!')).catch(() => showToast('Copy failed'));
+  }
+
+  function showToast(text) {
+    const t = document.getElementById('toast');
+    t.textContent = text;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 2000);
+  }
+
+  function activateTracking() {
+    document.getElementById('trackForm').classList.add('hidden');
+    document.getElementById('trackingActive').classList.add('show');
+    // Recalculate panel height
+    const panel = document.getElementById('panel-track');
+    panel.style.maxHeight = panel.scrollHeight + 'px';
+  }
+</script>
+</body>
+</html>

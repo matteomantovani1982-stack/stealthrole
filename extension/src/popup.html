@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      width: 320px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 13px;
+      color: #111827;
+      background: #fff;
+    }
+    .header {
+      padding: 16px;
+      border-bottom: 1px solid #E5E7EB;
+    }
+    .logo {
+      font-size: 16px;
+      font-weight: 700;
+    }
+    .logo span { color: #4F46E5; }
+    .content { padding: 16px; }
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      background: #F9FAFB;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      font-size: 12px;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+    .dot-green { background: #22C55E; }
+    .dot-red { background: #EF4444; }
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 10px;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-bottom: 8px;
+      text-align: center;
+    }
+    .btn-primary {
+      background: #4F46E5;
+      color: #fff;
+    }
+    .btn-primary:hover { background: #4338CA; }
+    .btn-secondary {
+      background: #F3F4F6;
+      color: #374151;
+    }
+    .btn-secondary:hover { background: #E5E7EB; }
+    .btn-danger {
+      background: none;
+      color: #EF4444;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    input {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #E5E7EB;
+      border-radius: 8px;
+      font-size: 13px;
+      margin-bottom: 8px;
+      outline: none;
+    }
+    input:focus { border-color: #4F46E5; box-shadow: 0 0 0 2px rgba(79,70,229,0.1); }
+    .error {
+      color: #EF4444;
+      font-size: 12px;
+      padding: 8px;
+      background: #FEF2F2;
+      border-radius: 6px;
+      margin-bottom: 8px;
+    }
+    .info { font-size: 11px; color: #9CA3AF; text-align: center; margin-top: 8px; }
+    .stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .stat-box {
+      padding: 10px;
+      background: #F9FAFB;
+      border-radius: 8px;
+      text-align: center;
+    }
+    .stat-value { font-size: 18px; font-weight: 700; color: #4F46E5; }
+    .stat-label { font-size: 10px; color: #9CA3AF; text-transform: uppercase; margin-top: 2px; }
+    #login-view, #main-view { display: none; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo">Stealth<span>Role</span></div>
+  </div>
+
+  <!-- Login View -->
+  <div id="login-view" class="content">
+    <div id="login-error" class="error" style="display:none"></div>
+    <input type="email" id="email" placeholder="Email">
+    <input type="password" id="password" placeholder="Password">
+    <button class="btn btn-primary" id="login-btn">Sign in</button>
+    <div class="info">Sign in with your StealthRole account</div>
+  </div>
+
+  <!-- Main View -->
+  <div id="main-view" class="content">
+    <div class="status" id="status-bar">
+      <div class="status-dot dot-green"></div>
+      <span id="user-email">Connected</span>
+    </div>
+
+    <div class="stats" id="stats-area">
+      <div class="stat-box">
+        <div class="stat-value" id="stat-connections">—</div>
+        <div class="stat-label">Connections</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value" id="stat-apps">—</div>
+        <div class="stat-label">Applications</div>
+      </div>
+    </div>
+
+    <button class="btn btn-primary" id="btn-import">Import LinkedIn Page</button>
+    <button class="btn btn-secondary" id="btn-save-job">Save This Job</button>
+    <button class="btn btn-secondary" id="btn-autofill">Auto-Fill Application</button>
+    <button class="btn btn-danger" id="btn-logout">Sign out</button>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

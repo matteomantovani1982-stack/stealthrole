@@ -1,0 +1,420 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useAuth } from "@/lib/auth-context";
+import { connectEmail, listEmailAccounts, getCreditBalance, getCreditPricing, getActiveProfile, importLinkedIn, applyImportToProfile } from "@/lib/api";
+
+interface EmailAccount {
+  id: string;
+  provider: string;
+  email_address: string;
+  sync_status: string;
+  last_synced_at: string | null;
+  total_scanned: number;
+  total_signals: number;
+  is_active: boolean;
+}
+
+interface LinkedInStats {
+  total_connections: number;
+  recruiters: number;
+  unique_companies: number;
+}
+
+export default function SettingsPage() {
+  const { user, logout } = useAuth();
+  const [credits, setCredits] = useState<{ balance: number; lifetime_purchased: number; lifetime_spent: number } | null>(null);
+  const [pricing, setPricing] = useState<{ action: string; credits: number; display: string }[]>([]);
+  const [emailAccounts, setEmailAccounts] = useState<EmailAccount[]>([]);
+  const [linkedinStats, setLinkedinStats] = useState<LinkedInStats | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [connectingEmail, setConnectingEmail] = useState<string | null>(null);
+  const [message, setMessage] = useState("");
+  const [linkedinUrl, setLinkedinUrl] = useState("");
+  const [linkedinImporting, setLinkedinImporting] = useState(false);
+
+  useEffect(() => {
+    const headers = { Authorization: `Bearer ${localStorage.getItem("sr_token")}` };
+    Promise.allSettled([
+      getCreditBalance().then(setCredits),
+      getCreditPricing().then(setPricing),
+      listEmailAccounts().then((d) => setEmailAccounts((d?.accounts || []) as EmailAccount[])),
+      fetch("/api/v1/linkedin/stats", { headers }).then((r) => r.ok ? r.json() : null).then(setLinkedinStats),
+    ]).finally(() => setLoading(false));
+  }, []);
+
+  async function handleConnectEmail(provider: "gmail" | "outlook") {
+    setConnectingEmail(provider);
+    setMessage("");
+    try {
+      const data = await connectEmail(provider);
+      // Redirect to OAuth URL
+      window.location.href = data.auth_url;
+      setMessage(`${provider === "gmail" ? "Google" : "Microsoft"} authorization opened in a new tab. Complete the login there, then refresh this page.`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Connect failed";
+      if (msg.includes("not configured")) {
+        setMessage(`${provider === "gmail" ? "Gmail" : "Outlook"} integration not configured yet. The API key needs to be set up in production.`);
+      } else {
+        setMessage(msg);
+      }
+    } finally {
+      setConnectingEmail(null);
+    }
+  }
+
+  return (
+    <div className="space-y-6 max-w-2xl">
+      <h1 className="text-2xl font-bold text-ink-900">Settings</h1>
+
+      {message && (
+        <div className="px-4 py-3 rounded-lg bg-brand-50 text-brand-700 text-sm">{message}</div>
+      )}
+
+      {/* Account */}
+      <section className="bg-white rounded-xl border border-surface-200 p-6">
+        <h2 className="text-base font-semibold text-ink-900 mb-4">Account</h2>
+        <div className="grid grid-cols-2 gap-4 text-sm mb-4">
+          <div>
+            <div className="text-[11px] text-ink-400 uppercase">Name</div>
+            <div className="font-medium">{user?.full_name || "—"}</div>
+          </div>
+          <div>
+            <div className="text-[11px] text-ink-400 uppercase">Email</div>
+            <div className="font-medium">{user?.email || "—"}</div>
+          </div>
+        </div>
+        <button onClick={logout} className="px-4 py-2 text-sm text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors">
+          Sign out
+        </button>
+      </section>
+
+      {/* Credits */}
+      <section className="bg-white rounded-xl border border-surface-200 p-6">
+        <h2 className="text-base font-semibold text-ink-900 mb-4">Credits</h2>
+        {credits ? (
+          <>
+            <div className="grid grid-cols-3 gap-4 text-sm mb-5">
+              <div>
+                <div className="text-[11px] text-ink-400 uppercase">Balance</div>
+                <div className="text-2xl font-bold text-brand-600">{credits.balance}</div>
+              </div>
+              <div>
+                <div className="text-[11px] text-ink-400 uppercase">Purchased</div>
+                <div className="font-medium">{credits.lifetime_purchased}</div>
+              </div>
+              <div>
+                <div className="text-[11px] text-ink-400 uppercase">Spent</div>
+                <div className="font-medium">{credits.lifetime_spent}</div>
+              </div>
+            </div>
+            {pricing.length > 0 && (
+              <div>
+                <div className="text-[12px] font-medium text-ink-500 uppercase mb-2">Credit Costs</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {pricing.map((p) => (
+                    <div key={p.action} className="flex items-center justify-between bg-surface-50 rounded-lg px-3 py-2 text-sm">
+                      <span className="text-ink-700">{p.display}</span>
+                      <span className="font-bold text-brand-600">{p.credits}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="text-sm text-ink-400">{loading ? "Loading..." : "—"}</div>
+        )}
+      </section>
+
+      {/* Email Integration */}
+      <section className="bg-white rounded-xl border border-surface-200 p-6">
+        <h2 className="text-base font-semibold text-ink-900 mb-4">Email Integration</h2>
+        <p className="text-sm text-ink-400 mb-4">Connect your email to auto-detect applications, interviews, and follow-ups.</p>
+
+        {emailAccounts.length > 0 && (
+          <div className="space-y-2 mb-4">
+            {emailAccounts.map((acc) => (
+              <div key={acc.id} className="flex items-center justify-between bg-surface-50 rounded-lg px-4 py-3">
+                <div className="text-sm">
+                  <span className="font-medium">{acc.email_address}</span>
+                  <span className="text-ink-400 ml-2 text-[12px]">({acc.provider})</span>
+                  {acc.last_synced_at && <span className="text-ink-400 ml-2 text-[11px]">Last sync: {new Date(acc.last_synced_at).toLocaleDateString()}</span>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`text-[11px] px-2 py-0.5 rounded-full ${acc.is_active ? "bg-green-50 text-green-700" : "bg-surface-200 text-ink-400"}`}>
+                    {acc.is_active ? `${acc.total_signals} signals · ${acc.total_scanned} scanned` : "Disconnected"}
+                  </span>
+                  {acc.is_active && (
+                    <button id={`sync-btn-${acc.id}`} onClick={async () => {
+                      const btn = document.getElementById(`sync-btn-${acc.id}`) as HTMLButtonElement;
+                      if (btn) { btn.textContent = "Syncing your emails..."; btn.disabled = true; btn.style.opacity = "0.5"; btn.style.cursor = "not-allowed"; }
+                      const token = localStorage.getItem("sr_token");
+                      try {
+                        await fetch(`/api/v1/email-integration/accounts/${acc.id}/sync`, {
+                          method: "POST",
+                          headers: token ? { Authorization: `Bearer ${token}` } : {},
+                        });
+                        setMessage("Email sync started! Results will appear shortly.");
+                        if (btn) { btn.textContent = "Sync Now"; btn.disabled = false; btn.style.opacity = "1"; btn.style.cursor = "pointer"; }
+                      } catch {
+                        setMessage("Sync failed");
+                        if (btn) { btn.textContent = "Sync Now"; btn.disabled = false; btn.style.opacity = "1"; btn.style.cursor = "pointer"; }
+                      }
+                    }} className="text-[11px] px-2 py-0.5 rounded bg-brand-50 text-brand-600 hover:bg-brand-100 font-medium disabled:opacity-50 disabled:cursor-not-allowed">Sync Now</button>
+                  )}
+                  <button onClick={async () => {
+                    const token = localStorage.getItem("sr_token");
+                    try {
+                      await fetch(`/api/v1/email-integration/accounts/${acc.id}`, {
+                        method: "DELETE",
+                        headers: token ? { Authorization: `Bearer ${token}` } : {},
+                      });
+                      setEmailAccounts((prev) => prev.filter((a) => a.id !== acc.id));
+                      setMessage("Account removed.");
+                    } catch { setMessage("Remove failed"); }
+                  }} className="text-[11px] px-2 py-0.5 rounded bg-red-50 text-red-600 hover:bg-red-100 font-medium">Remove</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="flex gap-3">
+          <button
+            onClick={() => handleConnectEmail("gmail")}
+            disabled={connectingEmail === "gmail"}
+            className="flex items-center gap-2 px-4 py-2.5 border border-surface-300 text-ink-700 text-sm font-semibold rounded-lg hover:bg-surface-100 disabled:opacity-50 transition-colors"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16"><path d="M14 3H2l6 4.5L14 3z" fill="#EA4335"/><path d="M14 3v10H2V3l6 4.5L14 3z" fill="none" stroke="#4285F4" strokeWidth="1.2"/></svg>
+            {connectingEmail === "gmail" ? "Connecting..." : "Connect Gmail"}
+          </button>
+          <button
+            onClick={() => handleConnectEmail("outlook")}
+            disabled={connectingEmail === "outlook"}
+            className="flex items-center gap-2 px-4 py-2.5 border border-surface-300 text-ink-700 text-sm font-semibold rounded-lg hover:bg-surface-100 disabled:opacity-50 transition-colors"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16"><rect x="1" y="3" width="14" height="10" rx="1" fill="none" stroke="#0078D4" strokeWidth="1.2"/><path d="M1 3l7 5 7-5" fill="none" stroke="#0078D4" strokeWidth="1.2"/></svg>
+            {connectingEmail === "outlook" ? "Connecting..." : "Connect Outlook"}
+          </button>
+        </div>
+      </section>
+
+      {/* LinkedIn */}
+      <section className="bg-white rounded-xl border border-surface-200 p-6">
+        <h2 className="text-base font-semibold text-ink-900 mb-4">LinkedIn</h2>
+
+        {linkedinStats && linkedinStats.total_connections > 0 && (
+          <div className="bg-surface-50 rounded-lg px-4 py-3 text-sm mb-4">
+            <span className="font-bold text-brand-600">{linkedinStats.total_connections}</span> connections imported
+            <span className="text-ink-400 ml-2">({linkedinStats.recruiters} recruiters, {linkedinStats.unique_companies} companies)</span>
+          </div>
+        )}
+
+        {/* Direct URL import */}
+        <div className="mb-4">
+          <label className="text-sm font-medium text-ink-700 block mb-2">Import your LinkedIn profile</label>
+          <p className="text-[12px] text-ink-400 mb-2">Paste your LinkedIn URL to import experiences, skills, and connections.</p>
+          <div className="flex gap-2">
+            <input
+              type="url"
+              value={linkedinUrl}
+              onChange={(e) => setLinkedinUrl(e.target.value)}
+              placeholder="https://www.linkedin.com/in/your-profile"
+              className="flex-1 px-3 py-2.5 rounded-lg border border-surface-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+            />
+            <button
+              onClick={async () => {
+                if (!linkedinUrl.trim()) return;
+                setLinkedinImporting(true);
+                setMessage("");
+                try {
+                  const profile = await getActiveProfile();
+                  if (!profile) { setMessage("Create a profile first (go to Profile page)"); return; }
+                  const imported = await importLinkedIn(profile.id, linkedinUrl.trim());
+                  if (imported) {
+                    await applyImportToProfile(profile.id, imported, true);
+                  }
+                  setMessage("LinkedIn profile imported and applied!");
+                  setLinkedinUrl("");
+                } catch (err: unknown) {
+                  setMessage(err instanceof Error ? err.message : "Import failed");
+                } finally { setLinkedinImporting(false); }
+              }}
+              disabled={linkedinImporting || !linkedinUrl.trim()}
+              className="px-4 py-2.5 bg-brand-600 text-white text-sm font-semibold rounded-lg hover:bg-brand-700 disabled:opacity-50 transition-colors shrink-0"
+            >
+              {linkedinImporting ? "Importing..." : "Import"}
+            </button>
+          </div>
+        </div>
+
+        {/* CSV Import */}
+        <div className="border-t border-surface-200 pt-4 mt-4">
+          <label className="text-sm font-medium text-ink-700 block mb-2">Import connections from CSV</label>
+          <p className="text-[12px] text-ink-400 mb-2">
+            Go to LinkedIn → Settings → Data Privacy → Get a copy of your data → download Connections.csv → upload it here.
+          </p>
+          <label className="inline-flex items-center gap-2 px-4 py-2.5 bg-brand-600 text-white text-sm font-semibold rounded-lg hover:bg-brand-700 cursor-pointer transition-colors">
+            Upload Connections.csv
+            <input type="file" accept=".csv,.txt" onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) { setMessage("No file selected"); return; }
+              setMessage(`Importing ${file.name}...`);
+              const token = localStorage.getItem("sr_token");
+              const form = new FormData();
+              form.append("file", file);
+              try {
+                const res = await fetch("/api/v1/linkedin/import-csv", {
+                  method: "POST",
+                  headers: token ? { Authorization: `Bearer ${token}` } : {},
+                  body: form,
+                });
+                if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Import failed");
+                const data = await res.json();
+                setMessage(`Imported ${data.created} new connections (${data.recruiters_detected} recruiters detected, ${data.applications_matched} matched to applications)`);
+                // Refresh stats
+                const headers2 = { Authorization: `Bearer ${token}` };
+                fetch("/api/v1/linkedin/stats", { headers: headers2 }).then((r) => r.ok ? r.json() : null).then(setLinkedinStats);
+              } catch (err) {
+                setMessage(err instanceof Error ? err.message : "CSV import failed");
+              }
+            }} className="hidden" />
+          </label>
+        </div>
+
+        {/* Message Analysis */}
+        <div className="border-t border-surface-200 pt-4 mt-4">
+          <label className="text-sm font-medium text-ink-700 block mb-2">Analyze conversation + draft reply</label>
+          <p className="text-[12px] text-ink-400 mb-2">Paste a LinkedIn conversation with a recruiter or contact. We'll analyze it and draft a reply.</p>
+          <textarea
+            id="convo-text"
+            placeholder="Paste the conversation here..."
+            rows={4}
+            className="w-full px-3 py-2.5 rounded-lg border border-surface-200 text-sm resize-none mb-2 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+          />
+          <button onClick={async () => {
+            const text = (document.getElementById("convo-text") as HTMLTextAreaElement)?.value;
+            if (!text?.trim()) return;
+            setMessage("Analyzing conversation...");
+            const token = localStorage.getItem("sr_token");
+            try {
+              const res = await fetch("/api/v1/linkedin/analyze-conversation", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+                body: JSON.stringify({ messages: text, tone: "professional" }),
+              });
+              if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Analysis failed");
+              const data = await res.json();
+              setMessage("");
+              // Show result in a simple way
+              const resultDiv = document.getElementById("convo-result");
+              if (resultDiv) {
+                resultDiv.innerHTML = `
+                  <div class="space-y-3">
+                    <div><span class="text-[11px] font-medium text-ink-400 uppercase">Intent</span><div class="text-sm font-medium text-ink-900">${data.intent || "unknown"}</div></div>
+                    <div><span class="text-[11px] font-medium text-ink-400 uppercase">Analysis</span><div class="text-sm text-ink-700">${data.analysis || ""}</div></div>
+                    <div><span class="text-[11px] font-medium text-ink-400 uppercase">Suggested Reply</span><div class="text-sm text-ink-900 bg-brand-50 rounded-lg p-3 whitespace-pre-wrap">${data.suggested_reply || "No reply generated"}</div></div>
+                    ${data.alternative_reply ? `<div><span class="text-[11px] font-medium text-ink-400 uppercase">Alternative</span><div class="text-sm text-ink-700 bg-surface-50 rounded-lg p-3 whitespace-pre-wrap">${data.alternative_reply}</div></div>` : ""}
+                    ${data.next_steps ? `<div><span class="text-[11px] font-medium text-ink-400 uppercase">Next Steps</span><ul class="text-sm text-ink-700 list-disc list-inside">${data.next_steps.map((s: string) => `<li>${s}</li>`).join("")}</ul></div>` : ""}
+                  </div>
+                `;
+              }
+            } catch (err) {
+              setMessage(err instanceof Error ? err.message : "Analysis failed");
+            }
+          }} className="px-4 py-2.5 bg-brand-600 text-white text-sm font-semibold rounded-lg hover:bg-brand-700 transition-colors">
+            Analyze & Draft Reply
+          </button>
+          <div id="convo-result" className="mt-3" />
+        </div>
+      </section>
+
+      {/* WhatsApp Alerts */}
+      <section className="bg-white rounded-xl border border-surface-200 p-6">
+        <h2 className="text-base font-semibold text-ink-900 mb-4">WhatsApp Alerts</h2>
+        <p className="text-sm text-ink-400 mb-4">Get daily alerts for new opportunities, follow-up reminders, and pack completions via WhatsApp.</p>
+        <div className="space-y-3">
+          <div>
+            <label className="text-[12px] font-medium text-ink-500 uppercase block mb-1">WhatsApp Number</label>
+            <div className="flex gap-2">
+              <input
+                id="wa-number"
+                type="tel"
+                placeholder="+971 50 123 4567"
+                className="flex-1 px-3 py-2.5 rounded-lg border border-surface-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+              />
+              <button onClick={async () => {
+                const number = (document.getElementById("wa-number") as HTMLInputElement)?.value;
+                if (!number?.trim()) return;
+                const token = localStorage.getItem("sr_token");
+                setMessage("Sending verification code to WhatsApp...");
+                try {
+                  const res = await fetch("/api/v1/whatsapp/verify", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+                    body: JSON.stringify({ whatsapp_number: number.trim() }),
+                  });
+                  if (res.ok) {
+                    setMessage("Verification code sent to your WhatsApp! Enter the code below.");
+                  } else {
+                    const body = await res.json().catch(() => ({}));
+                    setMessage(body.detail || "Failed — check your number format (+971...)");
+                  }
+                } catch (err) {
+                  setMessage(err instanceof Error ? err.message : "Failed");
+                }
+              }} className="px-4 py-2.5 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 transition-colors shrink-0">
+                Save & Verify
+              </button>
+            </div>
+            {/* Verification code input */}
+            <div className="flex gap-2 mt-2">
+              <input id="wa-code" type="text" placeholder="Enter verification code" className="flex-1 px-3 py-2.5 rounded-lg border border-surface-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20" />
+              <button onClick={async () => {
+                const code = (document.getElementById("wa-code") as HTMLInputElement)?.value;
+                const number = (document.getElementById("wa-number") as HTMLInputElement)?.value;
+                if (!code?.trim() || !number?.trim()) { setMessage("Enter both number and code"); return; }
+                const token = localStorage.getItem("sr_token");
+                try {
+                  const res = await fetch("/api/v1/whatsapp/confirm", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+                    body: JSON.stringify({ whatsapp_number: number.trim(), code: code.trim() }),
+                  });
+                  if (res.ok) {
+                    setMessage("WhatsApp verified! You'll receive alerts here.");
+                  } else {
+                    const body = await res.json().catch(() => ({}));
+                    setMessage(body.detail || "Invalid code");
+                  }
+                } catch (err) { setMessage("Verification failed"); }
+              }} className="px-4 py-2.5 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 transition-colors shrink-0">
+                Confirm Code
+              </button>
+            </div>
+          </div>
+          <div>
+            <label className="text-[12px] font-medium text-ink-500 uppercase block mb-2">Alert Types</label>
+            <div className="space-y-2">
+              {[
+                { id: "new_opportunities", label: "New hidden market opportunities", desc: "Daily digest of jobs found before they're posted" },
+                { id: "follow_up_reminders", label: "Follow-up reminders", desc: "Nudge when it's time to follow up on an application" },
+                { id: "pack_ready", label: "Pack completion", desc: "Notify when an Intelligence Pack is ready" },
+                { id: "interview_prep", label: "Interview reminders", desc: "Prep reminders before scheduled interviews" },
+              ].map((alert) => (
+                <label key={alert.id} className="flex items-start gap-3 bg-surface-50 rounded-lg p-3 cursor-pointer hover:bg-surface-100 transition-colors">
+                  <input type="checkbox" defaultChecked className="mt-0.5 rounded border-surface-300 text-brand-600 focus:ring-brand-500" />
+                  <div>
+                    <div className="text-sm font-medium text-ink-900">{alert.label}</div>
+                    <div className="text-[12px] text-ink-400">{alert.desc}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}

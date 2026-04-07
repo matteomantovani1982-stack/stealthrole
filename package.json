@@ -1,0 +1,11 @@
+{
+  "name": "careeros",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CareerOS — Application Intelligence Pack Generator",
+  "scripts": {
+    "test": "pytest tests/ -v --tb=short",
+    "lint": "ruff check app/ tests/",
+    "lint:fix": "ruff check --fix app/ tests/"
+  }
+}
