@@ -105,9 +105,10 @@ export default function ProfilePage() {
           const prefs = p.preferences as Record<string, unknown>;
           setSelectedRegions((prefs.regions as string[]) || []);
           setSelectedSectors((prefs.sectors as string[]) || []);
-          setSelectedSeniority((prefs.seniority as string) || "");
+          const seniorityVal = prefs.seniority;
+          setSelectedSeniority(Array.isArray(seniorityVal) ? (seniorityVal[0] as string || "") : (seniorityVal as string || ""));
           setSelectedRoles((prefs.roles as string[]) || []);
-          setSalaryMin(String(prefs.salary_min || ""));
+          setSalaryMin(String(prefs.salaryMin || prefs.salary_min || ""));
           setSalaryMax(String(prefs.salary_max || ""));
         }
       }),
@@ -116,6 +117,14 @@ export default function ProfilePage() {
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  // Auto-clear messages after 4 seconds
+  useEffect(() => {
+    if (message && !message.includes("Uploading")) {
+      const t = setTimeout(() => setMessage(""), 4000);
+      return () => clearTimeout(t);
+    }
+  }, [message]);
 
   const ctx = parseGlobalContext(profile?.global_context ?? null);
   const skills = (ctx.skills as string[]) || [];

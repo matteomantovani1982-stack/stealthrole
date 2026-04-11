@@ -213,6 +213,7 @@ class CandidateProfileCreate(BaseModel):
 
 
 class JobPreferences(BaseModel):
+    model_config = {"extra": "allow"}
     regions: list[str] = []
     roles: list[str] = []
     seniority: list[str] = []
@@ -220,6 +221,7 @@ class JobPreferences(BaseModel):
     stage: list[str] = []
     sectors: list[str] = []
     salaryMin: str | None = None
+    salary_max: str | None = None
     openToRelo: str = "yes"
 
 

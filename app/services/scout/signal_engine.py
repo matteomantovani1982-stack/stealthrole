@@ -612,12 +612,25 @@ def _score_heuristic(signals: list[Signal], preferences: dict) -> list[Opportuni
         types = {s.signal_type for s in sigs}
         best = max(sigs, key=lambda s: s.recency_score)
 
-        score = 50
+        score = 40
         reasons = []
-        if "funding"    in types: score += 20; reasons.append("Recent funding — headcount growth expected")
-        if "leadership" in types: score += 25; reasons.append("Leadership change — role likely open")
-        if "expansion"  in types: score += 15; reasons.append("Market expansion — local leadership needed")
-        score = min(score, 90)
+        # High-value hiring signals
+        if "leadership" in types: score += 28; reasons.append("Leadership change — role likely open")
+        if "funding"    in types: score += 22; reasons.append("Recent funding — headcount growth expected")
+        if "expansion"  in types: score += 18; reasons.append("Market expansion — local leadership needed")
+        if "ma_activity" in types: score += 20; reasons.append("M&A activity — integration roles expected")
+        if "board_change" in types: score += 15; reasons.append("Board change — strategic shifts ahead")
+        if "velocity"   in types: score += 12; reasons.append("Hiring velocity detected")
+        # Lower-value signals
+        if "pain_signal" in types: score += 8; reasons.append("Company pain signal — opportunity for problem solvers")
+        if "structural"  in types: score += 8; reasons.append("Structural change underway")
+        if "market_signal" in types: score += 5; reasons.append("Market trend signal")
+        # Penalize distress slightly
+        if "distress"   in types: score -= 5; reasons.append("Restructuring — contrarian opportunity")
+        # Bonus for stacked signals (multiple signal types = higher confidence)
+        if len(types) >= 3: score += 10
+        elif len(types) >= 2: score += 5
+        score = max(30, min(score, 95))
 
         urgency = "high" if best.recency_score > 0.8 else "medium" if best.recency_score > 0.4 else "low"
         type_emoji = {"funding":"💰","leadership":"👤","expansion":"🌍","velocity":"📈","distress":"⚠️"}

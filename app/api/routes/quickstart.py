@@ -78,7 +78,14 @@ async def upload_and_populate(
             raise HTTPException(status_code=422, detail="CV parsing failed. Try a DOCX file.")
 
     if not parsed:
-        raise HTTPException(status_code=408, detail="CV parsing timed out. Try again.")
+        # Celery didn't parse in time — skip Celery and proceed directly
+        # The Claude extraction in Step 4 will read raw bytes from S3
+        logger.warning("quickstart_celery_parse_timeout", cv_id=str(cv_id))
+        # Mark CV as parsed so the rest of the pipeline works
+        cv = (await db.execute(select(CV).where(CV.id == cv_id))).scalar_one_or_none()
+        if cv:
+            cv.status = CVStatus.PARSED
+            await db.flush()
 
     logger.info("quickstart_parsed", cv_id=str(cv_id))
 

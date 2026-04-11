@@ -65,10 +65,19 @@ class ProfileService:
         alongside it. The user must explicitly activate the new profile when ready,
         which archives the old one.
         """
+        # Auto-activate if no existing ACTIVE profile
+        existing_active = await self._db.execute(
+            select(CandidateProfile).where(
+                CandidateProfile.user_id == user_id,
+                CandidateProfile.status == ProfileStatus.ACTIVE,
+            ).limit(1)
+        )
+        has_active = existing_active.scalar_one_or_none() is not None
+
         profile = CandidateProfile(
             user_id=user_id,
             version=await self._next_version(user_id),
-            status=ProfileStatus.DRAFT,
+            status=ProfileStatus.ACTIVE if not has_active else ProfileStatus.DRAFT,
             headline=payload.headline,
             global_context=payload.global_context,
             global_notes=payload.global_notes,
@@ -116,8 +125,9 @@ class ProfileService:
         return CandidateProfileResponse.from_orm_with_computed(profile)
 
     async def get_active_profile_orm(self, user_id: str) -> CandidateProfile | None:
-        """Fetch the raw ORM CandidateProfile (with experiences loaded).
+        """Fetch the user's best profile (ACTIVE first, then DRAFT).
         Use this when you need to_prompt_dict() or direct ORM access."""
+        # Try ACTIVE first
         result = await self._db.execute(
             select(CandidateProfile)
             .options(selectinload(CandidateProfile.experiences))
@@ -125,6 +135,21 @@ class ProfileService:
                 CandidateProfile.user_id == user_id,
                 CandidateProfile.status == ProfileStatus.ACTIVE,
             )
+        )
+        profile = result.scalar_one_or_none()
+        if profile:
+            return profile
+
+        # Fall back to most recent DRAFT
+        result = await self._db.execute(
+            select(CandidateProfile)
+            .options(selectinload(CandidateProfile.experiences))
+            .where(
+                CandidateProfile.user_id == user_id,
+                CandidateProfile.status == ProfileStatus.DRAFT,
+            )
+            .order_by(CandidateProfile.created_at.desc())
+            .limit(1)
         )
         return result.scalar_one_or_none()
 

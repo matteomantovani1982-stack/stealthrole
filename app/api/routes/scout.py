@@ -36,19 +36,30 @@ CACHE_TTL_MINUTES = 30
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 async def _get_profile_and_prefs(db: DB, user_id: str) -> tuple[dict, dict]:
-    """Load user profile + parse preferences from global_context."""
+    """Load user profile + preferences."""
     import json
     from app.services.profile.profile_service import ProfileService
     svc = ProfileService(db)
     profile = await svc.get_active_profile(user_id)
     if not profile:
         return {}, {}
-    ctx = {}
-    try:
-        ctx = json.loads(profile.global_context or "{}")
-    except Exception:
-        pass
-    prefs = ctx.get("preferences", ctx.get("__preferences", {}))
+
+    # Preferences are stored on the profile.preferences JSONB field
+    prefs = profile.preferences or {}
+    if isinstance(prefs, str):
+        try:
+            prefs = json.loads(prefs)
+        except Exception:
+            prefs = {}
+
+    # Fallback: check global_context for legacy preference storage
+    if not prefs:
+        try:
+            ctx = json.loads(profile.global_context or "{}")
+            prefs = ctx.get("preferences", ctx.get("__preferences", {}))
+        except Exception:
+            pass
+
     profile_dict = {
         "headline": profile.headline or "",
         "global_context": profile.global_context or "",
