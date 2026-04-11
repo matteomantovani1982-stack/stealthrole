@@ -206,7 +206,8 @@ export default function ProfilePage() {
         roles: selectedRoles,
         seniority: selectedSeniority ? [selectedSeniority] : [],
         salaryMin: salaryMin || undefined,
-      });
+        salary_max: salaryMax || undefined,
+      } as any);
       setMessage("Preferences saved!");
     } catch (err: unknown) {
       setMessage(err instanceof Error ? err.message : "Save failed");
@@ -330,14 +331,21 @@ export default function ProfilePage() {
     setExpandedExps((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   }
 
-  if (loading) return <div className="space-y-4">{[1,2,3].map(i => <div key={i} className="h-32 bg-surface-100 rounded-xl animate-pulse" />)}</div>;
+  if (loading) return <div className="space-y-4">{[1,2,3].map(i => <div key={i} className="h-32 bg-[rgba(255,255,255,0.06)] rounded-xl animate-pulse" />)}</div>;
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="space-y-6 max-w-3xl" style={{ color: "#fff" }}>
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-ink-900">Profile</h1>
+        <div className="flex items-center gap-3">
+          <h1 style={{ fontSize: 20, fontWeight: 500, color: "#fff", margin: 0 }}>Profile</h1>
+          {profile && (
+            <span style={{ fontSize: 10, padding: "4px 10px", borderRadius: 14, background: "rgba(34,197,94,0.1)", border: "0.5px solid rgba(34,197,94,0.2)", color: "#22c55e" }}>
+              {profile.headline ? "87" : "40"}% complete
+            </span>
+          )}
+        </div>
         <div className="flex gap-2">
-          <label className="px-4 py-2 bg-brand-600 text-white text-sm font-semibold rounded-lg hover:bg-brand-700 cursor-pointer transition-colors">
+          <label style={{ padding: "8px 14px", background: "#4d8ef5", color: "#fff", fontSize: 11, fontWeight: 600, borderRadius: 10, cursor: "pointer" }}>
             {uploading ? "Processing..." : "Upload CV"}
             <input type="file" accept=".pdf,.docx,.doc" onChange={handleUpload} disabled={uploading} className="hidden" />
           </label>
@@ -355,21 +363,28 @@ export default function ProfilePage() {
                 }
               } catch {}
               if (btn) btn.textContent = "Download CV";
-            }} className="px-4 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 transition-colors">Download CV</button>
-            <button onClick={() => setShowLinkedIn(true)} className="px-4 py-2 border border-surface-300 text-ink-700 text-sm font-semibold rounded-lg hover:bg-surface-100 transition-colors">Import LinkedIn</button>
+            }} style={{ padding: "8px 14px", background: "rgba(34,197,94,0.15)", color: "#86efac", fontSize: 11, fontWeight: 600, borderRadius: 10, border: "0.5px solid rgba(34,197,94,0.25)", cursor: "pointer" }}>Download CV</button>
+            <button onClick={() => setShowLinkedIn(true)} style={{ padding: "8px 14px", background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.6)", fontSize: 11, fontWeight: 500, borderRadius: 10, border: "0.5px solid rgba(255,255,255,0.1)", cursor: "pointer" }}>Import LinkedIn</button>
           </>}
         </div>
       </div>
 
       {/* Tab bar */}
-      <div className="flex gap-1 border-b border-surface-200">
+      <div style={{ display: "flex", gap: 4, borderBottom: "0.5px solid rgba(255,255,255,0.08)", marginBottom: 4 }}>
         {([
-          { id: "profile", label: "Profile" },
+          { id: "profile", label: "Resume" },
           { id: "email", label: "Email Intelligence" },
-          { id: "linkedin", label: "LinkedIn Intelligence" },
+          { id: "linkedin", label: "Contacts" },
         ] as const).map((tab) => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${activeTab === tab.id ? "border-brand-600 text-brand-700" : "border-transparent text-ink-400 hover:text-ink-600"}`}>
+            style={{
+              padding: "10px 16px", fontSize: 13, fontWeight: 500, cursor: "pointer",
+              borderBottom: activeTab === tab.id ? "2px solid #4d8ef5" : "2px solid transparent",
+              color: activeTab === tab.id ? "#fff" : "rgba(255,255,255,0.35)",
+              background: "transparent", border: "none",
+              borderBottomWidth: 2, borderBottomStyle: "solid",
+              borderBottomColor: activeTab === tab.id ? "#4d8ef5" : "transparent",
+            }}>
             {tab.label}
           </button>
         ))}
@@ -384,38 +399,38 @@ export default function ProfilePage() {
       {/* PROFILE TAB CONTENT */}
       {activeTab === "profile" && <>
 
-      {message && <div className="px-4 py-3 rounded-lg bg-brand-50 text-brand-700 text-sm">{message}</div>}
+      {message && <div className="px-4 py-3 rounded-lg bg-[rgba(77,142,245,0.08)] text-[#4d8ef5] text-sm">{message}</div>}
 
       {/* No profile - creation form */}
       {!profile && (
-        <div className="bg-white rounded-xl border border-surface-200 p-8 text-center">
+        <div className="bg-[rgba(255,255,255,0.06)] rounded-xl border border-[rgba(255,255,255,0.1)] p-8 text-center">
           <div className="text-4xl mb-3">&#128100;</div>
-          <div className="text-lg font-semibold text-ink-900 mb-2">Set up your profile</div>
-          <div className="text-sm text-ink-400 mb-4">Upload your CV or create a profile manually.</div>
+          <div className="text-lg font-semibold text-white mb-2">Set up your profile</div>
+          <div className="text-sm text-[rgba(255,255,255,0.4)] mb-4">Upload your CV or create a profile manually.</div>
           <div className="max-w-sm mx-auto space-y-3 mb-4">
             <input
               value={createName}
               onChange={(e) => setCreateName(e.target.value)}
               placeholder="Full Name"
-              className="w-full px-3 py-2.5 rounded-lg border border-surface-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+              className="w-full px-3 py-2.5 rounded-lg border border-[rgba(255,255,255,0.1)] text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20"
             />
             <input
               value={createHeadline}
               onChange={(e) => setCreateHeadline(e.target.value)}
               placeholder="Headline (e.g. Senior Product Manager)"
-              className="w-full px-3 py-2.5 rounded-lg border border-surface-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+              className="w-full px-3 py-2.5 rounded-lg border border-[rgba(255,255,255,0.1)] text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20"
             />
           </div>
           <div className="flex justify-center gap-3">
-            <button onClick={handleCreateProfile} className="px-5 py-2.5 bg-brand-600 text-white text-sm font-semibold rounded-lg hover:bg-brand-700">Create Profile</button>
-            <label className="px-5 py-2.5 border border-surface-300 text-ink-700 text-sm font-semibold rounded-lg hover:bg-surface-100 cursor-pointer">Upload CV<input type="file" accept=".pdf,.docx,.doc" onChange={handleUpload} className="hidden" /></label>
+            <button onClick={handleCreateProfile} className="px-5 py-2.5 bg-[#4d8ef5] text-white text-sm font-semibold rounded-lg hover:bg-[#3b7de0]">Create Profile</button>
+            <label className="px-5 py-2.5 border border-[rgba(255,255,255,0.12)] text-[rgba(255,255,255,0.7)] text-sm font-semibold rounded-lg hover:bg-[rgba(255,255,255,0.06)] cursor-pointer">Upload CV<input type="file" accept=".pdf,.docx,.doc" onChange={handleUpload} className="hidden" /></label>
           </div>
         </div>
       )}
 
       {/* Headline + Summary */}
       {profile && (
-        <section className="bg-white rounded-xl border border-surface-200 p-5">
+        <section className="bg-[rgba(255,255,255,0.06)] rounded-xl border border-[rgba(255,255,255,0.1)] p-5">
           {/* Headline */}
           <div className="flex items-start justify-between mb-2">
             {editingHeadline ? (
@@ -423,21 +438,21 @@ export default function ProfilePage() {
                 <input
                   value={editingHeadlineVal}
                   onChange={(e) => setEditingHeadlineVal(e.target.value)}
-                  className="w-full text-lg font-semibold text-ink-900 px-3 py-1.5 rounded-lg border border-surface-300 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+                  className="w-full text-lg font-semibold text-white px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.12)] focus:outline-none focus:ring-2 focus:ring-brand-500/20"
                   placeholder="Your headline"
                 />
               </div>
             ) : (
-              <div className="text-lg font-semibold text-ink-900">{profile.headline || <span className="text-ink-300 italic">No headline set</span>}</div>
+              <div className="text-lg font-semibold text-white">{profile.headline || <span className="text-ink-300 italic">No headline set</span>}</div>
             )}
             <div className="flex gap-1.5 shrink-0">
               {editingHeadline ? (
                 <>
-                  <button onClick={handleSaveHeadline} disabled={sectionSaving === "headline"} className="px-3 py-1 bg-brand-600 text-white text-xs font-semibold rounded-lg hover:bg-brand-700 disabled:opacity-50">{sectionSaving === "headline" ? "Saving..." : "Save"}</button>
-                  <button onClick={() => setEditingHeadline(false)} className="px-3 py-1 bg-surface-100 text-ink-600 text-xs font-semibold rounded-lg hover:bg-surface-200">Cancel</button>
+                  <button onClick={handleSaveHeadline} disabled={sectionSaving === "headline"} className="px-3 py-1 bg-[#4d8ef5] text-white text-xs font-semibold rounded-lg hover:bg-[#3b7de0] disabled:opacity-50">{sectionSaving === "headline" ? "Saving..." : "Save"}</button>
+                  <button onClick={() => setEditingHeadline(false)} className="px-3 py-1 bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.55)] text-xs font-semibold rounded-lg hover:bg-surface-200">Cancel</button>
                 </>
               ) : (
-                <button onClick={() => { setEditingHeadlineVal(profile.headline || ""); setEditingHeadline(true); }} className="px-3 py-1 bg-surface-100 text-ink-600 text-xs font-semibold rounded-lg hover:bg-surface-200">Edit</button>
+                <button onClick={() => { setEditingHeadlineVal(profile.headline || ""); setEditingHeadline(true); }} className="px-3 py-1 bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.55)] text-xs font-semibold rounded-lg hover:bg-surface-200">Edit</button>
               )}
             </div>
           </div>
@@ -450,21 +465,21 @@ export default function ProfilePage() {
                   value={editingSummaryVal}
                   onChange={(e) => setEditingSummaryVal(e.target.value)}
                   rows={4}
-                  className="w-full text-sm text-ink-700 px-3 py-2 rounded-lg border border-surface-300 focus:outline-none focus:ring-2 focus:ring-brand-500/20 leading-relaxed"
+                  className="w-full text-sm text-[rgba(255,255,255,0.7)] px-3 py-2 rounded-lg border border-[rgba(255,255,255,0.12)] focus:outline-none focus:ring-2 focus:ring-brand-500/20 leading-relaxed"
                   placeholder="Write a summary about yourself..."
                 />
               </div>
             ) : (
-              <div className="text-sm text-ink-500 leading-relaxed flex-1">{typeof ctx.summary === "string" && ctx.summary ? ctx.summary : <span className="text-ink-300 italic">No summary</span>}</div>
+              <div className="text-sm text-[rgba(255,255,255,0.45)] leading-relaxed flex-1">{typeof ctx.summary === "string" && ctx.summary ? ctx.summary : <span className="text-ink-300 italic">No summary</span>}</div>
             )}
             <div className="flex gap-1.5 shrink-0 ml-3">
               {editingSummary ? (
                 <>
-                  <button onClick={handleSaveSummary} disabled={sectionSaving === "summary"} className="px-3 py-1 bg-brand-600 text-white text-xs font-semibold rounded-lg hover:bg-brand-700 disabled:opacity-50">{sectionSaving === "summary" ? "Saving..." : "Save"}</button>
-                  <button onClick={() => setEditingSummary(false)} className="px-3 py-1 bg-surface-100 text-ink-600 text-xs font-semibold rounded-lg hover:bg-surface-200">Cancel</button>
+                  <button onClick={handleSaveSummary} disabled={sectionSaving === "summary"} className="px-3 py-1 bg-[#4d8ef5] text-white text-xs font-semibold rounded-lg hover:bg-[#3b7de0] disabled:opacity-50">{sectionSaving === "summary" ? "Saving..." : "Save"}</button>
+                  <button onClick={() => setEditingSummary(false)} className="px-3 py-1 bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.55)] text-xs font-semibold rounded-lg hover:bg-surface-200">Cancel</button>
                 </>
               ) : (
-                <button onClick={() => { setEditingSummaryVal((ctx.summary as string) || ""); setEditingSummary(true); }} className="px-3 py-1 bg-surface-100 text-ink-600 text-xs font-semibold rounded-lg hover:bg-surface-200">Edit</button>
+                <button onClick={() => { setEditingSummaryVal((ctx.summary as string) || ""); setEditingSummary(true); }} className="px-3 py-1 bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.55)] text-xs font-semibold rounded-lg hover:bg-surface-200">Edit</button>
               )}
             </div>
           </div>
@@ -473,14 +488,14 @@ export default function ProfilePage() {
 
       {/* Personal Details */}
       {profile && (
-        <section className="bg-white rounded-xl border border-surface-200 p-5">
+        <section className="bg-[rgba(255,255,255,0.06)] rounded-xl border border-[rgba(255,255,255,0.1)] p-5">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-ink-900">Personal Details</h2>
+            <h2 className="text-sm font-semibold text-white">Personal Details</h2>
             <div className="flex gap-1.5">
               {editingPersonal ? (
                 <>
-                  <button onClick={handleSavePersonal} disabled={sectionSaving === "personal"} className="px-3 py-1 bg-brand-600 text-white text-xs font-semibold rounded-lg hover:bg-brand-700 disabled:opacity-50">{sectionSaving === "personal" ? "Saving..." : "Save"}</button>
-                  <button onClick={() => setEditingPersonal(false)} className="px-3 py-1 bg-surface-100 text-ink-600 text-xs font-semibold rounded-lg hover:bg-surface-200">Cancel</button>
+                  <button onClick={handleSavePersonal} disabled={sectionSaving === "personal"} className="px-3 py-1 bg-[#4d8ef5] text-white text-xs font-semibold rounded-lg hover:bg-[#3b7de0] disabled:opacity-50">{sectionSaving === "personal" ? "Saving..." : "Save"}</button>
+                  <button onClick={() => setEditingPersonal(false)} className="px-3 py-1 bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.55)] text-xs font-semibold rounded-lg hover:bg-surface-200">Cancel</button>
                 </>
               ) : (
                 <button onClick={() => {
@@ -493,7 +508,7 @@ export default function ProfilePage() {
                     linkedin_url: String(ctx.linkedin_url || ""),
                   });
                   setEditingPersonal(true);
-                }} className="px-3 py-1 bg-surface-100 text-ink-600 text-xs font-semibold rounded-lg hover:bg-surface-200">Edit</button>
+                }} className="px-3 py-1 bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.55)] text-xs font-semibold rounded-lg hover:bg-surface-200">Edit</button>
               )}
             </div>
           </div>
@@ -513,7 +528,7 @@ export default function ProfilePage() {
               {Boolean(ctx.phone) && <Fld label="Phone" value={String(ctx.phone)} />}
               {Boolean(profile.location || ctx.location) && <Fld label="Location" value={String(profile.location || ctx.location)} />}
               {Boolean(ctx.nationality) && <Fld label="Nationality" value={String(ctx.nationality)} />}
-              {Boolean(ctx.linkedin_url) && (<div><div className="text-[11px] font-medium text-ink-400 uppercase mb-0.5">LinkedIn</div><a href={String(ctx.linkedin_url)} target="_blank" rel="noopener" className="text-sm text-brand-600 font-medium truncate block">{String(ctx.linkedin_url)}</a></div>)}
+              {Boolean(ctx.linkedin_url) && (<div><div className="text-[11px] font-medium text-[rgba(255,255,255,0.4)] uppercase mb-0.5">LinkedIn</div><a href={String(ctx.linkedin_url)} target="_blank" rel="noopener" className="text-sm text-[#4d8ef5] font-medium truncate block">{String(ctx.linkedin_url)}</a></div>)}
               {!ctx.full_name && !ctx.email && !ctx.phone && !profile.location && !ctx.location && !ctx.nationality && !ctx.linkedin_url && (
                 <div className="col-span-2 text-sm text-ink-300 italic">No personal details yet. Click Edit to add.</div>
               )}
@@ -524,17 +539,17 @@ export default function ProfilePage() {
 
       {/* Skills */}
       {profile && (
-        <section className="bg-white rounded-xl border border-surface-200 p-5">
+        <section className="bg-[rgba(255,255,255,0.06)] rounded-xl border border-[rgba(255,255,255,0.1)] p-5">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-ink-900">Skills</h2>
+            <h2 className="text-sm font-semibold text-white">Skills</h2>
             <div className="flex gap-1.5">
               {editingSkills ? (
                 <>
-                  <button onClick={handleSaveSkills} disabled={sectionSaving === "skills"} className="px-3 py-1 bg-brand-600 text-white text-xs font-semibold rounded-lg hover:bg-brand-700 disabled:opacity-50">{sectionSaving === "skills" ? "Saving..." : "Save"}</button>
-                  <button onClick={() => setEditingSkills(false)} className="px-3 py-1 bg-surface-100 text-ink-600 text-xs font-semibold rounded-lg hover:bg-surface-200">Cancel</button>
+                  <button onClick={handleSaveSkills} disabled={sectionSaving === "skills"} className="px-3 py-1 bg-[#4d8ef5] text-white text-xs font-semibold rounded-lg hover:bg-[#3b7de0] disabled:opacity-50">{sectionSaving === "skills" ? "Saving..." : "Save"}</button>
+                  <button onClick={() => setEditingSkills(false)} className="px-3 py-1 bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.55)] text-xs font-semibold rounded-lg hover:bg-surface-200">Cancel</button>
                 </>
               ) : (
-                <button onClick={() => { setSkillsDraft([...skills]); setEditingSkills(true); }} className="px-3 py-1 bg-surface-100 text-ink-600 text-xs font-semibold rounded-lg hover:bg-surface-200">Edit</button>
+                <button onClick={() => { setSkillsDraft([...skills]); setEditingSkills(true); }} className="px-3 py-1 bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.55)] text-xs font-semibold rounded-lg hover:bg-surface-200">Edit</button>
               )}
             </div>
           </div>
@@ -542,20 +557,20 @@ export default function ProfilePage() {
             <div>
               <div className="flex flex-wrap gap-1.5 mb-3">
                 {skillsDraft.map((s, i) => (
-                  <span key={i} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-brand-50 text-brand-700 text-sm font-medium border border-brand-200">
+                  <span key={i} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[rgba(77,142,245,0.08)] text-[#4d8ef5] text-sm font-medium border border-brand-200">
                     {s}
-                    <button onClick={() => setSkillsDraft(skillsDraft.filter((_, j) => j !== i))} className="text-brand-400 hover:text-brand-700 ml-0.5">&times;</button>
+                    <button onClick={() => setSkillsDraft(skillsDraft.filter((_, j) => j !== i))} className="text-brand-400 hover:text-[#4d8ef5] ml-0.5">&times;</button>
                   </span>
                 ))}
               </div>
               <div className="flex gap-2">
-                <input value={newSkill} onChange={(e) => setNewSkill(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && newSkill.trim()) { e.preventDefault(); setSkillsDraft([...skillsDraft, newSkill.trim()]); setNewSkill(""); }}} placeholder="Type a skill + Enter" className="flex-1 px-3 py-2 rounded-lg border border-surface-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20" />
-                <button onClick={() => { if (newSkill.trim()) { setSkillsDraft([...skillsDraft, newSkill.trim()]); setNewSkill(""); }}} className="px-3 py-2 bg-surface-100 text-ink-700 text-sm rounded-lg hover:bg-surface-200">Add</button>
+                <input value={newSkill} onChange={(e) => setNewSkill(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && newSkill.trim()) { e.preventDefault(); setSkillsDraft([...skillsDraft, newSkill.trim()]); setNewSkill(""); }}} placeholder="Type a skill + Enter" className="flex-1 px-3 py-2 rounded-lg border border-[rgba(255,255,255,0.1)] text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20" />
+                <button onClick={() => { if (newSkill.trim()) { setSkillsDraft([...skillsDraft, newSkill.trim()]); setNewSkill(""); }}} className="px-3 py-2 bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.7)] text-sm rounded-lg hover:bg-surface-200">Add</button>
               </div>
             </div>
           ) : (
             skills.length > 0 ? (
-              <div className="flex flex-wrap gap-1.5">{skills.map((s) => <span key={s} className="px-2.5 py-1 rounded-lg bg-surface-100 text-ink-700 text-sm font-medium border border-surface-200">{s}</span>)}</div>
+              <div className="flex flex-wrap gap-1.5">{skills.map((s) => <span key={s} className="px-2.5 py-1 rounded-lg bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.7)] text-sm font-medium border border-[rgba(255,255,255,0.1)]">{s}</span>)}</div>
             ) : (
               <div className="text-sm text-ink-300 italic">No skills added yet. Click Edit to add.</div>
             )
@@ -565,17 +580,17 @@ export default function ProfilePage() {
 
       {/* Languages */}
       {profile && (
-        <section className="bg-white rounded-xl border border-surface-200 p-5">
+        <section className="bg-[rgba(255,255,255,0.06)] rounded-xl border border-[rgba(255,255,255,0.1)] p-5">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-ink-900">Languages</h2>
+            <h2 className="text-sm font-semibold text-white">Languages</h2>
             <div className="flex gap-1.5">
               {editingLanguages ? (
                 <>
-                  <button onClick={handleSaveLanguages} disabled={sectionSaving === "languages"} className="px-3 py-1 bg-brand-600 text-white text-xs font-semibold rounded-lg hover:bg-brand-700 disabled:opacity-50">{sectionSaving === "languages" ? "Saving..." : "Save"}</button>
-                  <button onClick={() => setEditingLanguages(false)} className="px-3 py-1 bg-surface-100 text-ink-600 text-xs font-semibold rounded-lg hover:bg-surface-200">Cancel</button>
+                  <button onClick={handleSaveLanguages} disabled={sectionSaving === "languages"} className="px-3 py-1 bg-[#4d8ef5] text-white text-xs font-semibold rounded-lg hover:bg-[#3b7de0] disabled:opacity-50">{sectionSaving === "languages" ? "Saving..." : "Save"}</button>
+                  <button onClick={() => setEditingLanguages(false)} className="px-3 py-1 bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.55)] text-xs font-semibold rounded-lg hover:bg-surface-200">Cancel</button>
                 </>
               ) : (
-                <button onClick={() => { setLanguagesDraft([...languages]); setEditingLanguages(true); }} className="px-3 py-1 bg-surface-100 text-ink-600 text-xs font-semibold rounded-lg hover:bg-surface-200">Edit</button>
+                <button onClick={() => { setLanguagesDraft([...languages]); setEditingLanguages(true); }} className="px-3 py-1 bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.55)] text-xs font-semibold rounded-lg hover:bg-surface-200">Edit</button>
               )}
             </div>
           </div>
@@ -583,22 +598,22 @@ export default function ProfilePage() {
             <div>
               <div className="flex flex-wrap gap-1.5 mb-3">
                 {languagesDraft.map((l, i) => (
-                  <span key={i} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-brand-50 text-brand-700 text-sm font-medium border border-brand-200">
+                  <span key={i} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[rgba(77,142,245,0.08)] text-[#4d8ef5] text-sm font-medium border border-brand-200">
                     {l}
-                    <button onClick={() => setLanguagesDraft(languagesDraft.filter((_, j) => j !== i))} className="text-brand-400 hover:text-brand-700 ml-0.5">&times;</button>
+                    <button onClick={() => setLanguagesDraft(languagesDraft.filter((_, j) => j !== i))} className="text-brand-400 hover:text-[#4d8ef5] ml-0.5">&times;</button>
                   </span>
                 ))}
               </div>
               <div className="flex gap-2">
-                <input value={newLanguage} onChange={(e) => setNewLanguage(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && newLanguage.trim()) { e.preventDefault(); setLanguagesDraft([...languagesDraft, newLanguage.trim()]); setNewLanguage(""); }}} placeholder="Type a language + Enter" className="flex-1 px-3 py-2 rounded-lg border border-surface-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20" />
-                <button onClick={() => { if (newLanguage.trim()) { setLanguagesDraft([...languagesDraft, newLanguage.trim()]); setNewLanguage(""); }}} className="px-3 py-2 bg-surface-100 text-ink-700 text-sm rounded-lg hover:bg-surface-200">Add</button>
+                <input value={newLanguage} onChange={(e) => setNewLanguage(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && newLanguage.trim()) { e.preventDefault(); setLanguagesDraft([...languagesDraft, newLanguage.trim()]); setNewLanguage(""); }}} placeholder="Type a language + Enter" className="flex-1 px-3 py-2 rounded-lg border border-[rgba(255,255,255,0.1)] text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20" />
+                <button onClick={() => { if (newLanguage.trim()) { setLanguagesDraft([...languagesDraft, newLanguage.trim()]); setNewLanguage(""); }}} className="px-3 py-2 bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.7)] text-sm rounded-lg hover:bg-surface-200">Add</button>
               </div>
             </div>
           ) : (
             languages.length > 0 ? (
-              <div className="flex flex-wrap gap-1.5">{languages.map((l) => <span key={l} className="px-2.5 py-1 rounded-lg bg-surface-100 text-ink-700 text-sm font-medium border border-surface-200">{l}</span>)}</div>
+              <div className="flex flex-wrap gap-1.5">{languages.map((l) => <span key={l} className="px-2.5 py-1 rounded-lg bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.7)] text-sm font-medium border border-[rgba(255,255,255,0.1)]">{l}</span>)}</div>
             ) : (
-              <div className="text-sm text-ink-300 italic">No languages added yet. Click Edit to add.</div>
+              <div className="text-sm text-ink-300 italic">No languages added yet. Click Edit to add, or re-import your CV to auto-extract.</div>
             )
           )}
         </section>
@@ -606,27 +621,27 @@ export default function ProfilePage() {
 
       {/* Education */}
       {profile && (
-        <section className="bg-white rounded-xl border border-surface-200 p-5">
+        <section className="bg-[rgba(255,255,255,0.06)] rounded-xl border border-[rgba(255,255,255,0.1)] p-5">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-ink-900">Education</h2>
+            <h2 className="text-sm font-semibold text-white">Education</h2>
             <div className="flex gap-1.5">
               {editingEducation ? (
                 <>
-                  <button onClick={handleSaveEducation} disabled={sectionSaving === "education"} className="px-3 py-1 bg-brand-600 text-white text-xs font-semibold rounded-lg hover:bg-brand-700 disabled:opacity-50">{sectionSaving === "education" ? "Saving..." : "Save"}</button>
-                  <button onClick={() => setEditingEducation(false)} className="px-3 py-1 bg-surface-100 text-ink-600 text-xs font-semibold rounded-lg hover:bg-surface-200">Cancel</button>
+                  <button onClick={handleSaveEducation} disabled={sectionSaving === "education"} className="px-3 py-1 bg-[#4d8ef5] text-white text-xs font-semibold rounded-lg hover:bg-[#3b7de0] disabled:opacity-50">{sectionSaving === "education" ? "Saving..." : "Save"}</button>
+                  <button onClick={() => setEditingEducation(false)} className="px-3 py-1 bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.55)] text-xs font-semibold rounded-lg hover:bg-surface-200">Cancel</button>
                 </>
               ) : (
-                <button onClick={() => { setEducationDraft(education.map((e) => ({ ...e }))); setEditingEducation(true); }} className="px-3 py-1 bg-surface-100 text-ink-600 text-xs font-semibold rounded-lg hover:bg-surface-200">Edit</button>
+                <button onClick={() => { setEducationDraft(education.map((e) => ({ ...e }))); setEditingEducation(true); }} className="px-3 py-1 bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.55)] text-xs font-semibold rounded-lg hover:bg-surface-200">Edit</button>
               )}
             </div>
           </div>
           {editingEducation ? (
             <div className="space-y-3">
-              <button onClick={() => setEducationDraft([{ institution: "", degree: "", field: "", start_date: "", end_date: "" }, ...educationDraft])} className="text-sm text-brand-600 font-semibold hover:text-brand-700">+ Add Education</button>
+              <button onClick={() => setEducationDraft([{ institution: "", degree: "", field: "", start_date: "", end_date: "" }, ...educationDraft])} className="text-sm text-[#4d8ef5] font-semibold hover:text-[#4d8ef5]">+ Add Education</button>
               {educationDraft.map((edu, i) => (
-                <div key={i} className="bg-surface-50 rounded-lg px-4 py-3 space-y-2 border border-surface-200">
+                <div key={i} className="bg-[rgba(255,255,255,0.04)] rounded-lg px-4 py-3 space-y-2 border border-[rgba(255,255,255,0.1)]">
                   <div className="flex justify-between items-center">
-                    <div className="text-xs font-medium text-ink-400">Entry {i + 1}</div>
+                    <div className="text-xs font-medium text-[rgba(255,255,255,0.4)]">Entry {i + 1}</div>
                     <button onClick={() => setEducationDraft(educationDraft.filter((_, j) => j !== i))} className="text-xs text-red-500 hover:text-red-700 font-medium">Delete</button>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
@@ -642,13 +657,13 @@ export default function ProfilePage() {
           ) : (
             education.length > 0 ? (
               <div className="space-y-2">{education.map((edu, i) => (
-                <div key={i} className="bg-surface-50 rounded-lg px-4 py-2.5">
-                  <div className="text-sm font-medium text-ink-900">{edu.degree}{edu.field ? ` in ${edu.field}` : ""}</div>
-                  <div className="text-[11px] text-ink-400">{edu.institution}{edu.start_date || edu.end_date ? ` · ${edu.start_date || ""}–${edu.end_date || ""}` : ""}</div>
+                <div key={i} className="bg-[rgba(255,255,255,0.04)] rounded-lg px-4 py-2.5">
+                  <div className="text-sm font-medium text-white">{edu.degree}{edu.field ? ` in ${edu.field}` : ""}</div>
+                  <div className="text-[11px] text-[rgba(255,255,255,0.4)]">{edu.institution}{edu.start_date || edu.end_date ? ` · ${edu.start_date || ""}–${edu.end_date || ""}` : ""}</div>
                 </div>
               ))}</div>
             ) : (
-              <div className="text-sm text-ink-300 italic">No education added yet. Click Edit to add.</div>
+              <div className="text-sm text-ink-300 italic">No education added yet. Click Edit to add, or re-import your CV to auto-extract.</div>
             )
           )}
         </section>
@@ -656,11 +671,11 @@ export default function ProfilePage() {
 
       {/* CVs */}
       {cvs.length > 0 && (
-        <section className="bg-white rounded-xl border border-surface-200 p-5">
-          <h2 className="text-sm font-semibold text-ink-900 mb-3">Uploaded CVs</h2>
+        <section className="bg-[rgba(255,255,255,0.06)] rounded-xl border border-[rgba(255,255,255,0.1)] p-5">
+          <h2 className="text-sm font-semibold text-white mb-3">Uploaded CVs</h2>
           <div className="space-y-2">{cvs.map((cv) => (
-            <div key={cv.id} className="flex items-center justify-between bg-surface-50 rounded-lg px-4 py-2.5">
-              <div className="flex items-center gap-3"><span className="text-lg">&#128196;</span><div><div className="text-sm font-medium text-ink-900">{cv.original_filename}</div><div className="text-[11px] text-ink-400">{cv.status === "parsed" ? "Ready" : cv.status}</div></div></div>
+            <div key={cv.id} className="flex items-center justify-between bg-[rgba(255,255,255,0.04)] rounded-lg px-4 py-2.5">
+              <div className="flex items-center gap-3"><span className="text-lg">&#128196;</span><div><div className="text-sm font-medium text-white">{cv.original_filename}</div><div className="text-[11px] text-[rgba(255,255,255,0.4)]">{cv.status === "parsed" ? "Ready" : cv.status}</div></div></div>
               {cv.quality_score !== null && <span className={`text-sm font-bold px-2 py-0.5 rounded ${cv.quality_score >= 70 ? "text-green-700 bg-green-50" : cv.quality_score >= 40 ? "text-amber-700 bg-amber-50" : "text-red-700 bg-red-50"}`}>{cv.quality_score}%</span>}
             </div>
           ))}</div>
@@ -669,22 +684,22 @@ export default function ProfilePage() {
 
       {/* Experiences - expandable + editable */}
       {profile && (
-        <section className="bg-white rounded-xl border border-surface-200 p-5">
+        <section className="bg-[rgba(255,255,255,0.06)] rounded-xl border border-[rgba(255,255,255,0.1)] p-5">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-ink-900">Experience {profile.experiences?.length > 0 ? `(${completeCount}/${profile.experiences.length} complete)` : ""}</h2>
+            <h2 className="text-sm font-semibold text-white">Experience {profile.experiences?.length > 0 ? `(${completeCount}/${profile.experiences.length} complete)` : ""}</h2>
             {!addingExp && (
-              <button onClick={() => { setNewExpDraft({ ...EMPTY_EXP }); setAddingExp(true); }} className="px-3 py-1 bg-brand-600 text-white text-xs font-semibold rounded-lg hover:bg-brand-700">+ Add Experience</button>
+              <button onClick={() => { setNewExpDraft({ ...EMPTY_EXP }); setAddingExp(true); }} className="px-3 py-1 bg-[#4d8ef5] text-white text-xs font-semibold rounded-lg hover:bg-[#3b7de0]">+ Add Experience</button>
             )}
           </div>
 
           {/* Add new experience form */}
           {addingExp && (
-            <div className="bg-brand-50 rounded-lg border border-brand-200 p-4 mb-3 space-y-3">
+            <div className="bg-[rgba(77,142,245,0.08)] rounded-lg border border-brand-200 p-4 mb-3 space-y-3">
               <div className="flex items-center justify-between">
-                <div className="text-sm font-semibold text-ink-900">New Experience</div>
+                <div className="text-sm font-semibold text-white">New Experience</div>
                 <div className="flex gap-1.5">
-                  <button onClick={handleAddExperience} disabled={sectionSaving === "new-exp" || !newExpDraft.role_title.trim()} className="px-3 py-1 bg-brand-600 text-white text-xs font-semibold rounded-lg hover:bg-brand-700 disabled:opacity-50">{sectionSaving === "new-exp" ? "Saving..." : "Save"}</button>
-                  <button onClick={() => setAddingExp(false)} className="px-3 py-1 bg-surface-100 text-ink-600 text-xs font-semibold rounded-lg hover:bg-surface-200">Cancel</button>
+                  <button onClick={handleAddExperience} disabled={sectionSaving === "new-exp" || !newExpDraft.role_title.trim()} className="px-3 py-1 bg-[#4d8ef5] text-white text-xs font-semibold rounded-lg hover:bg-[#3b7de0] disabled:opacity-50">{sectionSaving === "new-exp" ? "Saving..." : "Save"}</button>
+                  <button onClick={() => setAddingExp(false)} className="px-3 py-1 bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.55)] text-xs font-semibold rounded-lg hover:bg-surface-200">Cancel</button>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-2">
@@ -708,25 +723,25 @@ export default function ProfilePage() {
               const isEditing = editingExpId === exp.id;
               const dateStr = [exp.start_date, exp.end_date || "Present"].filter(Boolean).join(" – ");
               return (
-                <div key={exp.id} className="bg-surface-50 rounded-lg border border-surface-200 overflow-hidden">
-                  <button onClick={() => toggleExp(exp.id)} className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-surface-100 transition-colors">
+                <div key={exp.id} className="bg-[rgba(255,255,255,0.04)] rounded-lg border border-[rgba(255,255,255,0.1)] overflow-hidden">
+                  <button onClick={() => toggleExp(exp.id)} className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-[rgba(255,255,255,0.06)] transition-colors">
                     <div className="min-w-0">
-                      <div className="text-sm font-medium text-ink-900">{exp.role_title}</div>
-                      <div className="text-[11px] text-ink-400">{exp.company_name}</div>
-                      {(dateStr || exp.location) && <div className="text-[11px] text-ink-400 mt-0.5">{dateStr}{exp.location ? ` · ${exp.location}` : ""}</div>}
+                      <div className="text-sm font-medium text-white">{exp.role_title}</div>
+                      <div className="text-[11px] text-[rgba(255,255,255,0.4)]">{exp.company_name}</div>
+                      {(dateStr || exp.location) && <div className="text-[11px] text-[rgba(255,255,255,0.4)] mt-0.5">{dateStr}{exp.location ? ` · ${exp.location}` : ""}</div>}
                     </div>
                     <div className="flex items-center gap-2 shrink-0 ml-3">
                       <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${exp.is_complete ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>{exp.is_complete ? "Complete" : `${exp.fields_completed || 0}/6`}</span>
-                      <span className="text-ink-400 text-xs">{isOpen ? "▾" : "▸"}</span>
+                      <span className="text-[rgba(255,255,255,0.4)] text-xs">{isOpen ? "▾" : "▸"}</span>
                     </div>
                   </button>
                   {isOpen && (
-                    <div className="px-4 pb-3 border-t border-surface-200 pt-2.5">
+                    <div className="px-4 pb-3 border-t border-[rgba(255,255,255,0.1)] pt-2.5">
                       {isEditing ? (
                         <div className="space-y-3">
                           <div className="flex justify-end gap-1.5">
-                            <button onClick={handleSaveExperience} disabled={sectionSaving === "exp-" + exp.id} className="px-3 py-1 bg-brand-600 text-white text-xs font-semibold rounded-lg hover:bg-brand-700 disabled:opacity-50">{sectionSaving === "exp-" + exp.id ? "Saving..." : "Save"}</button>
-                            <button onClick={() => setEditingExpId(null)} className="px-3 py-1 bg-surface-100 text-ink-600 text-xs font-semibold rounded-lg hover:bg-surface-200">Cancel</button>
+                            <button onClick={handleSaveExperience} disabled={sectionSaving === "exp-" + exp.id} className="px-3 py-1 bg-[#4d8ef5] text-white text-xs font-semibold rounded-lg hover:bg-[#3b7de0] disabled:opacity-50">{sectionSaving === "exp-" + exp.id ? "Saving..." : "Save"}</button>
+                            <button onClick={() => setEditingExpId(null)} className="px-3 py-1 bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.55)] text-xs font-semibold rounded-lg hover:bg-surface-200">Cancel</button>
                           </div>
                           <div className="grid grid-cols-2 gap-2">
                             <EditField label="Role Title" value={expDraft.role_title} onChange={(v) => setExpDraft({ ...expDraft, role_title: v })} />
@@ -743,14 +758,14 @@ export default function ProfilePage() {
                       ) : (
                         <div className="space-y-2.5">
                           <div className="flex justify-end gap-1.5 mb-2">
-                            <button onClick={(e) => { e.stopPropagation(); setExpDraft({ role_title: exp.role_title || "", company_name: exp.company_name || "", start_date: exp.start_date || "", end_date: exp.end_date || "", location: exp.location || "", context: exp.context || "", contribution: exp.contribution || "", outcomes: exp.outcomes || "", methods: exp.methods || "" }); setEditingExpId(exp.id); }} className="px-3 py-1 bg-surface-100 text-ink-600 text-xs font-semibold rounded-lg hover:bg-surface-200">Edit</button>
+                            <button onClick={(e) => { e.stopPropagation(); setExpDraft({ role_title: exp.role_title || "", company_name: exp.company_name || "", start_date: exp.start_date || "", end_date: exp.end_date || "", location: exp.location || "", context: exp.context || "", contribution: exp.contribution || "", outcomes: exp.outcomes || "", methods: exp.methods || "" }); setEditingExpId(exp.id); }} className="px-3 py-1 bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.55)] text-xs font-semibold rounded-lg hover:bg-surface-200">Edit</button>
                             <button onClick={(e) => { e.stopPropagation(); handleDeleteExperience(exp.id); }} disabled={sectionSaving === "del-" + exp.id} className="px-3 py-1 bg-red-50 text-red-600 text-xs font-semibold rounded-lg hover:bg-red-100 disabled:opacity-50">{sectionSaving === "del-" + exp.id ? "Deleting..." : "Delete"}</button>
                           </div>
                           {exp.context && <DFld label="Context & Situation" value={exp.context} />}
                           {exp.contribution && <DFld label="Contribution" value={exp.contribution} />}
                           {exp.outcomes && <DFld label="Outcomes & Impact" value={exp.outcomes} />}
                           {exp.methods && <DFld label="How They Did It" value={exp.methods} />}
-                          {!exp.context && !exp.contribution && !exp.outcomes && !exp.methods && <div className="text-[12px] text-ink-400 italic">No details filled yet.</div>}
+                          {!exp.context && !exp.contribution && !exp.outcomes && !exp.methods && <div className="text-[12px] text-[rgba(255,255,255,0.4)] italic">No details filled yet.</div>}
                         </div>
                       )}
                     </div>
@@ -766,38 +781,38 @@ export default function ProfilePage() {
 
       {/* Preferences */}
       {profile && (
-        <section className="bg-white rounded-xl border border-surface-200 p-5 space-y-5">
-          <h2 className="text-sm font-semibold text-ink-900">Job Search Preferences</h2>
+        <section className="bg-[rgba(255,255,255,0.06)] rounded-xl border border-[rgba(255,255,255,0.1)] p-5 space-y-5">
+          <h2 className="text-sm font-semibold text-white">Job Search Preferences</h2>
           <div>
-            <label className="text-[12px] font-medium text-ink-500 uppercase block mb-2">Target Regions</label>
-            <div className="flex flex-wrap gap-2">{REGIONS.map((r) => <button key={r} onClick={() => toggleItem(selectedRegions, r, setSelectedRegions)} className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${selectedRegions.includes(r) ? "bg-brand-50 text-brand-700 border-brand-200 font-medium" : "bg-surface-50 text-ink-500 border-surface-200 hover:bg-surface-100"}`}>{r}</button>)}</div>
+            <label className="text-[12px] font-medium text-[rgba(255,255,255,0.45)] uppercase block mb-2">Target Regions</label>
+            <div className="flex flex-wrap gap-2">{REGIONS.map((r) => <button key={r} onClick={() => toggleItem(selectedRegions, r, setSelectedRegions)} className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${selectedRegions.includes(r) ? "bg-[rgba(77,142,245,0.08)] text-[#4d8ef5] border-brand-200 font-medium" : "bg-[rgba(255,255,255,0.04)] text-[rgba(255,255,255,0.45)] border-[rgba(255,255,255,0.1)] hover:bg-[rgba(255,255,255,0.06)]"}`}>{r}</button>)}</div>
           </div>
           <div>
-            <label className="text-[12px] font-medium text-ink-500 uppercase block mb-2">Target Sectors</label>
-            <div className="flex flex-wrap gap-2">{SECTORS.map((s) => <button key={s} onClick={() => toggleItem(selectedSectors, s, setSelectedSectors)} className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${selectedSectors.includes(s) ? "bg-brand-50 text-brand-700 border-brand-200 font-medium" : "bg-surface-50 text-ink-500 border-surface-200 hover:bg-surface-100"}`}>{s}</button>)}</div>
+            <label className="text-[12px] font-medium text-[rgba(255,255,255,0.45)] uppercase block mb-2">Target Sectors</label>
+            <div className="flex flex-wrap gap-2">{SECTORS.map((s) => <button key={s} onClick={() => toggleItem(selectedSectors, s, setSelectedSectors)} className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${selectedSectors.includes(s) ? "bg-[rgba(77,142,245,0.08)] text-[#4d8ef5] border-brand-200 font-medium" : "bg-[rgba(255,255,255,0.04)] text-[rgba(255,255,255,0.45)] border-[rgba(255,255,255,0.1)] hover:bg-[rgba(255,255,255,0.06)]"}`}>{s}</button>)}</div>
           </div>
           <div>
-            <label className="text-[12px] font-medium text-ink-500 uppercase block mb-2">Target Roles</label>
-            {selectedRoles.length > 0 && <div className="flex flex-wrap gap-1.5 mb-2">{selectedRoles.map((r) => <span key={r} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-brand-50 text-brand-700 text-sm font-medium border border-brand-200">{r}<button onClick={() => setSelectedRoles(selectedRoles.filter((x) => x !== r))} className="text-brand-400 hover:text-brand-700 ml-0.5">&times;</button></span>)}</div>}
-            <div className="flex flex-wrap gap-1.5 mb-2">{ROLE_SUGGESTIONS.filter((r) => !selectedRoles.includes(r)).slice(0, 12).map((r) => <button key={r} onClick={() => setSelectedRoles([...selectedRoles, r])} className="px-2.5 py-1 rounded-lg text-[12px] bg-surface-50 text-ink-500 border border-surface-200 hover:bg-brand-50 hover:text-brand-700 hover:border-brand-200 transition-colors">{r}</button>)}</div>
+            <label className="text-[12px] font-medium text-[rgba(255,255,255,0.45)] uppercase block mb-2">Target Roles</label>
+            {selectedRoles.length > 0 && <div className="flex flex-wrap gap-1.5 mb-2">{selectedRoles.map((r) => <span key={r} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[rgba(77,142,245,0.08)] text-[#4d8ef5] text-sm font-medium border border-brand-200">{r}<button onClick={() => setSelectedRoles(selectedRoles.filter((x) => x !== r))} className="text-brand-400 hover:text-[#4d8ef5] ml-0.5">&times;</button></span>)}</div>}
+            <div className="flex flex-wrap gap-1.5 mb-2">{ROLE_SUGGESTIONS.filter((r) => !selectedRoles.includes(r)).slice(0, 12).map((r) => <button key={r} onClick={() => setSelectedRoles([...selectedRoles, r])} className="px-2.5 py-1 rounded-lg text-[12px] bg-[rgba(255,255,255,0.04)] text-[rgba(255,255,255,0.45)] border border-[rgba(255,255,255,0.1)] hover:bg-[rgba(77,142,245,0.08)] hover:text-[#4d8ef5] hover:border-brand-200 transition-colors">{r}</button>)}</div>
             <div className="flex gap-2">
-              <input value={customRole} onChange={(e) => setCustomRole(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && customRole.trim()) { e.preventDefault(); if (!selectedRoles.includes(customRole.trim())) setSelectedRoles([...selectedRoles, customRole.trim()]); setCustomRole(""); }}} placeholder="Type a custom role + Enter" className="flex-1 px-3 py-2 rounded-lg border border-surface-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20" />
-              <button onClick={() => { if (customRole.trim() && !selectedRoles.includes(customRole.trim())) { setSelectedRoles([...selectedRoles, customRole.trim()]); setCustomRole(""); }}} className="px-3 py-2 bg-surface-100 text-ink-700 text-sm rounded-lg hover:bg-surface-200">Add</button>
+              <input value={customRole} onChange={(e) => setCustomRole(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && customRole.trim()) { e.preventDefault(); if (!selectedRoles.includes(customRole.trim())) setSelectedRoles([...selectedRoles, customRole.trim()]); setCustomRole(""); }}} placeholder="Type a custom role + Enter" className="flex-1 px-3 py-2 rounded-lg border border-[rgba(255,255,255,0.1)] text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20" />
+              <button onClick={() => { if (customRole.trim() && !selectedRoles.includes(customRole.trim())) { setSelectedRoles([...selectedRoles, customRole.trim()]); setCustomRole(""); }}} className="px-3 py-2 bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.7)] text-sm rounded-lg hover:bg-surface-200">Add</button>
             </div>
           </div>
           <div>
-            <label className="text-[12px] font-medium text-ink-500 uppercase block mb-2">Seniority Level</label>
-            <select value={selectedSeniority} onChange={(e) => setSelectedSeniority(e.target.value)} className="w-full px-3 py-2.5 rounded-lg border border-surface-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500/20"><option value="">Any</option>{SENIORITY.map((s) => <option key={s} value={s}>{s}</option>)}</select>
+            <label className="text-[12px] font-medium text-[rgba(255,255,255,0.45)] uppercase block mb-2">Seniority Level</label>
+            <select value={selectedSeniority} onChange={(e) => setSelectedSeniority(e.target.value)} className="w-full px-3 py-2.5 rounded-lg border border-[rgba(255,255,255,0.1)] text-sm bg-[rgba(255,255,255,0.06)] focus:outline-none focus:ring-2 focus:ring-brand-500/20"><option value="">Any</option>{SENIORITY.map((s) => <option key={s} value={s}>{s}</option>)}</select>
           </div>
           <div>
-            <label className="text-[12px] font-medium text-ink-500 uppercase block mb-2">Salary Range (USD/year)</label>
+            <label className="text-[12px] font-medium text-[rgba(255,255,255,0.45)] uppercase block mb-2">Salary Range (USD/year)</label>
             <div className="flex items-center gap-3">
-              <input type="number" value={salaryMin} onChange={(e) => setSalaryMin(e.target.value)} placeholder="Min" className="w-full px-3 py-2.5 rounded-lg border border-surface-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20" />
-              <span className="text-ink-400">—</span>
-              <input type="number" value={salaryMax} onChange={(e) => setSalaryMax(e.target.value)} placeholder="Max" className="w-full px-3 py-2.5 rounded-lg border border-surface-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20" />
+              <input type="number" value={salaryMin} onChange={(e) => setSalaryMin(e.target.value)} placeholder="Min" className="w-full px-3 py-2.5 rounded-lg border border-[rgba(255,255,255,0.1)] text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20" />
+              <span className="text-[rgba(255,255,255,0.4)]">—</span>
+              <input type="number" value={salaryMax} onChange={(e) => setSalaryMax(e.target.value)} placeholder="Max" className="w-full px-3 py-2.5 rounded-lg border border-[rgba(255,255,255,0.1)] text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20" />
             </div>
           </div>
-          <button onClick={handleSavePreferences} disabled={saving} className="w-full py-2.5 bg-brand-600 text-white text-sm font-semibold rounded-lg hover:bg-brand-700 disabled:opacity-50 transition-colors">
+          <button onClick={handleSavePreferences} disabled={saving} className="w-full py-2.5 bg-[#4d8ef5] text-white text-sm font-semibold rounded-lg hover:bg-[#3b7de0] disabled:opacity-50 transition-colors">
             {saving ? "Saving..." : "Save Preferences"}
           </button>
         </section>
@@ -808,9 +823,9 @@ export default function ProfilePage() {
 
       <Modal open={showLinkedIn} onClose={() => setShowLinkedIn(false)} title="Import from LinkedIn">
         <div className="space-y-4">
-          <p className="text-sm text-ink-500">Paste your LinkedIn profile URL.</p>
-          <input type="url" value={linkedinUrl} onChange={(e) => setLinkedinUrl(e.target.value)} placeholder="https://www.linkedin.com/in/your-profile" className="w-full px-3 py-2.5 rounded-lg border border-surface-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20" />
-          <button onClick={handleLinkedInImport} disabled={linkedinLoading || !linkedinUrl.trim()} className="w-full py-2.5 bg-brand-600 text-white text-sm font-semibold rounded-lg hover:bg-brand-700 disabled:opacity-50">{linkedinLoading ? "Importing..." : "Import Profile"}</button>
+          <p className="text-sm text-[rgba(255,255,255,0.45)]">Paste your LinkedIn profile URL.</p>
+          <input type="url" value={linkedinUrl} onChange={(e) => setLinkedinUrl(e.target.value)} placeholder="https://www.linkedin.com/in/your-profile" className="w-full px-3 py-2.5 rounded-lg border border-[rgba(255,255,255,0.1)] text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20" />
+          <button onClick={handleLinkedInImport} disabled={linkedinLoading || !linkedinUrl.trim()} className="w-full py-2.5 bg-[#4d8ef5] text-white text-sm font-semibold rounded-lg hover:bg-[#3b7de0] disabled:opacity-50">{linkedinLoading ? "Importing..." : "Import Profile"}</button>
         </div>
       </Modal>
     </div>
@@ -820,17 +835,17 @@ export default function ProfilePage() {
 /* ── Helper components ── */
 
 function Fld({ label, value }: { label: string; value: string }) {
-  return <div><div className="text-[11px] font-medium text-ink-400 uppercase mb-0.5">{label}</div><div className="text-sm font-medium text-ink-900">{value}</div></div>;
+  return <div><div className="text-[11px] font-medium text-[rgba(255,255,255,0.4)] uppercase mb-0.5">{label}</div><div className="text-sm font-medium text-white">{value}</div></div>;
 }
 function DFld({ label, value }: { label: string; value: string }) {
-  return <div><div className="text-[11px] font-medium text-ink-400 uppercase mb-0.5">{label}</div><div className="text-sm text-ink-700 whitespace-pre-wrap">{value}</div></div>;
+  return <div><div className="text-[11px] font-medium text-[rgba(255,255,255,0.4)] uppercase mb-0.5">{label}</div><div className="text-sm text-[rgba(255,255,255,0.7)] whitespace-pre-wrap">{value}</div></div>;
 }
 
 function EditField({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
   return (
     <div>
-      <div className="text-[11px] font-medium text-ink-400 uppercase mb-0.5">{label}</div>
-      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder || label} className="w-full px-3 py-1.5 rounded-lg border border-surface-300 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20" />
+      <div className="text-[11px] font-medium text-[rgba(255,255,255,0.4)] uppercase mb-0.5">{label}</div>
+      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder || label} className="w-full px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.12)] text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20" />
     </div>
   );
 }
@@ -838,8 +853,8 @@ function EditField({ label, value, onChange, placeholder }: { label: string; val
 function EditTextarea({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
   return (
     <div>
-      <div className="text-[11px] font-medium text-ink-400 uppercase mb-0.5">{label}</div>
-      <textarea value={value} onChange={(e) => onChange(e.target.value)} rows={3} placeholder={label} className="w-full px-3 py-2 rounded-lg border border-surface-300 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 leading-relaxed" />
+      <div className="text-[11px] font-medium text-[rgba(255,255,255,0.4)] uppercase mb-0.5">{label}</div>
+      <textarea value={value} onChange={(e) => onChange(e.target.value)} rows={3} placeholder={label} className="w-full px-3 py-2 rounded-lg border border-[rgba(255,255,255,0.12)] text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 leading-relaxed" />
     </div>
   );
 }

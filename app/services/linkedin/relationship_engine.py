@@ -186,29 +186,71 @@ def _generate_intro_message(
     target_role: str | None,
     relationship_context: str | None,
     is_recruiter: bool,
+    connection_title: str | None = None,
+    connection_seniority: int = 50,
 ) -> str:
     first_name = connection_name.split()[0] if connection_name else "there"
-    role_mention = f" for the {target_role} role" if target_role else ""
+    role_mention = f" the {target_role} role" if target_role else " opportunities"
 
-    if relationship_context:
-        opener = f"Hi {first_name}, hope you're doing well! As {relationship_context}, I wanted to reach out."
-    else:
-        opener = f"Hi {first_name}, hope you're doing well!"
-
+    # Recruiter/HR — be direct about the role
     if is_recruiter:
-        body = (
-            f" I noticed you're at {target_company} and I'm very interested "
-            f"in opportunities there{role_mention}. I'd love to learn more about "
-            f"the team and culture. Would you be open to a quick chat?"
-        )
-    else:
-        body = (
-            f" I'm exploring opportunities at {target_company}{role_mention} "
-            f"and I see you're connected there. Would you be open to sharing your experience? "
-            f"Even a quick 10-minute call would be incredibly helpful."
+        if relationship_context:
+            return (
+                f"Hi {first_name}, {relationship_context} — I wanted to reach out. "
+                f"I'm actively exploring{role_mention} at {target_company} and I'd love to learn about "
+                f"the hiring process and what the team is looking for. Would you have 10 minutes this week?"
+            )
+        return (
+            f"Hi {first_name}, I see you're handling talent at {target_company}. "
+            f"I'm very interested in{role_mention} and believe my background is a strong fit. "
+            f"Would you be open to a quick conversation about the role and what the ideal candidate looks like?"
         )
 
-    return f"{opener}{body}"
+    # Senior / C-suite — lead with strategic value, not job-seeking
+    if connection_seniority >= 70:
+        if relationship_context:
+            return (
+                f"Hi {first_name}, {relationship_context}. "
+                f"I've been following {target_company}'s trajectory closely and I'd welcome your perspective "
+                f"on where the business is headed. Would you be open to a 15-minute call? "
+                f"I have some thoughts on the operational challenges at this stage that might be useful."
+            )
+        return (
+            f"Hi {first_name}, I noticed your work at {target_company} — impressive growth. "
+            f"I'm exploring how my operational experience could contribute to what you're building. "
+            f"Rather than a formal ask, I'd love to exchange perspectives over coffee or a quick call."
+        )
+
+    # Same-function peer — ask about team dynamics and culture
+    if connection_title and target_role:
+        conn_domain = detect_domain(connection_title)
+        role_domain = detect_domain(target_role)
+        if conn_domain and conn_domain == role_domain:
+            if relationship_context:
+                return (
+                    f"Hi {first_name}, {relationship_context}. "
+                    f"I'm looking at{role_mention} at {target_company} and since you're in the same function, "
+                    f"I'd really value your take on the team dynamics, culture, and what day-to-day looks like. "
+                    f"Would you be open to a quick chat?"
+                )
+            return (
+                f"Hi {first_name}, I'm exploring{role_mention} at {target_company}. "
+                f"As someone in a similar function there, your perspective on the team and culture "
+                f"would be incredibly valuable. Would 10 minutes work sometime this week?"
+            )
+
+    # General connection — warm but specific
+    if relationship_context:
+        return (
+            f"Hi {first_name}, hope you're well! {relationship_context} — I wanted to reach out. "
+            f"I'm exploring{role_mention} at {target_company} and would love to hear about your "
+            f"experience there. Even a brief perspective on the culture and team would help a lot."
+        )
+    return (
+        f"Hi {first_name}, I'm exploring{role_mention} at {target_company} "
+        f"and I see you're connected to the team. I'd appreciate any insights you could share about "
+        f"the company culture and what they value in leaders. Would a quick call work?"
+    )
 
 
 def _suggest_cold_outreach_angle(conn: LinkedInConnection, company: str, target_role: str | None) -> str:
@@ -228,14 +270,46 @@ def _suggest_cold_outreach_angle(conn: LinkedInConnection, company: str, target_
     return f"{conn.full_name} is {title} at {company} — connect with a specific, personalized reason tied to their work"
 
 
-def _generate_cold_outreach(name: str, company: str, role: str | None) -> str:
-    """Generate a cold outreach message for someone you're NOT connected to."""
+def _generate_cold_outreach(
+    name: str, company: str, role: str | None,
+    title: str | None = None, is_recruiter: bool = False,
+) -> str:
+    """Generate a cold outreach message for someone you're NOT connected to.
+    Varies by their seniority and function."""
     first = name.split()[0] if name else "there"
-    role_mention = f" and I'm particularly interested in opportunities like {role}" if role else ""
+    seniority = detect_seniority(title or "") if title else 50
+
+    if is_recruiter or (title and detect_domain(title or "") == "hr"):
+        return (
+            f"Hi {first}, I came across your profile at {company} and I'm very interested in "
+            f"{'the ' + role + ' opportunity' if role else 'senior opportunities there'}. "
+            f"My background in operations leadership across MENA may be relevant — "
+            f"would you be open to a brief conversation about what you're looking for?"
+        )
+
+    if seniority >= 70:
+        # Senior leader — lead with business insight, not job ask
+        return (
+            f"Hi {first}, I've been following {company}'s recent moves with interest. "
+            f"{'The ' + role + ' mandate' if role else 'The strategic direction'} resonates "
+            f"with challenges I've navigated before. I'd welcome the chance to exchange perspectives — "
+            f"no ask, just a conversation between peers."
+        )
+
+    if seniority >= 50:
+        # Mid-level — ask about team and culture
+        return (
+            f"Hi {first}, I'm researching {company} and your experience as "
+            f"{title or 'part of the team'} caught my eye. "
+            f"{'I am exploring ' + role + ' and' if role else 'I'} would love to hear your take on "
+            f"the team culture and what it's like to work there. Quick 10-min call?"
+        )
+
+    # More junior — friendly, casual
     return (
-        f"Hi {first}, I came across your profile while researching {company}{role_mention}. "
-        f"I've been following {company}'s growth and I'm impressed by what the team is building. "
-        f"I'd love to connect — would you be open to a brief conversation about the team and culture?"
+        f"Hi {first}, I'm exploring opportunities at {company} "
+        f"{'in the ' + role + ' area ' if role else ''}and I'd love to learn more about "
+        f"what the company culture is like from someone on the ground. Open to a quick chat?"
     )
 
 
@@ -351,13 +425,20 @@ class RelationshipEngine:
                     "is_hiring_manager": c.is_hiring_manager or detect_seniority(c.current_title or "") >= 70,
                     "relevance_score": rank_connection(c, role),
                     "intro_angle": _suggest_intro_angle(c, role),
-                    "message": _generate_intro_message(c.full_name, company, role, None, c.is_recruiter),
+                    "message": _generate_intro_message(
+                        c.full_name, company, role, None, c.is_recruiter,
+                        connection_title=c.current_title,
+                        connection_seniority=detect_seniority(c.current_title or ""),
+                    ),
                     "connection_id": str(c.id),
                     "is_visited_profile": is_visited,
                 }
                 if is_visited:
                     entry["intro_angle"] = _suggest_cold_outreach_angle(c, company, role)
-                    entry["message"] = _generate_cold_outreach(c.full_name, company, role)
+                    entry["message"] = _generate_cold_outreach(
+                        c.full_name, company, role,
+                        title=c.current_title, is_recruiter=c.is_recruiter,
+                    )
                     visited_targets.append(entry)
                 else:
                     direct.append(entry)
@@ -388,23 +469,15 @@ class RelationshipEngine:
             conn_by_first_last[slug] = c
 
         def _find_connector(mc) -> LinkedInConnection | None:
-            """Try multiple strategies to match a mutual to our 1st-degree connection."""
+            """Match a mutual connection to a 1st-degree connection. Strict matching only."""
             mid = (mc.mutual_linkedin_id or "").strip()
             mname = (mc.mutual_name or "").lower().strip()
-            # 1. Direct linkedin_id match
+            # 1. Direct linkedin_id match (most reliable)
             if mid and mid in conn_by_id:
                 return conn_by_id[mid]
-            # 2. Exact name match
+            # 2. Exact full name match
             if mname and mname in conn_by_name:
                 return conn_by_name[mname]
-            # 3. Slug match (extension stores names as "john-doe" in linkedin_id)
-            slug = re.sub(r'[^a-z0-9]', '-', mid).strip('-') if mid else ""
-            if slug and slug in conn_by_first_last:
-                return conn_by_first_last[slug]
-            # 4. Partial match — mutual name is substring or vice versa
-            for cn, c in conn_by_name.items():
-                if mname and len(mname) > 3 and (mname in cn or cn in mname):
-                    return c
             return None
 
         for mc in all_mutuals:
@@ -435,11 +508,36 @@ class RelationshipEngine:
                         "verified": True,
                     })
 
-        # Sort real paths by connector relevance
+        # Deduplicate paths by connector — normalize names aggressively
+        seen_connectors = set()
+        unique_paths = []
+        for p in real_paths:
+            # Normalize: lowercase, strip, remove middle initials, take first+last
+            cname = p["connector"]["name"].lower().strip()
+            parts = cname.split()
+            # Use first + last name as key (ignores middle names/initials)
+            if len(parts) >= 2:
+                dedup_key = parts[0] + " " + parts[-1]
+            else:
+                dedup_key = cname
+            # Also dedup by connection_id if available
+            cid = p["connector"].get("connection_id", "")
+            if dedup_key not in seen_connectors and (not cid or cid not in seen_connectors):
+                seen_connectors.add(dedup_key)
+                if cid:
+                    seen_connectors.add(cid)
+                unique_paths.append(p)
+        real_paths = unique_paths
+
+        # Sort by connector relevance
         def _path_rank(p):
             c = conn_by_name.get(p["connector"]["name"].lower().strip())
             return rank_connection(c, role) if c else 0
         real_paths.sort(key=_path_rank, reverse=True)
+
+        # Filter out path targets who are already 1st-degree direct contacts
+        direct_names = {d["name"].lower().strip() for d in direct}
+        real_paths = [p for p in real_paths if p["target"]["name"].lower().strip() not in direct_names]
 
         # Step 3: Build candidate connectors for AI-suggested paths (fallback)
         target_domain = detect_domain(role) if role else "general"
@@ -459,9 +557,11 @@ class RelationshipEngine:
         backup_paths = []
 
         # ONLY use verified paths — no AI guessing
+        # Cap at 50 to match LinkedIn's visible mutual count
         if real_paths:
+            real_paths = real_paths[:50]
             best_path = real_paths[0]
-            backup_paths = real_paths[1:3]
+            backup_paths = real_paths[1:]
 
         # Recommended action
         if real_paths:
@@ -664,6 +764,8 @@ RULES:
             target_role=target_role,
             relationship_context=relationship_context,
             is_recruiter=conn.is_recruiter,
+            connection_title=conn.current_title,
+            connection_seniority=detect_seniority(conn.current_title or ""),
         )
         angle = _suggest_intro_angle(conn, target_role)
 

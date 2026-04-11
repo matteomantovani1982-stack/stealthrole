@@ -65,6 +65,18 @@ def _require_twilio() -> None:
         )
 
 
+def _normalize_phone(phone: str) -> str:
+    """Ensure phone is in E.164 format: +<country><number>."""
+    p = phone.replace("whatsapp:", "").strip().replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+    if p.startswith("0") and not p.startswith("00"):
+        p = "+971" + p[1:]
+    if p.startswith("00"):
+        p = "+" + p[2:]
+    if not p.startswith("+"):
+        p = "+" + p
+    return p
+
+
 @router.post("/verify", summary="Send WhatsApp verification code")
 async def verify_whatsapp(payload: WhatsAppVerifyRequest, current_user: CurrentUser, db: DB) -> dict:
     _require_twilio()
@@ -73,14 +85,15 @@ async def verify_whatsapp(payload: WhatsAppVerifyRequest, current_user: CurrentU
     user_id = str(current_user.id)
     logger.info("whatsapp_verify_requested", user_id=user_id, phone=payload.whatsapp_number)
 
+    normalized_number = _normalize_phone(payload.whatsapp_number)
     try:
         svc = WhatsAppVerification()
-        await svc.send_code(user_id, payload.whatsapp_number)
+        await svc.send_code(user_id, normalized_number)
     except VerificationError as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
 
-    # Persist the number (unverified) so we can match it on confirm
-    current_user.whatsapp_number = payload.whatsapp_number
+    # Persist the normalized number (unverified) so we can match it on confirm
+    current_user.whatsapp_number = normalized_number
     current_user.whatsapp_verified = False
     db.add(current_user)
     await db.commit()
@@ -97,7 +110,8 @@ async def confirm_whatsapp(payload: WhatsAppConfirmRequest, current_user: Curren
     logger.info("whatsapp_confirm_requested", user_id=user_id, phone=payload.whatsapp_number)
 
     # Ensure the number matches what was sent for verification
-    if current_user.whatsapp_number != payload.whatsapp_number:
+    normalized_number = _normalize_phone(payload.whatsapp_number)
+    if current_user.whatsapp_number != normalized_number:
         raise HTTPException(
             status_code=400,
             detail="Phone number does not match the one awaiting verification.",
@@ -142,13 +156,14 @@ async def send_whatsapp(
     try:
         from twilio.rest import Client
         client = Client(settings.twilio_account_sid, settings.twilio_auth_token)
+        normalized = _normalize_phone(phone)
         msg = client.messages.create(
             body=payload.message,
             from_=settings.twilio_whatsapp_from,
-            to=f"whatsapp:{phone}" if not phone.startswith("whatsapp:") else phone,
+            to=f"whatsapp:{normalized}",
         )
-        logger.info("whatsapp_sent", to=phone, sid=msg.sid)
-        return {"status": "sent", "message_sid": msg.sid, "to": phone}
+        logger.info("whatsapp_sent", to=normalized, sid=msg.sid)
+        return {"status": "sent", "message_sid": msg.sid, "to": normalized}
     except Exception as e:
         logger.error("whatsapp_send_failed", error=str(e))
         raise HTTPException(status_code=500, detail=f"Send failed: {str(e)}")
@@ -170,10 +185,11 @@ async def send_test_whatsapp(
     try:
         from twilio.rest import Client
         client = Client(settings.twilio_account_sid, settings.twilio_auth_token)
+        normalized = _normalize_phone(phone)
         msg = client.messages.create(
             body="StealthRole test: WhatsApp alerts are working! You'll receive daily opportunity alerts, follow-up reminders, and pack notifications here.",
             from_=settings.twilio_whatsapp_from,
-            to=f"whatsapp:{phone}" if not phone.startswith("whatsapp:") else phone,
+            to=f"whatsapp:{normalized}",
         )
         return {"status": "sent", "message_sid": msg.sid}
     except Exception as e:
@@ -236,10 +252,11 @@ async def send_opportunity_alert(
     try:
         from twilio.rest import Client
         client = Client(settings.twilio_account_sid, settings.twilio_auth_token)
+        normalized = _normalize_phone(phone)
         result = client.messages.create(
             body=message,
             from_=settings.twilio_whatsapp_from,
-            to=f"whatsapp:{phone}" if not phone.startswith("whatsapp:") else phone,
+            to=f"whatsapp:{normalized}",
         )
         return {"status": "sent", "message_sid": result.sid, "message": message}
     except Exception as e:

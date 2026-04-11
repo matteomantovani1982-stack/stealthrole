@@ -192,10 +192,17 @@ def _send_wa_alerts(user_id: str, opportunities: list, log):
                 msg += f"\n👉 View & generate Intelligence Pack:\n{app_base}/scout\n"
                 msg += f"\n_1 pack = 3 credits — tailored CV, strategy, salary, contacts_"
 
+                # Normalize phone number to E.164
+                phone = user.whatsapp_number.replace(" ", "").replace("-", "")
+                if phone.startswith("0") and not phone.startswith("00"):
+                    phone = "+971" + phone[1:]
+                if not phone.startswith("+"):
+                    phone = "+" + phone
+
                 client.messages.create(
                     body=msg,
                     from_=settings.twilio_whatsapp_from,
-                    to=f"whatsapp:{user.whatsapp_number}",
+                    to=f"whatsapp:{phone}",
                 )
                 log.info("wa_alert_sent", user_id=user_id, company=opp.get("company"), score=score)
 

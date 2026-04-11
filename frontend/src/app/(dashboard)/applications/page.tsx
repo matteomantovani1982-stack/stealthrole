@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getBoard,
   getApplicationAnalytics,
@@ -67,6 +67,8 @@ export default function ApplicationsPage() {
   // Pack state
   const [packMessage, setPackMessage] = useState("");
   const [generatingPack, setGeneratingPack] = useState(false);
+  const [packStep, setPackStep] = useState(0); // 0=idle, 1-5=steps
+  const packCancelledRef = useRef(false);
   const [showPackModal, setShowPackModal] = useState<ApplicationItem | null>(null);
   const [packJdText, setPackJdText] = useState("");
   const [packJdUrl, setPackJdUrl] = useState("");
@@ -209,6 +211,72 @@ export default function ApplicationsPage() {
     } finally { setUploadingCv(false); }
   }
 
+  const PACK_STEPS = [
+    "", // 0 = idle
+    "Analysing job description...",
+    "Matching to your profile...",
+    "Generating strategy & intel...",
+    "Building contact paths...",
+    "Finalising pack...",
+  ];
+
+  function cancelPackGeneration() {
+    packCancelledRef.current = true;
+    setGeneratingPack(false);
+    setPackStep(0);
+    setPackMessage("Pack generation cancelled.");
+    setTimeout(() => setPackMessage(""), 4000);
+  }
+
+  async function pollPackWithProgress(runId: string, company: string) {
+    const POLL_INTERVAL = 5000;
+    const TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
+    const startTime = Date.now();
+    let timedOut = false;
+
+    for (let i = 0; i < 120; i++) {
+      if (packCancelledRef.current) return;
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+      if (packCancelledRef.current) return;
+
+      const elapsed = Date.now() - startTime;
+
+      // Update progress step based on elapsed time
+      if (elapsed < 15000) setPackStep(1);
+      else if (elapsed < 40000) setPackStep(2);
+      else if (elapsed < 90000) setPackStep(3);
+      else if (elapsed < 140000) setPackStep(4);
+      else setPackStep(5);
+
+      try {
+        const updated = await getJobRun(runId);
+
+        if (updated.status === "completed") {
+          setPackStep(0);
+          setPackMessage(`Pack ready for ${company}! Click the card to view.`);
+          refresh();
+          return;
+        }
+        if (updated.status === "failed") {
+          setPackStep(0);
+          setPackMessage(`Pack generation failed: ${updated.error_message || "Unknown error"}. Your credits have not been charged.`);
+          return;
+        }
+
+        // Check timeout
+        if (elapsed > TIMEOUT_MS && !timedOut) {
+          timedOut = true;
+          setPackMessage(`Taking longer than expected for ${company}. We'll notify you when it's ready — you can navigate away.`);
+        }
+      } catch {
+        // Network error — keep polling
+      }
+    }
+    // Max polls reached
+    setPackStep(0);
+    setPackMessage(`Pack for ${company} is still processing. Check back shortly.`);
+  }
+
   // Create application + auto-generate pack
   async function handleAdd(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -228,6 +296,9 @@ export default function ApplicationsPage() {
 
       // Auto-trigger pack if we have JD + CV
       if ((addJdText || addUrl) && selectedCvId) {
+        setGeneratingPack(true);
+        setPackStep(1);
+        packCancelledRef.current = false;
         setPackMessage(`Generating Intelligence Pack for ${addCompany}...`);
         try {
           const run = await createJobRun({
@@ -245,24 +316,12 @@ export default function ApplicationsPage() {
               await new Promise((r) => setTimeout(r, 1000));
             }
           }
-          // Poll for completion (up to 10 minutes)
-          for (let i = 0; i < 120; i++) {
-            await new Promise((r) => setTimeout(r, 5000));
-            const updated = await getJobRun(run.id);
-            if (updated.status === "completed") {
-              setPackMessage(`Pack ready for ${addCompany}! Click the card to view.`);
-              refresh();
-              break;
-            }
-            if (updated.status === "failed") {
-              setPackMessage(`Pack failed: ${updated.error_message || "unknown error"}`);
-              break;
-            }
-            setPackMessage(`Generating pack for ${addCompany}... (${updated.status})`);
-          }
+          await pollPackWithProgress(run.id, addCompany);
         } catch (err: unknown) {
-          setPackMessage(err instanceof Error ? err.message : "Pack generation failed");
+          setPackMessage(err instanceof Error ? err.message : "Pack generation failed. Your credits have not been charged.");
         }
+        setGeneratingPack(false);
+        setPackStep(0);
         setTimeout(() => setPackMessage(""), 8000);
       }
 
@@ -280,10 +339,12 @@ export default function ApplicationsPage() {
       handleCardClick(app);
       return;
     }
-    if (!selectedCvId) { setPackMessage("Upload a CV first (Profile page)"); setTimeout(() => setPackMessage(""), 3000); return; }
+    if (!selectedCvId) { setPackMessage("Upload a CV first on the Profile page before generating a pack."); setTimeout(() => setPackMessage(""), 5000); return; }
 
     // Auto-generate pack directly — no dialog needed
     setGeneratingPack(true);
+    setPackStep(1);
+    packCancelledRef.current = false;
     setPackMessage(`Generating pack for ${app.company}...`);
     try {
       const jdText = app.notes || `${app.role} at ${app.company}`;
@@ -296,32 +357,37 @@ export default function ApplicationsPage() {
       for (let retry = 0; retry < 3; retry++) {
         try { await updateApplication(app.id, { job_run_id: run.id } as any); break; } catch { await new Promise(r => setTimeout(r, 1000)); }
       }
-      setPackMessage(`Pack generating for ${app.company}! It takes 2-3 minutes.`);
       // Update the app in local state so it doesn't show Generate Pack again
       const updatedApp = { ...app, job_run_id: run.id };
       setSelected(updatedApp);
       // Refresh board
       const freshBoard = await getBoard();
       setBoard(freshBoard);
+      // Poll with progress
+      await pollPackWithProgress(run.id, app.company);
       // Load the pack
       try {
         const pack = await getJobRun(run.id);
         setLoadedPack(pack);
       } catch {}
     } catch (err: any) {
-      setPackMessage(`Pack failed: ${err.message || "Unknown error"}`);
+      setPackMessage(`Pack failed: ${err.message || "Unknown error"}. Your credits have not been charged.`);
     }
     setGeneratingPack(false);
+    setPackStep(0);
   }
 
   async function handleRunPack() {
-    if (!showPackModal || !selectedCvId) return;
+    if (!showPackModal) return;
+    if (!selectedCvId) { setPackMessage("Upload a CV first on the Profile page before generating a pack."); setTimeout(() => setPackMessage(""), 5000); setShowPackModal(null); return; }
     const app = showPackModal;
     const jdText = packJdText.trim() || `${app.role} at ${app.company}`;
     const jdUrl = packJdUrl.trim() || undefined;
     const appId = app.id;
     setShowPackModal(null);
     setGeneratingPack(true);
+    setPackStep(1);
+    packCancelledRef.current = false;
     setPackMessage(`Generating pack for ${app.company}...`);
     try {
       const run = await createJobRun({
@@ -334,18 +400,12 @@ export default function ApplicationsPage() {
         try { await updateApplication(appId, { job_run_id: run.id } as Partial<ApplicationItem>); break; }
         catch (linkErr) { console.error(`Link attempt ${retry + 1}:`, linkErr); await new Promise((r) => setTimeout(r, 1000)); }
       }
-      // Poll for completion (up to 10 minutes)
-      for (let i = 0; i < 120; i++) {
-        await new Promise((r) => setTimeout(r, 5000));
-        const updated = await getJobRun(run.id);
-        if (updated.status === "completed") { setPackMessage(`Pack ready for ${app.company}! Click the card to view.`); refresh(); break; }
-        if (updated.status === "failed") { setPackMessage(`Pack failed: ${updated.error_message || "error"}`); break; }
-        setPackMessage(`Generating for ${app.company}... (${updated.status})`);
-      }
+      await pollPackWithProgress(run.id, app.company);
     } catch (err: unknown) {
-      setPackMessage(err instanceof Error ? err.message : "Failed");
+      setPackMessage(err instanceof Error ? err.message : "Pack generation failed. Your credits have not been charged.");
     } finally {
       setGeneratingPack(false);
+      setPackStep(0);
       setTimeout(() => setPackMessage(""), 8000);
     }
   }
@@ -360,33 +420,141 @@ export default function ApplicationsPage() {
   const offerCount = analytics?.by_stage?.find((s) => s.stage === "offer")?.count ?? 0;
   const avgDays = analytics?.avg_days_to_interview;
 
+  const COL_STYLES: Record<string, { color: string; light: string; headerBg: string; headerBorder: string; bodyBg: string; bodyBorder: string; badgeBg: string; cardBg: string; cardBorder: string; label: string }> = {
+    watching:  { color: "#fbbf24", light: "#fcd34d", headerBg: "rgba(251,191,36,0.12)", headerBorder: "0.5px solid rgba(251,191,36,0.25)", bodyBg: "rgba(251,191,36,0.04)", bodyBorder: "0.5px solid rgba(251,191,36,0.15)", badgeBg: "rgba(251,191,36,0.18)", cardBg: "rgba(251,191,36,0.08)", cardBorder: "1px solid rgba(251,191,36,0.2)", label: "Watching" },
+    applied:   { color: "#4d8ef5", light: "#93c5fd", headerBg: "rgba(77,142,245,0.12)", headerBorder: "0.5px solid rgba(77,142,245,0.25)", bodyBg: "rgba(77,142,245,0.04)", bodyBorder: "0.5px solid rgba(77,142,245,0.15)", badgeBg: "rgba(77,142,245,0.18)", cardBg: "rgba(77,142,245,0.09)", cardBorder: "1px solid rgba(77,142,245,0.25)", label: "Applied" },
+    interview: { color: "#a78bfa", light: "#c4b5fd", headerBg: "rgba(167,139,250,0.12)", headerBorder: "0.5px solid rgba(167,139,250,0.25)", bodyBg: "rgba(167,139,250,0.04)", bodyBorder: "0.5px solid rgba(167,139,250,0.15)", badgeBg: "rgba(167,139,250,0.18)", cardBg: "rgba(167,139,250,0.1)", cardBorder: "1px solid rgba(167,139,250,0.28)", label: "Interview" },
+    offer:     { color: "#22c55e", light: "#86efac", headerBg: "rgba(34,197,94,0.1)", headerBorder: "0.5px solid rgba(34,197,94,0.22)", bodyBg: "rgba(34,197,94,0.03)", bodyBorder: "0.5px solid rgba(34,197,94,0.12)", badgeBg: "rgba(34,197,94,0.15)", cardBg: "rgba(34,197,94,0.08)", cardBorder: "1px solid rgba(34,197,94,0.2)", label: "Offer" },
+    rejected:  { color: "#ef4444", light: "#fca5a5", headerBg: "rgba(239,68,68,0.1)", headerBorder: "0.5px solid rgba(239,68,68,0.2)", bodyBg: "rgba(239,68,68,0.03)", bodyBorder: "0.5px solid rgba(239,68,68,0.1)", badgeBg: "rgba(239,68,68,0.15)", cardBg: "rgba(239,68,68,0.06)", cardBorder: "1px solid rgba(239,68,68,0.18)", label: "Closed" },
+  };
+
+  const totalActive = (analytics?.total_applications ?? 0) - (analytics?.by_stage?.find(s => s.stage === "rejected")?.count ?? 0);
+  const followUpCount = board?.columns?.find(c => c.stage === "applied")?.applications?.filter(a => {
+    const d = a.date_applied ? (Date.now() - new Date(a.date_applied).getTime()) / 86400000 : 0;
+    return d >= 3;
+  }).length ?? 0;
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-ink-900">Applications</h1>
-        <button onClick={() => setShowAdd(true)} className="px-4 py-2 bg-brand-600 text-white text-sm font-semibold rounded-lg hover:bg-brand-700 transition-colors">+ Add Application</button>
+    <div>
+      <style jsx global>{`
+        @keyframes appCardSlide { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+      `}</style>
+
+      {/* Topbar */}
+      <div style={{ padding: "16px 24px", borderBottom: "0.5px solid rgba(255,255,255,0.05)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <h1 style={{ fontSize: 20, fontWeight: 500, color: "#fff", margin: 0 }}>Applications</h1>
+          {[
+            { label: "interviews", count: interviewCount, color: "#c4b5fd", bg: "rgba(167,139,250,0.1)", border: "rgba(167,139,250,0.25)" },
+            { label: "follow-ups due", count: followUpCount, color: "#fcd34d", bg: "rgba(251,191,36,0.1)", border: "rgba(251,191,36,0.25)" },
+            { label: "total active", count: totalActive, color: "#93c5fd", bg: "rgba(77,142,245,0.1)", border: "rgba(77,142,245,0.25)" },
+          ].map((p, i) => (
+            <span key={i} style={{ fontSize: 11, padding: "4px 12px", borderRadius: 14, border: `0.5px solid ${p.border}`, background: p.bg, color: "rgba(255,255,255,0.5)" }}>
+              <span style={{ color: p.color, fontWeight: 500 }}>{p.count}</span> {p.label}
+            </span>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={refresh} style={{ background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.6)", border: "0.5px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: "8px 14px", fontSize: 11, fontWeight: 500, cursor: "pointer" }}>Refresh</button>
+          <button onClick={() => setShowAdd(true)} style={{ background: "#4d8ef5", color: "#fff", border: "none", borderRadius: 10, padding: "8px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>+ Add application</button>
+        </div>
       </div>
 
-      {packMessage && <div className="px-4 py-3 rounded-lg bg-brand-50 text-brand-700 text-sm">{packMessage}</div>}
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard label="Total" value={analytics?.total_applications ?? 0} />
-        <StatCard label="Interviews" value={interviewCount} />
-        <StatCard label="Offers" value={offerCount} accent={offerCount > 0} />
-        <StatCard label="Avg. to Interview" value={avgDays ? `${avgDays}d` : "\u2014"} subtitle={analytics?.best_source_channel ? `Best: ${analytics.best_source_channel}` : undefined} />
-      </div>
-
-      {/* Kanban */}
-      {loading ? (
-        <div className="flex gap-3 overflow-x-auto pb-4">{STAGES.map((s) => <div key={s} className="min-w-[200px] flex-1 h-[400px] bg-surface-100 rounded-xl animate-pulse" />)}</div>
-      ) : (
-        <div className="flex gap-3 overflow-x-auto pb-4">
-          {STAGES.map((stage) => {
-            const col = board?.columns.find((c) => c.stage === stage);
-            return <KanbanColumn key={stage} stage={stage} applications={col?.applications ?? []} onCardClick={handleCardClick} onDrop={handleDrop} />;
-          })}
+      {/* Pack generation progress banner */}
+      {(packMessage || generatingPack) && (
+        <div style={{ margin: "12px 24px", padding: "14px 18px", borderRadius: 12, background: "rgba(77,142,245,0.1)", border: "0.5px solid rgba(77,142,245,0.25)" }}>
+          {generatingPack && packStep > 0 ? (
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: "#93c5fd" }}>Building your Intelligence Pack</span>
+                <button onClick={cancelPackGeneration} style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", background: "rgba(255,255,255,0.06)", border: "0.5px solid rgba(255,255,255,0.1)", borderRadius: 6, padding: "3px 10px", cursor: "pointer" }}>Cancel</button>
+              </div>
+              <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                {[1, 2, 3, 4, 5].map((step) => (
+                  <div key={step} style={{ flex: 1, height: 3, borderRadius: 2, background: step <= packStep ? "#4d8ef5" : "rgba(255,255,255,0.08)", transition: "background 0.3s" }} />
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: packStep >= 4 ? "#93c5fd" : "rgba(255,255,255,0.4)" }}>
+                Step {packStep}/5: {PACK_STEPS[packStep]}
+              </div>
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: packMessage.includes("failed") || packMessage.includes("cancelled") ? "#fca5a5" : "#93c5fd" }}>{packMessage}</div>
+          )}
         </div>
       )}
+
+      {/* Kanban */}
+      <div style={{ display: "flex", gap: 14, padding: "16px 24px", overflowX: "auto", alignItems: "flex-start" }}>
+        {loading ? (
+          STAGES.map(s => <div key={s} style={{ width: 220, height: 400, borderRadius: 14, background: "rgba(255,255,255,0.04)" }} className="animate-pulse" />)
+        ) : (
+          STAGES.map((stage) => {
+            const col = board?.columns.find((c) => c.stage === stage);
+            const apps = col?.applications ?? [];
+            const cs = COL_STYLES[stage] || COL_STYLES.watching;
+            return (
+              <div key={stage} style={{ width: 220, flexShrink: 0 }}
+                onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.outline = `2px solid ${cs.color}44`; }}
+                onDragLeave={(e) => { e.currentTarget.style.outline = "none"; }}
+                onDrop={(e) => { e.currentTarget.style.outline = "none"; const id = e.dataTransfer.getData("text/plain"); if (id) handleDrop(id, stage); }}
+              >
+                {/* Header */}
+                <div style={{ background: cs.headerBg, border: cs.headerBorder, borderBottom: "none", borderRadius: "10px 10px 0 0", padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: cs.light }}>{cs.label}</span>
+                  <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 8, background: cs.badgeBg, color: cs.light }}>{apps.length}</span>
+                </div>
+                {/* Body */}
+                <div style={{ background: cs.bodyBg, border: cs.bodyBorder, borderTop: "none", borderRadius: "0 0 12px 12px", padding: "8px 6px 6px", minHeight: 120, display: "flex", flexDirection: "column", gap: 8 }}>
+                  {apps.length === 0 && stage === "offer" && (
+                    <div style={{ padding: "24px 10px", textAlign: "center" }}>
+                      <div style={{ fontSize: 28, opacity: 0.12, marginBottom: 6 }}>🏆</div>
+                      <div style={{ fontSize: 10, color: `${cs.light}40`, lineHeight: 1.5 }}>Your offer lands here.</div>
+                    </div>
+                  )}
+                  {apps.map((app, idx) => (
+                    <div key={app.id}
+                      draggable
+                      onDragStart={(e) => e.dataTransfer.setData("text/plain", app.id)}
+                      onClick={() => handleCardClick(app)}
+                      style={{
+                        background: cs.cardBg, border: cs.cardBorder, borderRadius: 12,
+                        padding: 13, cursor: "pointer", transition: "transform 0.15s",
+                        margin: "0 6px", opacity: stage === "rejected" ? 0.7 : 1,
+                        animation: `appCardSlide 0.3s ease ${idx * 0.03}s both`,
+                      }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.transform = "translateY(-2px)"; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.transform = "translateY(0)"; }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+                        <div style={{ width: 28, height: 28, borderRadius: 7, background: `${cs.color}26`, color: cs.light, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700 }}>
+                          {(app.company || "?").split(" ").map(w => w[0]).join("").substring(0, 2).toUpperCase()}
+                        </div>
+                        {app.job_run_id && <span style={{ fontSize: 8, padding: "2px 5px", borderRadius: 5, background: "rgba(34,197,94,0.15)", color: "#86efac", fontWeight: 600 }}>Pack</span>}
+                      </div>
+                      <div style={{ fontSize: 12, fontWeight: 500, color: "#fff", marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{app.role || "Role"}</div>
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{app.company}</div>
+                      <div style={{ fontSize: 9, color: "rgba(255,255,255,0.25)" }}>{app.date_applied ? new Date(app.date_applied).toLocaleDateString("en-GB", { month: "short", day: "numeric" }) : ""}</div>
+                      <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
+                        {!app.job_run_id && (
+                          <button onClick={(e) => { e.stopPropagation(); handleGeneratePack(app); }} disabled={generatingPack}
+                            style={{ fontSize: 9, fontWeight: 600, padding: "3px 7px", borderRadius: 6, background: `${cs.color}2e`, color: cs.light, border: "none", cursor: "pointer", opacity: generatingPack ? 0.5 : 1 }}>
+                            Gen Pack
+                          </button>
+                        )}
+                        <button onClick={(e) => { e.stopPropagation(); handleCardClick(app); }}
+                          style={{ fontSize: 9, fontWeight: 500, padding: "3px 7px", borderRadius: 6, background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.5)", border: "0.5px solid rgba(255,255,255,0.06)", cursor: "pointer" }}>
+                          View
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
 
       {/* ── ADD MODAL ── */}
       <Modal open={showAdd} onClose={() => { setShowAdd(false); setAddUrl(""); setAddCompany(""); setAddRole(""); setAddJdText(""); }} title="Add Application">
@@ -492,7 +660,7 @@ export default function ApplicationsPage() {
               <div className="text-center py-4">
                 <div className="text-sm text-ink-400 mb-3">No Intelligence Pack generated yet</div>
                 <button onClick={() => handleGeneratePack(selected)} disabled={generatingPack} className="px-4 py-2 text-sm text-white bg-brand-600 hover:bg-brand-700 rounded-lg font-medium disabled:opacity-50">
-                  {generatingPack ? "Generating..." : "Generate Pack"}
+                  {generatingPack ? `Step ${packStep}/5...` : "Generate Pack"}
                 </button>
               </div>
             )}

@@ -624,16 +624,16 @@ async def current_vacancies(
     sector_str = " ".join(sectors[:2]) if sectors else ""
     region = regions[0] if regions else "UAE"
 
-    # Search actual job boards
+    # Search actual job boards — use specific job post URLs, not search pages
     queries = [
-        f"{role_str} job {region} {sector_str}",
-        f"site:linkedin.com/jobs {role_str} {region}",
-        f"site:bayt.com {role_str} {region}",
-        f"site:indeed.com {role_str} {region}",
-        f"site:gulftalent.com {role_str}",
-        f"COO OR 'VP Operations' OR 'Head of Strategy' job {region} 2026",
-        f"General Manager OR 'Country Manager' {sector_str} {region}",
-        f"site:linkedin.com/jobs 'Managing Director' OR 'VP' {sector_str} {region}",
+        f"site:linkedin.com/jobs/view {role_str} {region}",
+        f"site:bayt.com/en/jobs {role_str} {region}",
+        f"site:indeed.com/viewjob {role_str} {region}",
+        f"site:gulftalent.com/jobs {role_str}",
+        f"site:linkedin.com/jobs/view COO OR 'VP Operations' OR 'Head of Strategy' {region}",
+        f"{role_str} hiring {region} {sector_str} 2026",
+        f"'General Manager' OR 'Country Manager' OR 'Managing Director' hiring {region} {sector_str}",
+        f"site:greenhouse.io OR site:lever.co {role_str} {region}",
     ]
 
     JOB_SOURCES = ["linkedin.com", "bayt.com", "indeed.com", "gulftalent.com", "monster.com",
@@ -671,8 +671,14 @@ async def current_vacancies(
                     if not is_job and not has_job_keyword:
                         continue
 
-                    # Skip articles/guides
-                    if any(skip in title_lower for skip in ["how to", "guide", "top 10", "best companies", "salary guide", "interview tips"]):
+                    # Skip articles/guides/aggregator pages
+                    if any(skip in title_lower for skip in ["how to", "guide", "top 10", "best companies", "salary guide", "interview tips", "jobs in", "search results", "latest jobs", "job openings in"]):
+                        continue
+
+                    # Skip LinkedIn search/aggregate pages (not actual job posts)
+                    if "linkedin.com/jobs/search" in url.lower():
+                        continue
+                    if re.search(r'\d+\s+\w+\s+jobs?\s+in\s+', title_lower):
                         continue
 
                     # Detect source
@@ -728,6 +734,14 @@ async def current_vacancies(
                         if snippet_match:
                             company = snippet_match.group(1).strip()[:50]
 
+                    # Skip if no company could be extracted
+                    if not company or company.lower() in ("company", "unknown", "n/a", ""):
+                        continue
+                    # Skip stale results (date string containing year before current)
+                    date_str = r.get("date", "")
+                    if date_str and ("2024" in date_str or "2023" in date_str):
+                        continue
+
                     all_results.append({
                         "title": title[:150],
                         "role": role_extracted or title[:80],
@@ -735,7 +749,7 @@ async def current_vacancies(
                         "description": snippet[:300],
                         "url": url,
                         "source": source,
-                        "date": r.get("date", ""),
+                        "date": date_str,
                     })
             except Exception:
                 continue

@@ -18,10 +18,37 @@ import {
 
 function greeting(): string {
   const h = new Date().getHours();
-  if (h < 12) return "Good morning";
-  if (h < 18) return "Good afternoon";
-  return "Good evening";
+  if (h < 12) return "Good morning,";
+  if (h < 18) return "Good afternoon,";
+  return "Good evening,";
 }
+
+function timeAgo(dateStr: string): string {
+  const now = Date.now();
+  const then = new Date(dateStr).getTime();
+  const diffMs = now - then;
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+const TIER_COLORS: Record<string, string> = {
+  high: "#4d8ef5",
+  medium: "#a78bfa",
+  low: "#22c55e",
+};
+
+const STAGE_COLORS: Record<string, string> = {
+  watching: "#4d8ef5",
+  applied: "#a78bfa",
+  interview: "#22c55e",
+  offer: "#fbbf24",
+  closed: "rgba(255,255,255,0.3)",
+};
 
 export default function HomePage() {
   const { user } = useAuth();
@@ -42,316 +69,350 @@ export default function HomePage() {
     ]).finally(() => setLoading(false));
   }, []);
 
-  const displayName =
-    user?.full_name?.split(" ")[0] || user?.email?.split("@")[0] || "there";
-
-  // Derive data from API or use placeholder defaults
-  const totalApps = board?.total ?? analytics?.total_applications ?? 2;
-  const interviewApps = board?.columns?.find((c) => c.stage === "interview")?.applications || [];
-  const appliedApps = board?.columns?.find((c) => c.stage === "applied")?.applications || [];
-  const allApps = board?.columns?.flatMap((c) => c.applications.map((a) => ({ ...a, stage: c.stage }))) || [];
-
-  // Pipeline items sorted by recent
-  const pipelineItems = [...allApps]
-    .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
-    .slice(0, 5);
-
-  // Top opportunities
-  const topOpps = opportunities.slice(0, 2);
-
-  // Signals
-  const topSignals = signals.slice(0, 5);
-
-  const stageColors: Record<string, string> = {
-    watching: "bg-[#2A2D45] text-[#8B92B0]",
-    applied: "bg-[#1E2A4A] text-[#5B9BFF]",
-    interview: "bg-[#2A1E4A] text-[#9B7FFF]",
-    offer: "bg-[#1E3A2A] text-[#5BCC7F]",
-    rejected: "bg-[#3A1E1E] text-[#FF7F7F]",
-  };
+  const displayName = user?.full_name || user?.email?.split("@")[0] || "there";
 
   if (loading) {
     return (
-      <div className="space-y-6 mt-6">
-        <div className="h-16 rounded-2xl animate-pulse" style={{ background: "rgba(255,255,255,0.04)" }} />
-        <div className="grid grid-cols-4 gap-4">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="h-24 rounded-[14px] animate-pulse" style={{ background: "rgba(255,255,255,0.04)" }} />
-          ))}
+      <div style={{ padding: "36px" }}>
+        <div className="animate-pulse" style={{ height: 270, borderRadius: 20, background: "rgba(255,255,255,0.04)", marginBottom: 20 }} />
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 10 }}>
+          {[1,2,3].map(i => <div key={i} className="animate-pulse" style={{ height: 220, borderRadius: 16, background: "rgba(255,255,255,0.04)" }} />)}
         </div>
-        {[1, 2, 3].map((i) => (
-          <div key={i} className="h-40 rounded-2xl animate-pulse" style={{ background: "rgba(255,255,255,0.04)" }} />
-        ))}
       </div>
     );
   }
 
+  const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+
+  // Derive real stats from fetched data
+  const interviewCount = board?.columns?.find(c => c.stage === "interview")?.count ?? 0;
+  const followUpsDue = board?.columns?.find(c => c.stage === "applied")?.applications?.filter(a => {
+    const d = new Date(a.date_applied);
+    return (Date.now() - d.getTime()) / 86400000 > 3;
+  }).length ?? 0;
+
+  // Get recent pipeline items (from board data)
+  const pipelineItems: { company: string; role: string; stage: string }[] = [];
+  if (board?.columns) {
+    for (const col of board.columns) {
+      for (const app of (col.applications || []).slice(0, 2)) {
+        pipelineItems.push({ company: app.company, role: app.role, stage: col.stage });
+      }
+    }
+  }
+
+  // Build action items from real data
+  const actionItems: { color: string; title: string; sub: string; cta: string; href: string }[] = [];
+  if (board?.columns) {
+    const interviewCol = board.columns.find(c => c.stage === "interview");
+    if (interviewCol) {
+      for (const app of (interviewCol.applications || []).slice(0, 2)) {
+        actionItems.push({
+          color: "#22c55e",
+          title: `Interview — ${app.company}`,
+          sub: app.role + (app.interview_at ? ` · ${new Date(app.interview_at).toLocaleDateString()}` : ""),
+          cta: "Prep →",
+          href: `/applications`,
+        });
+      }
+    }
+    const appliedCol = board.columns.find(c => c.stage === "applied");
+    if (appliedCol) {
+      for (const app of (appliedCol.applications || []).filter(a => (Date.now() - new Date(a.date_applied).getTime()) / 86400000 > 3).slice(0, 2)) {
+        const days = Math.floor((Date.now() - new Date(a.date_applied).getTime()) / 86400000);
+        actionItems.push({
+          color: "#fbbf24",
+          title: `Follow up — ${app.company}`,
+          sub: `${days} days · no response`,
+          cta: "Send →",
+          href: `/applications`,
+        });
+      }
+    }
+  }
+  if (opportunities.length > 0) {
+    actionItems.push({
+      color: "#4d8ef5",
+      title: `New signal — ${opportunities[0].company}`,
+      sub: opportunities[0].role || opportunities[0].reasoning?.slice(0, 40) || "New opportunity detected",
+      cta: "View →",
+      href: `/scout`,
+    });
+  }
+
   return (
-    <div className="space-y-6 mt-6 mb-12">
-      {/* ── Header ──────────────────────────────────────────── */}
-      <div className="mb-5">
-        <h1 className="text-[22px] font-bold text-white">
-          {greeting()}, {displayName}
-        </h1>
-        <p className="text-[13px] text-[#6B7194] mt-1">
-          Scanning the market and tracking your pipeline...
-        </p>
-      </div>
+    <>
+      <style jsx global>{`
+        @keyframes logoFloat{0%,100%{transform:translateX(-50%) translateY(0)}50%{transform:translateX(-50%) translateY(-8px)}}
+        @keyframes shimmer{0%{background-position:200% center}100%{background-position:-200% center}}
+        @keyframes glowDot{0%,100%{opacity:.3}50%{opacity:.9}}
+        @keyframes eyeGlow{0%,100%{opacity:.2}50%{opacity:.6}}
+        @keyframes pulseGlow{0%,100%{opacity:.2}50%{opacity:.6}}
+        @keyframes slideRight{from{width:0}to{width:var(--w)}}
+        @keyframes ticker{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:translateX(0)}}
+        @media (max-width: 768px) {
+          .hero-text-block { max-width: 100% !important; }
+          .hero-stats-row { flex-wrap: wrap !important; gap: 14px !important; }
+          .opp-grid { grid-template-columns: 1fr !important; }
+          .bottom-panels { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
 
-      {/* ── Top Metrics ─────────────────────────────────────── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <MetricCard
-          title="Applications Sent"
-          value={totalApps || 2}
-          sub={appliedApps.length > 0 ? `+${appliedApps.length} this week` : "+1 this week"}
-        />
-        <MetricCard
-          title="Interviews Booked"
-          value={interviewApps.length || 1}
-          sub={interviewApps[0] ? `${interviewApps[0].company} — upcoming` : "Careem — Thursday"}
-        />
-        <MetricCard
-          title="Follow-ups Due"
-          value={`${appliedApps.filter((a) => (Date.now() - new Date(a.date_applied).getTime()) / 86400000 >= 3).length || 1} today`}
-          sub={appliedApps[0] ? `${appliedApps[0].company} pending` : "Tabby pending"}
-        />
-        <MetricCard
-          title="Hidden Matches"
-          value={`${signals.length || 3} new`}
-          sub="Roles before posting"
-          accent
-        />
-      </div>
+      <div style={{ minHeight: "100vh" }}>
+        {/* ═══ HERO ═══ */}
+        <div style={{ position: "relative", minHeight: 270, overflow: "hidden", borderBottom: "0.5px solid rgba(77,142,245,0.07)" }}>
+          {/* Blue radial glow */}
+          <div style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%,-50%)", width: 420, height: 420, borderRadius: "50%", background: "radial-gradient(circle, rgba(77,142,245,0.08) 0%, transparent 65%)", zIndex: 0, animation: "pulseGlow 5s ease-in-out infinite" }} />
 
-      {/* ── Your priorities today ───────────────────────────── */}
-      <section>
-        <SectionTitle>Your priorities today</SectionTitle>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <PriorityCard
-            icon="📩"
-            title={appliedApps[0] ? `Follow up — ${appliedApps[0].company}` : "Follow up — Tabby"}
-            lines={[
-              appliedApps[0] ? `You applied ${Math.floor((Date.now() - new Date(appliedApps[0].date_applied).getTime()) / 86400000)} days ago` : "You applied 3 days ago",
-              "No response yet",
-            ]}
-            cta="Send follow-up"
-            href="/applications"
-          />
-          <PriorityCard
-            icon="🎯"
-            title={interviewApps[0] ? `Interview — ${interviewApps[0].company}` : "Interview — Careem"}
-            lines={[
-              interviewApps[0]?.role || "Strategy Lead",
-              interviewApps[0]?.interview_at
-                ? new Date(interviewApps[0].interview_at).toLocaleDateString("en-GB", { weekday: "long", hour: "2-digit", minute: "2-digit" })
-                : "Thursday — 3:00 PM",
-            ]}
-            cta="Prepare interview"
-            href="/applications"
-          />
-          <PriorityCard
-            icon="🔥"
-            title={topOpps[0] ? `New opportunity — ${topOpps[0].company}` : "New opportunity — Kitopi"}
-            lines={[
-              topOpps[0]?.role || topOpps[0]?.title || "VP Growth likely opening",
-              "Strong fit detected",
-            ]}
-            cta="View opportunity"
-            href="/scout"
-          />
-        </div>
-      </section>
+          {/* Figure */}
+          <img src="/images/sr-logo.png?v=2" alt="" style={{
+            position: "absolute", left: "50%", top: -10, width: 380, height: 290,
+            objectFit: "contain",
+            filter: "drop-shadow(0 0 40px rgba(77,142,245,0.4)) drop-shadow(0 0 15px rgba(77,142,245,0.25))",
+            opacity: 0.95,
+            animation: "logoFloat 7s ease-in-out infinite",
+            zIndex: 1, pointerEvents: "none",
+            mixBlendMode: "screen",
+            WebkitMaskImage: "radial-gradient(ellipse 60% 70% at center, black 40%, transparent 85%)",
+            maskImage: "radial-gradient(ellipse 60% 70% at center, black 40%, transparent 85%)",
+          }} />
 
-      {/* ── Top Opportunities ───────────────────────────────── */}
-      <section>
-        <SectionTitle href="/scout">Top Opportunities</SectionTitle>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {(topOpps.length > 0 ? topOpps : placeholderOpps).map((opp, i) => (
-            <div
-              key={i}
-              className="border border-white/[0.08] p-5"
-              style={{ background: "rgba(255,255,255,0.04)", borderRadius: 14 }}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-[11px] font-semibold tracking-wide uppercase text-[#7F8CFF] bg-[#7F8CFF]/10 px-2.5 py-1 rounded-md">
-                  Hidden opportunity
-                </span>
-                <span className="text-[20px] font-bold text-[#5BCC7F]">
-                  {opp.fit_score ?? opp.overall_score ?? 92}%
-                </span>
-              </div>
-              <div className="text-[15px] font-semibold text-white">{opp.role || opp.title}</div>
-              <div className="text-[13px] text-[#8B92B0] mt-0.5">{opp.company}</div>
-              <div className="text-[12px] text-[#6B7194] mt-2 italic">
-                &ldquo;{opp.evidence?.[0]
-                  ? (typeof opp.evidence[0] === "string" ? opp.evidence[0] : opp.evidence[0]?.text || opp.evidence[0]?.detail || "Strong market signal detected")
-                  : "Raised $200M — no ops leader yet"}&rdquo;
-              </div>
-              <div className="flex gap-3 mt-4">
-                <a href="/scout" className="text-[12px] font-semibold text-[#7F8CFF] hover:text-[#99A5FF] transition-colors">
-                  View Opportunity
-                </a>
-                <a href="/applications" className="text-[12px] font-semibold text-[#6B7194] hover:text-[#8B92B0] transition-colors">
-                  Generate Pack
-                </a>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
+          {/* Eye ambient */}
+          <div style={{ position: "absolute", left: "50%", top: 105, transform: "translateX(-44%)", width: 90, height: 20, borderRadius: "50%", background: "radial-gradient(ellipse, rgba(255,255,255,0.15) 0%, rgba(77,142,245,0.08) 50%, transparent 100%)", zIndex: 2, animation: "eyeGlow 3s ease-in-out infinite" }} />
 
-      {/* ── Your active pipeline ────────────────────────────── */}
-      <section>
-        <SectionTitle href="/applications">Your active pipeline</SectionTitle>
-        <div className="border border-white/[0.08] divide-y divide-white/[0.06]" style={{ background: "rgba(255,255,255,0.04)", borderRadius: 14 }}>
-          {(pipelineItems.length > 0 ? pipelineItems : placeholderPipeline).map((app, i) => (
-            <div key={i} className="px-5 py-4 flex items-center justify-between">
-              <div className="min-w-0 flex-1">
-                <div className="text-[13px] font-semibold text-white">{app.company} — {app.role}</div>
-                <div className="text-[12px] text-[#6B7194] mt-0.5">
-                  {app.nextStep || `Status: ${app.stage}`}
-                  {app.latestUpdate && <span className="ml-2 text-[#555C7A]">{app.latestUpdate}</span>}
-                </div>
-              </div>
-              <span className={`text-[11px] font-medium px-2.5 py-1 rounded-md capitalize ${stageColors[app.stage] || "bg-[#2A2D45] text-[#8B92B0]"}`}>
-                {app.stage}
+          {/* Left fade */}
+          <div style={{ position: "absolute", left: 0, top: 0, height: 270, width: 300, background: "linear-gradient(to right, #03040f 0%, rgba(3,4,15,0.65) 50%, transparent 100%)", zIndex: 3 }} />
+          {/* Right fade */}
+          <div style={{ position: "absolute", right: 0, top: 0, height: 270, width: 300, background: "linear-gradient(to left, #03040f 0%, rgba(3,4,15,0.65) 50%, transparent 100%)", zIndex: 3 }} />
+
+          {/* Hero text */}
+          <div className="hero-text-block" style={{ position: "relative", zIndex: 4, padding: "28px 36px", maxWidth: "56%" }}>
+            {/* Eyebrow */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(34,197,94,0.08)", border: "0.5px solid rgba(34,197,94,0.2)", borderRadius: 20, padding: "4px 12px", fontSize: 10, color: "#22c55e" }}>
+                <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#22c55e", animation: "glowDot 1.2s ease-in-out infinite" }} />
+                Precog active
               </span>
+              <span style={{ fontSize: 10, color: "rgba(255,255,255,0.16)" }}>{today}</span>
             </div>
-          ))}
-        </div>
-      </section>
 
-      {/* ── Relevant updates for your applications ──────────── */}
-      <section>
-        <SectionTitle>Relevant updates for your applications</SectionTitle>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {(topSignals.length > 0
-            ? topSignals.filter((s) => allApps.some((a) => a.company?.toLowerCase() === s.company?.toLowerCase())).slice(0, 2)
-            : placeholderUpdates
-          ).concat(
-            topSignals.length === 0 || !topSignals.filter((s) => allApps.some((a) => a.company?.toLowerCase() === s.company?.toLowerCase())).length
-              ? placeholderUpdates
-              : []
-          ).slice(0, 2).map((update, i) => (
-            <div
-              key={i}
-              className="border border-white/[0.08] p-5"
-              style={{ background: "rgba(255,255,255,0.04)", borderRadius: 14 }}
-            >
-              <div className="text-[14px] font-semibold text-white">{update.company} {update.headline || "raises funding"}</div>
-              <div className="text-[12px] text-[#8B92B0] mt-1">{update.description || "$200M Series D"}</div>
-              <div className="text-[12px] text-[#7F8CFF] mt-2">{update.why_it_matters || "Hiring urgency increasing"}</div>
-              <a href="/scout" className="inline-block mt-3 text-[12px] font-semibold text-[#7F8CFF] hover:text-[#99A5FF] transition-colors">
-                View opportunity
-              </a>
+            {/* Name */}
+            <div style={{ marginBottom: 11 }}>
+              <span style={{ display: "block", fontSize: 20, fontWeight: 400, color: "rgba(255,255,255,0.22)" }}>{greeting()}</span>
+              <span style={{
+                fontSize: 44, fontWeight: 500, lineHeight: 1.1,
+                background: "linear-gradient(90deg, #fff 0%, #a78bfa 40%, #4d8ef5 70%, #fff 100%)",
+                backgroundSize: "200% auto",
+                WebkitBackgroundClip: "text",
+                WebkitTextFillColor: "transparent",
+                animation: "shimmer 6s linear infinite",
+              }}>{displayName}.</span>
             </div>
-          ))}
-        </div>
-      </section>
 
-      {/* ── Market Signals ──────────────────────────────────── */}
-      <section>
-        <SectionTitle href="/scout">Market Signals</SectionTitle>
-        <div className="space-y-2">
-          {(topSignals.length > 0 ? topSignals : placeholderSignals).map((sig, i) => {
-            const icons: Record<string, string> = {
-              funding: "💰", expansion: "🌍", hiring: "👥", leadership: "🏢", product: "🚀",
-            };
-            return (
-              <div
-                key={i}
-                className="border border-white/[0.08] px-5 py-3.5 flex items-start gap-3"
-                style={{ background: "rgba(255,255,255,0.04)", borderRadius: 14 }}
-              >
-                <span className="text-base mt-0.5">{icons[sig.signal_type] || "📡"}</span>
-                <div className="flex-1 min-w-0">
-                  <div className="text-[13px] font-semibold text-white">{sig.company}</div>
-                  <div className="text-[12px] text-[#8B92B0] mt-0.5">{sig.headline || sig.description}</div>
-                  {Boolean(sig.why_it_matters) && (
-                    <div className="text-[11px] text-[#7F8CFF] mt-1">{sig.why_it_matters}</div>
-                  )}
+            {/* Dynamic bullets from real data */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+              {opportunities.length > 0 && (
+                <div style={{ display: "flex", gap: 8, fontSize: 12, color: "rgba(255,255,255,0.32)", lineHeight: 1.5, animation: "ticker 0.35s ease 0s both" }}>
+                  <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#4d8ef5", flexShrink: 0, marginTop: 5 }} />
+                  <span><span style={{ color: "#4d8ef5", fontWeight: 500 }}>{opportunities.length} opportunities</span> detected across your target market.</span>
                 </div>
-                <span className="text-[11px] font-medium text-[#555C7A] capitalize whitespace-nowrap mt-0.5">{sig.signal_type}</span>
+              )}
+              {interviewCount > 0 && (
+                <div style={{ display: "flex", gap: 8, fontSize: 12, color: "rgba(255,255,255,0.32)", lineHeight: 1.5, animation: "ticker 0.35s ease 0.1s both" }}>
+                  <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#22c55e", flexShrink: 0, marginTop: 5 }} />
+                  <span><span style={{ color: "#22c55e", fontWeight: 500 }}>{interviewCount} interview{interviewCount !== 1 ? "s" : ""}</span> booked — check your prep deck.</span>
+                </div>
+              )}
+              {followUpsDue > 0 && (
+                <div style={{ display: "flex", gap: 8, fontSize: 12, color: "rgba(255,255,255,0.32)", lineHeight: 1.5, animation: "ticker 0.35s ease 0.2s both" }}>
+                  <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#fbbf24", flexShrink: 0, marginTop: 5 }} />
+                  <span><span style={{ color: "#fbbf24", fontWeight: 500 }}>{followUpsDue} follow-up{followUpsDue !== 1 ? "s" : ""}</span> overdue — don&apos;t let them go cold.</span>
+                </div>
+              )}
+              {signals.length > 0 && (
+                <div style={{ display: "flex", gap: 8, fontSize: 12, color: "rgba(255,255,255,0.32)", lineHeight: 1.5, animation: "ticker 0.35s ease 0.3s both" }}>
+                  <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#a78bfa", flexShrink: 0, marginTop: 5 }} />
+                  <span><span style={{ color: "#a78bfa", fontWeight: 500 }}>{signals.length} market signal{signals.length !== 1 ? "s" : ""}</span> detected this week.</span>
+                </div>
+              )}
+              {opportunities.length === 0 && signals.length === 0 && interviewCount === 0 && (
+                <div style={{ display: "flex", gap: 8, fontSize: 12, color: "rgba(255,255,255,0.32)", lineHeight: 1.5, animation: "ticker 0.35s ease 0s both" }}>
+                  <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#4d8ef5", flexShrink: 0, marginTop: 5 }} />
+                  <span>Scanning the market for opportunities that match your profile.</span>
+                </div>
+              )}
+            </div>
+
+            {/* Stats */}
+            <div className="hero-stats-row" style={{ display: "flex", gap: 22, marginTop: 16 }}>
+              {[
+                { val: String(opportunities.length), label: "opportunities", color: "#fff" },
+                { val: String(interviewCount), label: "interviews booked", color: "#22c55e" },
+                { val: String(followUpsDue), label: "follow-ups due", color: "#fbbf24" },
+                { val: String(signals.length), label: "signals this week", color: "#a78bfa" },
+              ].map((s, i) => (
+                <div key={i} style={{ borderLeft: "2px solid rgba(255,255,255,0.12)", paddingLeft: 12 }}>
+                  <div style={{ fontSize: 22, fontWeight: 500, color: s.color }}>{s.val}</div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.55)", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 500, marginTop: 2 }}>{s.label}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* ═══ BODY ═══ */}
+        <div style={{ padding: "20px 36px", display: "flex", flexDirection: "column", gap: 18 }}>
+
+          {/* ── OPPORTUNITIES ── */}
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <span style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.7, color: "rgba(255,255,255,0.2)" }}>
+                {opportunities.length > 0 ? "Detected before posting — your unfair advantage" : "Opportunities"}
+              </span>
+              <a href="/scout" style={{ fontSize: 11, color: "#4d8ef5", textDecoration: "none" }}>Scout all →</a>
+            </div>
+
+            {opportunities.length > 0 ? (
+              <div className="opp-grid" style={{ display: "grid", gridTemplateColumns: opportunities.length >= 3 ? "2fr 1fr 1fr" : opportunities.length === 2 ? "1fr 1fr" : "1fr", gap: 10 }}>
+                {opportunities.slice(0, 3).map((opp, i) => {
+                  const color = i === 0 ? "#4d8ef5" : i === 1 ? "#a78bfa" : "#22c55e";
+                  const isHero = i === 0;
+                  return (
+                    <div key={opp.id} style={{
+                      background: `${color}11`,
+                      border: `1px solid ${color}33`,
+                      borderRadius: isHero ? 20 : 16,
+                      padding: isHero ? 20 : 16,
+                      position: "relative",
+                      overflow: "hidden",
+                      display: "flex",
+                      flexDirection: "column",
+                    }}>
+                      {isHero && <div style={{ position: "absolute", top: 0, left: "10%", right: "10%", height: 1, background: `linear-gradient(90deg, transparent, ${color}, transparent)` }} />}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                        <span style={{ fontSize: 9, textTransform: "uppercase", background: `${color}22`, color, padding: "3px 9px", borderRadius: 10, fontWeight: 600, letterSpacing: 0.5 }}>
+                          {opp.evidence_tier === "high" ? "Hidden · Strong signal" : opp.evidence_tier === "medium" ? "Signal detected" : "Watching"}
+                        </span>
+                        <div>
+                          <span style={{ fontSize: isHero ? 56 : 36, fontWeight: 500, color, lineHeight: 1 }}>{opp.radar_score}</span>
+                          <span style={{ fontSize: isHero ? 16 : 12, color, opacity: 0.4 }}>%</span>
+                        </div>
+                      </div>
+                      <div style={{ fontSize: isHero ? 16 : 14, fontWeight: 500, color: "#fff" }}>{opp.role || "Opportunity detected"}</div>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 2, marginBottom: 10 }}>
+                        {opp.company}{opp.location ? ` · ${opp.location}` : ""}{opp.sector ? ` · ${opp.sector}` : ""}
+                      </div>
+                      {isHero && opp.reasoning && (
+                        <div style={{ fontStyle: "italic", fontSize: 11, color: `${color}99`, background: `${color}0a`, borderLeft: `2px solid ${color}44`, padding: "9px 11px", borderRadius: "0 8px 8px 0", marginBottom: 12, lineHeight: 1.5 }}>
+                          &ldquo;{opp.reasoning}&rdquo;
+                        </div>
+                      )}
+                      {!isHero && opp.reasoning && (
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", lineHeight: 1.4, marginBottom: 12, flex: 1 }}>
+                          {opp.reasoning.slice(0, 80)}{opp.reasoning.length > 80 ? "..." : ""}
+                        </div>
+                      )}
+                      <div style={{ display: "flex", gap: 8, marginTop: "auto" }}>
+                        {isHero ? (
+                          <>
+                            <a href="/applications" style={{ background: color, color: "#fff", border: "none", borderRadius: 11, padding: "9px 15px", fontSize: 11, fontWeight: 600, textDecoration: "none", cursor: "pointer" }}>Apply with AI pack</a>
+                            <a href="/scout" style={{ background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.5)", border: "0.5px solid rgba(255,255,255,0.1)", borderRadius: 11, padding: "9px 15px", fontSize: 11, fontWeight: 500, textDecoration: "none" }}>View intel →</a>
+                          </>
+                        ) : (
+                          <a href="/scout" style={{ display: "block", textAlign: "center", background: color, color: "#fff", borderRadius: 10, padding: "8px 0", fontSize: 11, fontWeight: 600, textDecoration: "none", width: "100%" }}>View opportunity</a>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            );
-          })}
+            ) : (
+              <div style={{ background: "rgba(255,255,255,0.025)", border: "0.5px solid rgba(255,255,255,0.06)", borderRadius: 16, padding: 32, textAlign: "center" }}>
+                <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginBottom: 8 }}>No opportunities detected yet</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", marginBottom: 16 }}>Upload your CV and connect your email to start scanning for hidden roles.</div>
+                <a href="/scout" style={{ background: "#4d8ef5", color: "#fff", borderRadius: 10, padding: "8px 16px", fontSize: 11, fontWeight: 600, textDecoration: "none" }}>Go to Scout →</a>
+              </div>
+            )}
+          </div>
+
+          {/* ── BOTTOM ROW ── */}
+          <div className="bottom-panels" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+            {/* Panel 1 — Live Signals */}
+            <div style={{ background: "rgba(255,255,255,0.025)", border: "0.5px solid rgba(255,255,255,0.06)", borderRadius: 16, padding: 16 }}>
+              <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.6, color: "rgba(255,255,255,0.2)", marginBottom: 13 }}>Live Signals</div>
+              {signals.length > 0 ? signals.slice(0, 4).map((s, i) => {
+                const color = TIER_COLORS[s.evidence_tier || "medium"] || "#4d8ef5";
+                const pct = s.confidence || 50;
+                return (
+                  <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 9, padding: "7px 0", borderBottom: i < Math.min(signals.length, 4) - 1 ? "0.5px solid rgba(255,255,255,0.04)" : "none" }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginBottom: 4 }}>
+                        {s.company_name} · {s.signal_type?.replace(/_/g, " ") || "signal"}
+                      </div>
+                      <div style={{ height: 2, background: "rgba(255,255,255,0.06)", borderRadius: 1, overflow: "hidden" }}>
+                        <div style={{ height: "100%", background: color, borderRadius: 1, width: pct + "%", animation: `slideRight 1s ease ${i * 0.15}s both`, "--w": pct + "%" } as any} />
+                      </div>
+                    </div>
+                    <span style={{ fontSize: 13, fontWeight: 500, color, minWidth: 24, textAlign: "right" }}>{pct}</span>
+                    <span style={{ fontSize: 9, color: "rgba(255,255,255,0.15)", minWidth: 20, textAlign: "right" }}>{timeAgo(s.created_at)}</span>
+                  </div>
+                );
+              }) : (
+                <div style={{ padding: "16px 0", textAlign: "center" }}>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)" }}>No signals yet — check back soon</div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.15)", marginTop: 4 }}>Signals appear as the market is scanned</div>
+                </div>
+              )}
+            </div>
+
+            {/* Panel 2 — Today's Actions */}
+            <div style={{ background: "rgba(255,255,255,0.025)", border: "0.5px solid rgba(255,255,255,0.06)", borderRadius: 16, padding: 16 }}>
+              <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.6, color: "rgba(255,255,255,0.2)", marginBottom: 13 }}>Today&apos;s Actions</div>
+              {actionItems.length > 0 ? actionItems.slice(0, 4).map((a, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 9, padding: "7px 0", borderBottom: i < Math.min(actionItems.length, 4) - 1 ? "0.5px solid rgba(255,255,255,0.04)" : "none" }}>
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: a.color, flexShrink: 0 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)" }}>{a.title}</div>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.2)" }}>{a.sub}</div>
+                  </div>
+                  <a href={a.href} style={{ fontSize: 10, fontWeight: 600, color: a.color, background: `${a.color}15`, padding: "3px 8px", borderRadius: 6, textDecoration: "none", whiteSpace: "nowrap" }}>{a.cta}</a>
+                </div>
+              )) : (
+                <div style={{ padding: "16px 0", textAlign: "center" }}>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)" }}>No actions for today</div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.15)", marginTop: 4 }}>Start scouting and applying to build your pipeline</div>
+                </div>
+              )}
+            </div>
+
+            {/* Panel 3 — Pipeline */}
+            <div style={{ background: "rgba(255,255,255,0.025)", border: "0.5px solid rgba(255,255,255,0.06)", borderRadius: 16, padding: 16 }}>
+              <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.6, color: "rgba(255,255,255,0.2)", marginBottom: 13 }}>Pipeline</div>
+              {pipelineItems.length > 0 ? pipelineItems.slice(0, 4).map((p, i) => {
+                const stageColor = STAGE_COLORS[p.stage] || "#4d8ef5";
+                const initials = p.company.split(/\s+/).map(w => w[0]).join("").slice(0, 2).toUpperCase();
+                return (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 9, padding: "7px 0", borderBottom: i < Math.min(pipelineItems.length, 4) - 1 ? "0.5px solid rgba(255,255,255,0.04)" : "none" }}>
+                    <div style={{ width: 28, height: 28, borderRadius: 8, background: `${stageColor}18`, color: stageColor, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700, flexShrink: 0 }}>{initials}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)" }}>{p.company}</div>
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.2)" }}>{p.role}</div>
+                    </div>
+                    <span style={{ fontSize: 9, fontWeight: 600, color: stageColor, background: `${stageColor}15`, padding: "2px 7px", borderRadius: 6, whiteSpace: "nowrap", textTransform: "capitalize" }}>{p.stage}</span>
+                  </div>
+                );
+              }) : (
+                <div style={{ padding: "16px 0", textAlign: "center" }}>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)" }}>No applications tracked yet</div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.15)", marginTop: 4 }}>
+                    <a href="/applications" style={{ color: "#4d8ef5", textDecoration: "none" }}>Start tracking →</a>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
-      </section>
-    </div>
-  );
-}
-
-/* ── Sub-components ─────────────────────────────────────────── */
-
-function MetricCard({ title, value, sub, accent = false }: { title: string; value: string | number; sub: string; accent?: boolean }) {
-  return (
-    <div
-      className={`border p-5 ${accent ? "border-[#7F8CFF]/20" : "border-white/[0.08]"}`}
-      style={{ background: accent ? "rgba(127,140,255,0.06)" : "rgba(255,255,255,0.04)", borderRadius: 14 }}
-    >
-      <div className="text-[11px] font-medium text-[#6B7194] uppercase tracking-wide">{title}</div>
-      <div className={`text-[22px] font-bold mt-1.5 ${accent ? "text-[#7F8CFF]" : "text-white"}`}>{value}</div>
-      <div className="text-[12px] text-[#555C7A] mt-0.5">{sub}</div>
-    </div>
-  );
-}
-
-function PriorityCard({ icon, title, lines, cta, href }: { icon: string; title: string; lines: string[]; cta: string; href: string }) {
-  return (
-    <div
-      className="border border-[#7F8CFF]/15 p-5 flex flex-col justify-between"
-      style={{ background: "rgba(127,140,255,0.04)", borderRadius: 14 }}
-    >
-      <div>
-        <div className="flex items-center gap-2 mb-2">
-          <span className="text-base">{icon}</span>
-          <span className="text-[13px] font-semibold text-white">{title}</span>
-        </div>
-        {lines.map((line, i) => (
-          <div key={i} className="text-[12px] text-[#8B92B0] leading-relaxed">{line}</div>
-        ))}
       </div>
-      <a
-        href={href}
-        className="inline-block mt-4 text-[12px] font-semibold text-[#7F8CFF] bg-[#7F8CFF]/10 px-3.5 py-1.5 rounded-lg hover:bg-[#7F8CFF]/15 transition-colors self-start"
-      >
-        {cta}
-      </a>
-    </div>
+    </>
   );
 }
-
-function SectionTitle({ children, href }: { children: React.ReactNode; href?: string }) {
-  return (
-    <div className="flex items-center justify-between mb-4">
-      <h2 className="text-[15px] font-semibold text-white">{children}</h2>
-      {href && (
-        <a href={href} className="text-[12px] text-[#7F8CFF] hover:text-[#99A5FF] font-medium transition-colors">
-          View all
-        </a>
-      )}
-    </div>
-  );
-}
-
-/* ── Placeholder data (used when API returns empty) ─────────── */
-
-const placeholderOpps = [
-  { company: "Tabby", role: "Head of Operations", fit_score: 92, evidence: ["Raised $200M — no ops leader yet"] },
-  { company: "Careem", role: "Strategy Lead", fit_score: 87, evidence: ["Expanding into 3 new markets — hiring strategy team"] },
-];
-
-const placeholderPipeline = [
-  { id: "1", company: "Tabby", role: "Head of Operations", stage: "applied", updated_at: new Date().toISOString(), nextStep: "Next step: Follow up tomorrow", latestUpdate: "· Recruiter viewed your CV" },
-  { id: "2", company: "Careem", role: "Strategy Lead", stage: "interview", updated_at: new Date().toISOString(), nextStep: "Interview scheduled", latestUpdate: "· Interview confirmed" },
-];
-
-const placeholderUpdates = [
-  { company: "Tabby", headline: "raises funding", description: "$200M Series D", why_it_matters: "Hiring urgency increasing" },
-];
-
-const placeholderSignals = [
-  { company: "Tabby", signal_type: "funding", headline: "$200M Series D closed", description: "Major growth round signals executive hiring", why_it_matters: "Ops and strategy roles likely opening" },
-  { company: "Careem", signal_type: "expansion", headline: "Expanding to Egypt and Morocco", description: "3 new markets announced this quarter", why_it_matters: "Regional strategy roles in demand" },
-  { company: "Kitopi", signal_type: "hiring", headline: "VP Growth role likely opening", description: "Leadership restructuring underway", why_it_matters: "Strong fit with your experience" },
-];

@@ -29,12 +29,30 @@ class WhatsAppService:
             return ""
         return f"\n\nKnow someone job hunting? stealthrole.com/ref/{referral_code}"
 
+    def _normalize_phone(self, phone: str) -> str:
+        """Ensure phone is in E.164 format: +<country><number>."""
+        # Strip whatsapp: prefix if present
+        p = phone.replace("whatsapp:", "").strip()
+        # Remove spaces, dashes, parentheses
+        p = p.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+        # If starts with 0, assume UAE (+971) and replace leading 0
+        if p.startswith("0") and not p.startswith("00"):
+            p = "+971" + p[1:]
+        # If starts with 00, replace with +
+        if p.startswith("00"):
+            p = "+" + p[2:]
+        # Ensure starts with +
+        if not p.startswith("+"):
+            p = "+" + p
+        return p
+
     async def send_message(self, to: str, body: str) -> bool:
         """Send a WhatsApp message via Twilio. Returns True on success."""
         if not self._configured:
             logger.warning("whatsapp_not_configured")
             return False
 
+        normalized = self._normalize_phone(to)
         url = TWILIO_MSG_URL.format(sid=settings.twilio_account_sid)
         async with httpx.AsyncClient() as client:
             resp = await client.post(
@@ -42,13 +60,18 @@ class WhatsAppService:
                 auth=(settings.twilio_account_sid, settings.twilio_auth_token),
                 data={
                     "From": settings.twilio_whatsapp_from,
-                    "To": f"whatsapp:{to}" if not to.startswith("whatsapp:") else to,
+                    "To": f"whatsapp:{normalized}",
                     "Body": body,
                 },
             )
         if resp.status_code >= 400:
-            logger.error("whatsapp_send_failed", status=resp.status_code, body=resp.text)
+            error_body = resp.text
+            logger.error("whatsapp_send_failed", status=resp.status_code, body=error_body, to=to[-4:])
+            # Common sandbox error: user hasn't opted in
+            if "not a valid WhatsApp" in error_body or "sandbox" in error_body.lower() or "63007" in error_body:
+                logger.warning("whatsapp_sandbox_optin_needed", to=to[-4:])
             return False
+        logger.info("whatsapp_sent", to=to[-4:])
         return True
 
     async def send_radar_alert(
