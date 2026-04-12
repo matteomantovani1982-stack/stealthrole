@@ -1,54 +1,60 @@
 // StealthRole LinkedIn content script
 (() => {
-  const SR_API = "https://api.stealthrole.com/api/v1";
 
-  // Resilient API call — tries background script first, falls back to direct fetch
-  async function srApiCall(path, options, callback) {
-    // Try background script first
+  // API call: background script first, direct fetch fallback
+  function srApiCall(path, options, callback) {
+    // Check if extension context is still valid
+    if (!chrome.runtime?.id) {
+      console.warn("[StealthRole] Extension context lost — using direct API");
+      directFetch(path, options).then(callback);
+      return;
+    }
+
     try {
-      chrome.runtime.sendMessage(
-        { type: "API_REQUEST", path, options },
-        (res) => {
-          if (chrome.runtime.lastError || !res) {
-            // Background script is dead — fall back to direct API call
-            console.log("[StealthRole] Background dead, using direct API. Error:", chrome.runtime.lastError?.message);
-            directApiCall(path, options).then(callback);
-          } else {
-            callback(res);
-          }
+      chrome.runtime.sendMessage({ type: "API_REQUEST", path, options }, (res) => {
+        if (chrome.runtime.lastError || !res) {
+          console.warn("[StealthRole] Background unavailable:", chrome.runtime.lastError?.message || "no response");
+          // Fallback: call API directly
+          directFetch(path, options).then(callback);
+        } else {
+          callback(res);
         }
-      );
+      });
     } catch (e) {
-      console.log("[StealthRole] sendMessage failed, using direct API:", e.message);
-      directApiCall(path, options).then(callback);
+      console.warn("[StealthRole] sendMessage failed:", e.message);
+      directFetch(path, options).then(callback);
     }
   }
 
-  async function directApiCall(path, options = {}) {
+  async function directFetch(path, options = {}) {
     try {
-      // Get token from chrome.storage
-      const data = await chrome.storage.local.get("sr_token");
-      const token = data.sr_token;
+      // Read token from storage
+      const stored = await chrome.storage.local.get("sr_token");
+      const token = stored.sr_token;
       if (!token) {
-        console.log("[StealthRole] No token — please log in via the extension popup");
-        return { ok: false, error: "Not logged in" };
+        return { ok: false, error: "Not logged in — open StealthRole popup to log in" };
       }
-      const res = await fetch(`${SR_API}${path}`, {
+
+      const res = await fetch(CONFIG.API_BASE + path, {
         method: options.method || "GET",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
+          "Authorization": "Bearer " + token,
         },
         body: options.body || undefined,
       });
-      if (res.ok) {
-        const json = await res.json();
-        return { ok: true, data: json };
+
+      if (res.status === 401) {
+        return { ok: false, error: "Session expired — open StealthRole popup to log in" };
       }
-      return { ok: false, error: `API ${res.status}` };
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        return { ok: false, error: body.detail || ("API error " + res.status) };
+      }
+      const data = await res.json();
+      return { ok: true, data };
     } catch (e) {
-      console.error("[StealthRole] Direct API call failed:", e);
-      return { ok: false, error: e.message };
+      return { ok: false, error: "Network error: " + e.message };
     }
   }
 
@@ -62,8 +68,10 @@
   }
 
   let _lastUrl = window.location.href;
+  let _mutualScrapeInProgress = false;
 
   function initForPage() {
+    _mutualScrapeInProgress = false; // Reset on new page navigation
     const pageType = getPageType();
     console.log("[StealthRole] Page init:", pageType, window.location.pathname);
     if (["connections", "profile", "messaging", "search"].includes(pageType)) {
@@ -73,11 +81,18 @@
     // Auto-save profile + scrape mutual connections on profile pages
     if (pageType === "profile") {
       waitForProfileName().then(() => {
-        scrapeProfile();
-        scrapeMutualConnections();
-        // Retry mutuals after more content loads
-        setTimeout(() => scrapeMutualConnections(), 3000);
+        scrapeProfileAsync().then(() => {
+          scrapeMutualConnections();
+          setTimeout(() => scrapeMutualConnections(), 3000);
+        });
       });
+    }
+
+    // On search pages — check if we're scraping mutual connections for a target person
+    if (pageType === "search") {
+      setTimeout(() => scrapeMutualSearchResults(), 2000);
+      // Retry after more results load
+      setTimeout(() => scrapeMutualSearchResults(), 5000);
     }
   }
 
@@ -112,23 +127,40 @@
   }
 
   function getCompanyFromPage() {
-    // Strategy 1: parse from headline "Title at Company"
+    // Strategy 1: company link on the profile (most reliable — always present)
+    // LinkedIn shows company logo + name as a link to /company/xxx/
+    const companyLinks = document.querySelectorAll("a[href*='/company/']");
+    for (const link of companyLinks) {
+      const text = (link.innerText || link.textContent || "").trim();
+      // Must be a short company name, not a long sentence
+      if (text && text.length >= 2 && text.length < 60 && !text.toLowerCase().includes("see all")) {
+        console.log("[StealthRole] Company from link:", text);
+        return text;
+      }
+    }
+
+    // Strategy 2: parse from headline "Title at Company"
     const headline = getProfileHeadline();
     if (headline) {
       const atMatch = headline.match(/\bat\s+(.+)/i);
-      if (atMatch) return atMatch[1].trim();
-    }
-    // Strategy 2: scan page text for "at Company" near the name
-    const name = getProfileName();
-    const bodyText = document.body.innerText || "";
-    if (name) {
-      const nameIdx = bodyText.indexOf(name);
-      if (nameIdx >= 0) {
-        const after = bodyText.substring(nameIdx, nameIdx + 300);
-        const atMatch = after.match(/(?:at|@)\s+([A-Z][A-Za-z0-9\s&.'-]{1,40})/);
-        if (atMatch) return atMatch[1].trim();
+      if (atMatch) {
+        console.log("[StealthRole] Company from headline:", atMatch[1].trim());
+        return atMatch[1].trim();
       }
     }
+
+    // Strategy 3: parse from page title "Name - Title at Company | LinkedIn"
+    const title = document.title || "";
+    const atMatch = title.match(/\bat\s+([^|]+)/i);
+    if (atMatch) {
+      const company = atMatch[1].trim();
+      if (company && company.length < 60) {
+        console.log("[StealthRole] Company from title:", company);
+        return company;
+      }
+    }
+
+    console.log("[StealthRole] Company: not found");
     return "";
   }
 
@@ -213,6 +245,40 @@
   });
   _urlObserver.observe(document.body, { childList: true, subtree: true });
 
+  // Also listen to popstate for back/forward navigation
+  window.addEventListener("popstate", () => {
+    setTimeout(() => {
+      if (window.location.href !== _lastUrl) {
+        _lastUrl = window.location.href;
+        console.log("[StealthRole] popstate navigation:", window.location.pathname);
+        setTimeout(initForPage, 1500);
+      }
+    }, 100);
+  });
+
+  // Patch pushState/replaceState to catch SPA navigations the observer might miss
+  const _origPushState = history.pushState;
+  const _origReplaceState = history.replaceState;
+  history.pushState = function(...args) {
+    _origPushState.apply(this, args);
+    setTimeout(() => {
+      if (window.location.href !== _lastUrl) {
+        _lastUrl = window.location.href;
+        console.log("[StealthRole] pushState navigation:", window.location.pathname);
+        setTimeout(initForPage, 1500);
+      }
+    }, 100);
+  };
+  history.replaceState = function(...args) {
+    _origReplaceState.apply(this, args);
+    setTimeout(() => {
+      if (window.location.href !== _lastUrl) {
+        _lastUrl = window.location.href;
+        setTimeout(initForPage, 1500);
+      }
+    }, 100);
+  };
+
   function injectOverlayButton(type) {
     const existing = document.getElementById("sr-overlay-btn");
     if (existing) existing.remove();
@@ -274,6 +340,38 @@
       (res) => { if (res?.ok) showToast("Imported " + (res.data?.created || 0) + " connections"); else showToast(res?.error || "Import failed"); });
   }
 
+  // ── Async version of scrapeProfile (returns promise so mutual scrape waits for save)
+  function scrapeProfileAsync() {
+    return new Promise((resolve) => {
+      const url = window.location.href.split("?")[0];
+      const linkedinId = url.split("/in/")[1]?.replace(/\/$/, "") || "";
+      const fullName = getProfileName();
+      const headline = getProfileHeadline();
+      const degree = getConnectionDegree();
+      const currentCompany = getCompanyFromPage();
+      let currentTitle = headline;
+      const atMatch = headline.match(/^(.+?)\s+(?:at|@)\s+(.+)/i);
+      if (atMatch) { currentTitle = atMatch[1].trim(); }
+
+      console.log("[StealthRole] scrapeProfileAsync: name='" + fullName + "' title='" + currentTitle + "' company='" + currentCompany + "' degree=" + degree);
+      if (!fullName) { resolve(); return; }
+
+      if (degree === 1 || degree === 0) {
+        const strength = degree === 1 ? "medium" : "visited";
+        srApiCall("/linkedin/ingest/connections", { method: "POST", body: JSON.stringify({ connections: [{ linkedin_id: linkedinId, linkedin_url: url, full_name: fullName, headline, current_title: currentTitle, current_company: currentCompany, relationship_strength: strength }] }) },
+          (res) => {
+            console.log("[StealthRole] Profile save response:", JSON.stringify(res));
+            if (res?.ok) showToast("Saved: " + fullName + (currentCompany ? " at " + currentCompany : ""));
+            else showToast("Save failed: " + (res?.error || "unknown error"));
+            resolve();
+          });
+      } else {
+        console.log("[StealthRole] " + fullName + " is " + degree + "nd/rd degree — skipping connection save");
+        resolve();
+      }
+    });
+  }
+
   // ── Scrape single profile
   function scrapeProfile() {
     const url = window.location.href.split("?")[0];
@@ -306,10 +404,14 @@
   }
 
   // ── MUTUAL CONNECTIONS — the killer feature
-  let _mutualScrapeInProgress = false;
+  // (_mutualScrapeInProgress declared at the top of the IIFE)
 
   function scrapeMutualConnections() {
-    if (_mutualScrapeInProgress) return;
+    if (_mutualScrapeInProgress) {
+      console.log("[StealthRole] Mutual scrape in progress, will retry in 6s...");
+      setTimeout(() => scrapeMutualConnections(), 6000);
+      return;
+    }
     const url = window.location.href.split("?")[0];
     const linkedinId = url.split("/in/")[1]?.replace(/\/$/, "") || "";
     if (!linkedinId) return;
@@ -326,94 +428,226 @@
 
     const targetPerson = { linkedin_id: linkedinId, linkedin_url: url, full_name: targetName, current_title: targetTitle, current_company: targetCompany, headline: targetHeadline };
 
-    // Step 1: Try to click the mutual connections link to open the full list
+    // Step 1: Find the mutual connections link and click it
+    // This navigates to a search results page showing ALL mutual connections
     const mutualLink = findMutualConnectionsLink();
     if (mutualLink) {
       _mutualScrapeInProgress = true;
-      console.log("[StealthRole] Found mutual link, clicking to expand full list...");
-      mutualLink.click();
-      // Wait for the modal/overlay to render, then scrape from it
-      setTimeout(() => scrapeMutualFromModal(targetPerson), 1500);
-      setTimeout(() => scrapeMutualFromModal(targetPerson), 3000);
-      setTimeout(() => { _mutualScrapeInProgress = false; }, 4000);
+      // Save target person info so the search results page can use it
+      chrome.storage.local.set({ sr_mutual_target: targetPerson }, () => {
+        console.log("[StealthRole] Saved target person, clicking mutual connections link...");
+        console.log("[StealthRole] Mutual link href:", mutualLink.href || mutualLink.getAttribute("href") || "no href");
+
+        // Check if it's a link with href (navigates to search page) or a button (opens modal)
+        const href = mutualLink.href || mutualLink.getAttribute("href") || "";
+        if (href && href.includes("/search/")) {
+          // It will navigate — the search page handler will pick it up
+          mutualLink.click();
+          setTimeout(() => { _mutualScrapeInProgress = false; }, 5000);
+        } else {
+          // Might open a modal — try clicking and scraping
+          mutualLink.click();
+          setTimeout(() => scrapeMutualFromPage(targetPerson), 2000);
+          setTimeout(() => scrapeMutualFromPage(targetPerson), 4000);
+          setTimeout(() => { _mutualScrapeInProgress = false; }, 6000);
+        }
+      });
       return;
     }
 
-    // Step 2: Fallback — scrape whatever is visible on the page
+    console.log("[StealthRole] No mutual link found, using fallback text scrape");
+    // Step 2: Fallback — scrape the 2-3 visible names from page text
     const mutualNames = scrapeVisibleMutuals();
     let mutualCount = mutualNames.length;
-
-    // Also check for a count in page text
     const bodyText = document.body.innerText || "";
-    const countMatch = bodyText.match(/(\d+)\s+mutual\s+connect/);
-    if (countMatch) mutualCount = Math.max(mutualCount, parseInt(countMatch[1]));
+    const countMatch = bodyText.match(/(\d+)\s+(?:other\s+)?mutual\s+connect/);
+    if (countMatch) mutualCount = Math.max(mutualCount, parseInt(countMatch[1]) + mutualNames.length);
 
-    console.log("[StealthRole] Mutual scan (fallback):", { targetName, targetCompany, mutualCount, mutualNames: mutualNames.map(m => m.name) });
-
+    console.log("[StealthRole] Mutual scan (text fallback):", { targetName, targetCompany, mutualCount, names: mutualNames.map(m => m.name) });
     if (mutualNames.length === 0 && mutualCount === 0) return;
     sendMutualData(targetPerson, mutualNames, mutualCount);
   }
 
   function findMutualConnectionsLink() {
-    // LinkedIn shows "N mutual connections" as a clickable link on profiles
-    const candidates = document.querySelectorAll(
-      "a[href*='facetConnectionOf'], " +
-      "a[href*='mutual'], " +
-      "a.link-without-visited-state, " +
-      "button.link-without-visited-state, " +
-      "span.t-bold + span.t-normal"
+    // Strategy 1: find any <a> with href containing mutual/facetConnectionOf/connectionOf
+    const hrefLinks = document.querySelectorAll("a[href*='facetConnectionOf'], a[href*='connectionOf'], a[href*='mutualConnections'], a[href*='facetNetwork']");
+    for (const el of hrefLinks) {
+      // Verify it's visible (LinkedIn sometimes renders hidden duplicates)
+      if (el.offsetParent === null) continue;
+      console.log("[StealthRole] Found href link:", el.href?.substring(0, 100));
+      return el;
+    }
+
+    // Strategy 2: find ANY clickable element whose text mentions "mutual connect"
+    const allElements = document.querySelectorAll("a, button, span, div");
+    for (const el of allElements) {
+      if (el.offsetParent === null) continue; // skip hidden
+      const text = (el.innerText || el.textContent || "").toLowerCase().trim();
+      if ((text.includes("mutual connect") || text.includes("connection in common")) && text.length < 200) {
+        const style = window.getComputedStyle(el);
+        const isClickable = el.tagName === "A" || el.tagName === "BUTTON" || style.cursor === "pointer";
+        const clickableParent = el.closest("a, button, [role='link'], [role='button']");
+        if (isClickable || clickableParent) {
+          const target = clickableParent || el;
+          console.log("[StealthRole] Found mutual link via text:", target.tagName, text.substring(0, 60));
+          return target;
+        }
+      }
+    }
+
+    // Strategy 3: Look for the "people in common" section and find its clickable parent
+    const peopleInCommon = document.querySelectorAll(
+      "[data-view-name='profile-shared-connections'], " +
+      "section[aria-label*='common' i], " +
+      "section[aria-label*='mutual' i]"
     );
-    for (const el of candidates) {
-      const text = (el.textContent || "").toLowerCase();
-      if (text.includes("mutual connect")) return el;
+    for (const section of peopleInCommon) {
+      const link = section.querySelector("a[href*='/search/']") || section.closest("a[href*='/search/']");
+      if (link) {
+        console.log("[StealthRole] Found mutual link via section");
+        return link;
+      }
     }
-    // Also check for the mutual connections section link
-    const allLinks = document.querySelectorAll("a, button");
-    for (const el of allLinks) {
-      const text = (el.textContent || "").toLowerCase().trim();
-      if (/\d+\s+mutual\s+connect/.test(text)) return el;
-    }
+
+    console.log("[StealthRole] No mutual connections link found on page");
     return null;
   }
 
-  function scrapeMutualFromModal(targetPerson) {
-    // LinkedIn opens either a modal, a search results page, or an overlay
-    const mutualNames = [];
+  // Scrape mutual connections from search results page
+  // Called when the user navigates to the mutual connections search page
+  function scrapeMutualSearchResults() {
+    chrome.storage.local.get("sr_mutual_target", (data) => {
+      const targetPerson = data.sr_mutual_target;
+      if (!targetPerson) return;
+
+      const url = window.location.href;
+      if (!url.includes("/search/results/people") && !url.includes("facetConnectionOf") && !url.includes("connectionOf")) return;
+
+      console.log("[StealthRole] On mutual connections search page for:", targetPerson.full_name);
+      showToast("Scanning all mutual connections with " + targetPerson.full_name + "...");
+
+      // Scrape all pages — scroll to load, then click Next for pagination
+      const allMutuals = [];
+      const seenNames = new Set();
+      let currentPage = 1;
+      const maxPages = 10;
+
+      function scrapePage() {
+        console.log("[StealthRole] Scraping page " + currentPage + "...");
+
+        // Scroll down to load all results on this page
+        let scrollCount = 0;
+        function scrollDown() {
+          window.scrollTo(0, document.body.scrollHeight);
+          scrollCount++;
+          setTimeout(() => {
+            if (scrollCount < 3) {
+              scrollDown();
+            } else {
+              // Done scrolling this page — scrape results
+              const pageResults = scrapeSearchResults();
+              let newCount = 0;
+              for (const m of pageResults) {
+                if (!seenNames.has(m.name)) {
+                  seenNames.add(m.name);
+                  allMutuals.push(m);
+                  newCount++;
+                }
+              }
+              console.log("[StealthRole] Page " + currentPage + ": " + newCount + " new, " + allMutuals.length + " total");
+
+              // Try to find and click the Next button
+              const nextBtn = findNextPageButton();
+              if (nextBtn && currentPage < maxPages && newCount > 0) {
+                currentPage++;
+                nextBtn.click();
+                // Wait for next page to load
+                setTimeout(scrapePage, 3000);
+              } else {
+                // Done — send all results
+                console.log("[StealthRole] All pages done. Total: " + allMutuals.length + " mutual connections");
+                if (allMutuals.length > 0) {
+                  sendMutualData(targetPerson, allMutuals, allMutuals.length);
+                  showToast("Mapped " + allMutuals.length + " paths to " + targetPerson.full_name + " — go back to StealthRole, it will refresh automatically");
+                }
+                chrome.storage.local.remove("sr_mutual_target");
+                window.scrollTo(0, 0);
+              }
+            }
+          }, 1000);
+        }
+        scrollDown();
+      }
+
+      // Start after initial page load
+      setTimeout(scrapePage, 2000);
+    });
+  }
+
+  function findNextPageButton() {
+    // LinkedIn pagination: look for "Next" button or arrow
+    const buttons = document.querySelectorAll("button, a");
+    for (const btn of buttons) {
+      const text = (btn.innerText || btn.textContent || "").trim().toLowerCase();
+      const ariaLabel = (btn.getAttribute("aria-label") || "").toLowerCase();
+      if (text === "next" || ariaLabel.includes("next")) {
+        // Make sure it's not disabled
+        if (!btn.disabled && !btn.classList.contains("disabled") && btn.getAttribute("aria-disabled") !== "true") {
+          console.log("[StealthRole] Found Next button:", btn.tagName, text || ariaLabel);
+          return btn;
+        }
+      }
+    }
+    // Also check for pagination arrow (→) button
+    const paginationBtns = document.querySelectorAll(".artdeco-pagination__button--next, [aria-label='Next']");
+    for (const btn of paginationBtns) {
+      if (!btn.disabled && btn.getAttribute("aria-disabled") !== "true") return btn;
+    }
+    console.log("[StealthRole] No Next button found — last page");
+    return null;
+  }
+
+  function scrapeSearchResults() {
+    const results = [];
     const seen = new Set();
 
-    // Check for modal/overlay with connection cards
-    const modalCards = document.querySelectorAll(
-      ".artdeco-modal .reusable-search__result-container, " +
-      ".artdeco-modal .entity-result, " +
-      ".artdeco-modal .mn-connection-card, " +
-      "[role='dialog'] .entity-result, " +
-      ".scaffold-finite-scroll .entity-result, " +
-      ".search-results-container .entity-result"
+    // LinkedIn search results: each person is in a list item
+    const cards = document.querySelectorAll(
+      ".reusable-search__result-container, " +
+      ".entity-result, " +
+      "li.reusable-search__result-container, " +
+      "[data-chameleon-result-urn], " +
+      ".search-results-container li"
     );
 
-    modalCards.forEach(card => {
+    console.log("[StealthRole] Search result cards found:", cards.length);
+
+    cards.forEach(card => {
+      // Try multiple selectors for the name
       const nameEl = card.querySelector(
-        ".entity-result__title-text a span[aria-hidden='true'], " +
-        ".mn-connection-card__name, " +
-        ".app-aware-link span[aria-hidden='true'], " +
-        "span.t-bold span[aria-hidden='true']"
+        "span[aria-hidden='true'], " +
+        ".entity-result__title-text a span, " +
+        ".app-aware-link span[dir='ltr'] span:first-child"
       );
       const linkEl = card.querySelector("a[href*='/in/']");
       const titleEl = card.querySelector(
         ".entity-result__primary-subtitle, " +
-        ".mn-connection-card__occupation, " +
-        ".artdeco-entity-lockup__subtitle"
+        ".entity-result__summary, " +
+        ".linked-area .t-14"
       );
 
-      const name = nameEl?.textContent?.trim();
-      if (!name || name.length < 2 || seen.has(name)) return;
+      let name = nameEl?.innerText?.trim() || nameEl?.textContent?.trim() || "";
+      // Clean up name — remove "View X's profile" etc
+      name = name.split("\n")[0].trim();
+      if (!name || name.length < 2 || name.length > 60 || seen.has(name)) return;
+      if (name.toLowerCase().includes("linkedin") || name.toLowerCase().includes("view ")) return;
       seen.add(name);
 
       const linkedinUrl = linkEl?.href?.split("?")[0] || "";
       const lid = linkedinUrl.split("/in/")[1]?.replace(/\/$/, "") || "";
-      const headline = titleEl?.textContent?.trim() || "";
+      const headline = titleEl?.innerText?.trim() || titleEl?.textContent?.trim() || "";
 
-      mutualNames.push({
+      results.push({
         name,
         linkedin_id: lid || name.toLowerCase().replace(/[^a-z0-9]/g, "-"),
         linkedin_url: linkedinUrl,
@@ -421,17 +655,29 @@
       });
     });
 
-    // If modal didn't yield results, also try the inline list
-    if (mutualNames.length === 0) {
-      scrapeVisibleMutuals().forEach(m => {
-        if (!seen.has(m.name)) { seen.add(m.name); mutualNames.push(m); }
+    // Fallback: if no structured results, try getting names from the page
+    if (results.length === 0) {
+      // Try to get names from any link to /in/ profiles
+      document.querySelectorAll("a[href*='/in/']").forEach(link => {
+        const text = (link.innerText || link.textContent || "").trim().split("\n")[0].trim();
+        if (text && text.length >= 2 && text.length < 60 && !seen.has(text) && !text.toLowerCase().includes("linkedin")) {
+          seen.add(text);
+          const href = link.href?.split("?")[0] || "";
+          const lid = href.split("/in/")[1]?.replace(/\/$/, "") || "";
+          results.push({ name: text, linkedin_id: lid, linkedin_url: href });
+        }
       });
     }
 
-    console.log("[StealthRole] Mutual scan (modal):", { target: targetPerson.full_name, found: mutualNames.length, names: mutualNames.map(m => m.name) });
+    return results;
+  }
 
-    if (mutualNames.length > 0) {
-      sendMutualData(targetPerson, mutualNames, mutualNames.length);
+  function scrapeMutualFromPage(targetPerson) {
+    // Try to scrape from modal/overlay that might have opened
+    const results = scrapeSearchResults();
+    console.log("[StealthRole] Mutual scan (modal/page):", { target: targetPerson.full_name, found: results.length });
+    if (results.length > 0) {
+      sendMutualData(targetPerson, results, results.length);
     }
   }
 
@@ -480,14 +726,17 @@
       mutual_count: mutualCount || mutualNames.length,
     };
 
+    console.log("[StealthRole] Sending " + mutualNames.length + " mutuals for " + targetPerson.full_name + " at " + targetPerson.current_company);
     srApiCall("/linkedin/ingest/mutual-connections", { method: "POST", body: JSON.stringify(payload) },
       (res) => {
+        console.log("[StealthRole] Mutual save response:", JSON.stringify(res));
         if (res?.ok && res.data?.stored > 0) {
-          showToast("Mapped " + res.data.stored + " connections to " + targetPerson.full_name);
+          showToast("Mapped " + res.data.stored + " paths to " + targetPerson.full_name + " — go back to StealthRole");
         } else if (res?.ok && res.data?.stored === 0 && mutualNames.length > 0) {
           showToast("Connections already mapped for " + targetPerson.full_name);
-        } else if (mutualCount > 0 && mutualNames.length === 0) {
-          showToast(mutualCount + " mutual connections — click the link to map them");
+        } else if (!res?.ok) {
+          showToast("Failed to save: " + (res?.error || "unknown"));
+          console.error("[StealthRole] Mutual save FAILED:", res);
         }
       });
   }

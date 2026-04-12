@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "StealthRole",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "AI Job Hunter — import LinkedIn connections, auto-fill applications, save jobs",
   "permissions": [
     "storage",
@@ -30,7 +30,7 @@
   "content_scripts": [
     {
       "matches": ["https://www.linkedin.com/*"],
-      "js": ["src/linkedin.js"],
+      "js": ["src/config.js", "src/linkedin.js"],
       "css": ["src/overlay.css"],
       "run_at": "document_idle"
     },
@@ -43,6 +43,11 @@
       ],
       "js": ["src/autofill.js"],
       "css": ["src/overlay.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://stealthrole.com/*", "https://www.stealthrole.com/*"],
+      "js": ["src/token-sync.js"],
       "run_at": "document_idle"
     }
   ],

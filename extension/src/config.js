@@ -34,7 +34,9 @@ async function apiRequest(path, options = {}) {
   });
 
   if (res.status === 401) {
-    await clearToken();
+    // DON'T clear the token — it may still work for other endpoints
+    // or the user might just need to retry. Clearing causes a cascade
+    // where ALL subsequent calls fail.
     throw new Error("Session expired — please log in again");
   }
 
