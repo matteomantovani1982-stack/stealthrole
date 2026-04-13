@@ -264,6 +264,10 @@ export async function deleteApplication(id: string): Promise<void> {
   return request(`/applications/${id}`, { method: "DELETE" });
 }
 
+export async function getApplication(id: string): Promise<ApplicationItem> {
+  return request<ApplicationItem>(`/applications/${id}`);
+}
+
 // ── Scout / Signals ──────────────────────────────────────────────────────────
 
 export interface Opportunity {

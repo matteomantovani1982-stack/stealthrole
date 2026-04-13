@@ -4,9 +4,12 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
-  getBoard,
+  getApplication,
   getJobRun,
   getDownloadUrl,
+  createJobRun,
+  updateApplication,
+  listCVs,
   type ApplicationItem,
   type JobRun,
 } from "@/lib/api";
@@ -39,36 +42,108 @@ export default function PackagePage() {
   >([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [progressStep, setProgressStep] = useState(0); // 0=idle, 1-5=steps
+  const [generating, setGenerating] = useState(false);
 
   useEffect(() => {
     let pollId: ReturnType<typeof setInterval> | null = null;
+    let progressId: ReturnType<typeof setInterval> | null = null;
+    let cancelled = false;
+
+    async function startProgress() {
+      let step = 1;
+      setProgressStep(step);
+      progressId = setInterval(() => {
+        step = Math.min(step + 1, 5);
+        setProgressStep(step);
+        if (step >= 5 && progressId) clearInterval(progressId);
+      }, 12000);
+    }
+
+    async function pollPack(jobRunId: string) {
+      try {
+        const updated = await getJobRun(jobRunId);
+        if (cancelled) return;
+        setPack(updated);
+        if (updated.status === "completed") {
+          if (pollId) clearInterval(pollId);
+          if (progressId) clearInterval(progressId);
+          setProgressStep(0);
+          setGenerating(false);
+          try {
+            const dl = await getDownloadUrl(jobRunId);
+            setDownloadUrl(dl.download_url);
+          } catch {}
+        } else if (updated.status === "failed") {
+          if (pollId) clearInterval(pollId);
+          if (progressId) clearInterval(progressId);
+          setProgressStep(0);
+          setGenerating(false);
+          setError("Pack generation failed: " + (updated.error_message || "unknown error") + ". Your credits have not been charged.");
+        }
+      } catch (e: any) {
+        // Network error — keep polling
+      }
+    }
+
+    async function startGeneration(application: ApplicationItem) {
+      // Need a parsed CV
+      const cvs = await listCVs().catch(() => []);
+      const cv = (cvs || []).find((c: any) => c.status === "parsed");
+      if (!cv) {
+        setError("Upload a CV on the Profile page before generating a pack.");
+        setLoading(false);
+        return;
+      }
+      setGenerating(true);
+      startProgress();
+      try {
+        const jdText = `Role: ${application.role}\nCompany: ${application.company}${application.url ? `\n\nSource: ${application.url}` : ""}${application.notes ? `\n\n${application.notes}` : ""}`;
+        const job = await createJobRun({
+          cv_id: cv.id,
+          jd_text: jdText,
+          preferences: { tone: "professional", region: "MENA" },
+        } as any);
+        // Link the job_run to the application
+        try {
+          await updateApplication(application.id, { job_run_id: job.id } as any);
+        } catch {}
+        setPack(job as any);
+        // Start polling
+        pollId = setInterval(() => pollPack(job.id), 4000);
+      } catch (e: any) {
+        setError("Failed to start pack generation: " + (e?.message || "unknown error"));
+        setGenerating(false);
+        setProgressStep(0);
+      }
+    }
 
     async function loadData() {
       try {
-        const board = await getBoard();
+        // 1. Fetch the application directly by ID (not via board — avoids race condition)
         let found: ApplicationItem | null = null;
-        for (const col of board.columns || []) {
-          const match = col.applications.find((a) => a.id === appId);
-          if (match) {
-            found = { ...match, stage: col.stage } as ApplicationItem;
-            break;
+        try {
+          found = await getApplication(appId);
+        } catch (e: any) {
+          // Retry once after short delay (DB transaction may not be committed yet)
+          await new Promise((r) => setTimeout(r, 1500));
+          try {
+            found = await getApplication(appId);
+          } catch (e2: any) {
+            setError("Application not found: " + (e2?.message || ""));
+            setLoading(false);
+            return;
           }
         }
-        if (!found) {
-          setError("Application not found");
-          setLoading(false);
-          return;
-        }
         setApp(found);
+        setLoading(false);
 
-        // Fetch LinkedIn contacts
+        // 2. Fetch LinkedIn contacts (best-effort, non-blocking)
         try {
           const token = localStorage.getItem("sr_token");
           const res = await fetch(
             `/api/v1/relationships/company/${encodeURIComponent(found.company)}`,
-            {
-              headers: token ? { Authorization: `Bearer ${token}` } : {},
-            }
+            { headers: token ? { Authorization: `Bearer ${token}` } : {} }
           );
           if (res.ok) {
             const data = await res.json();
@@ -84,7 +159,7 @@ export default function PackagePage() {
           }
         } catch {}
 
-        // Load pack if exists
+        // 3. If pack already exists, load it; otherwise auto-start generation
         if (found.job_run_id) {
           try {
             const packData = await getJobRun(found.job_run_id);
@@ -94,47 +169,45 @@ export default function PackagePage() {
                 const dl = await getDownloadUrl(found.job_run_id);
                 setDownloadUrl(dl.download_url);
               } catch {}
+            } else if (packData.status === "failed") {
+              setError("Pack generation failed: " + (packData.error_message || "unknown error"));
+            } else {
+              // Still processing — show progress and poll
+              setGenerating(true);
+              startProgress();
+              pollId = setInterval(() => pollPack(found!.job_run_id!), 4000);
             }
-
-            // Poll if still processing
-            if (
-              packData.status !== "completed" &&
-              packData.status !== "failed"
-            ) {
-              pollId = setInterval(async () => {
-                try {
-                  const updated = await getJobRun(found!.job_run_id!);
-                  setPack(updated);
-                  if (
-                    updated.status === "completed" ||
-                    updated.status === "failed"
-                  ) {
-                    if (pollId) clearInterval(pollId);
-                    if (updated.status === "completed") {
-                      try {
-                        const dl = await getDownloadUrl(found!.job_run_id!);
-                        setDownloadUrl(dl.download_url);
-                      } catch {}
-                    }
-                  }
-                } catch {}
-              }, 15000);
-            }
-          } catch {}
+          } catch (e: any) {
+            setError("Failed to load pack: " + (e?.message || "unknown"));
+          }
+        } else {
+          // No pack yet — auto-generate one
+          await startGeneration(found);
         }
-      } catch (e) {
-        setError("Failed to load data");
+      } catch (e: any) {
+        setError("Failed to load: " + (e?.message || "unknown error"));
+        setLoading(false);
       }
-      setLoading(false);
     }
 
     loadData();
     return () => {
+      cancelled = true;
       if (pollId) clearInterval(pollId);
+      if (progressId) clearInterval(progressId);
     };
   }, [appId]);
 
-  // Loading state
+  const PROGRESS_STEPS = [
+    "",
+    "Analysing job description...",
+    "Matching to your profile...",
+    "Building application strategy...",
+    "Generating contact paths...",
+    "Finalising your pack...",
+  ];
+
+  // Loading state (initial fetch)
   if (loading) {
     return (
       <div
@@ -157,6 +230,46 @@ export default function PackagePage() {
           }}
         />
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
+
+  // Generation in progress — show step progress
+  if (generating || (pack && pack.status !== "completed" && pack.status !== "failed")) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#03040f", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <div style={{ maxWidth: 520, width: "100%", textAlign: "center" }}>
+          <div style={{ fontSize: 22, fontWeight: 600, color: "#fff", marginBottom: 8 }}>
+            Generating your Intelligence Pack
+          </div>
+          <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", marginBottom: 32 }}>
+            for {app?.role} at {app?.company}
+          </div>
+
+          {/* Step bars */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+            {[1, 2, 3, 4, 5].map((step) => (
+              <div
+                key={step}
+                style={{
+                  flex: 1,
+                  height: 4,
+                  borderRadius: 2,
+                  background: step <= progressStep ? "#4d8ef5" : "rgba(255,255,255,0.08)",
+                  transition: "background 0.4s",
+                }}
+              />
+            ))}
+          </div>
+          <div style={{ fontSize: 13, color: "#93c5fd", marginBottom: 24 }}>
+            Step {Math.max(1, progressStep)}/5: {PROGRESS_STEPS[Math.max(1, progressStep)]}
+          </div>
+
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>
+            This usually takes 1-3 minutes. You can navigate away and come back —
+            your pack will be ready when you return.
+          </div>
+        </div>
       </div>
     );
   }
