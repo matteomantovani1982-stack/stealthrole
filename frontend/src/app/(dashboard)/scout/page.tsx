@@ -713,6 +713,24 @@ function VacanciesTab({ onAddPack, vacancies = [] }: { onAddPack: (company: stri
   );
 }
 
+type PredStatus = "imminent" | "strong" | "forming" | "early" | "speculative";
+
+const PRED_COLORS: Record<PredStatus, { main: string; light: string; bg: string; border: string; barPct: number; btn: string }> = {
+  imminent:    { main: "#4d8ef5", light: "#93c5fd", bg: "rgba(77,142,245,0.08)",  border: "rgba(77,142,245,0.25)",  barPct: 90, btn: "Apply" },
+  strong:      { main: "#22c55e", light: "#86efac", bg: "rgba(34,197,94,0.08)",   border: "rgba(34,197,94,0.25)",   barPct: 75, btn: "Prepare" },
+  forming:     { main: "#eab308", light: "#fde047", bg: "rgba(234,179,8,0.08)",   border: "rgba(234,179,8,0.22)",   barPct: 58, btn: "Watch" },
+  early:       { main: "#ea580c", light: "#fdba74", bg: "rgba(234,88,12,0.08)",   border: "rgba(234,88,12,0.22)",   barPct: 42, btn: "Watch" },
+  speculative: { main: "#ef4444", light: "#fca5a5", bg: "rgba(239,68,68,0.06)",   border: "rgba(239,68,68,0.18)",   barPct: 25, btn: "Watch" },
+};
+
+const PRED_LABELS: Record<PredStatus, string> = {
+  imminent: "Imminent",
+  strong: "Strong Signal",
+  forming: "Forming",
+  early: "Early",
+  speculative: "Speculative",
+};
+
 function PredictionsTab({ onAddPack, predictions = [] }: { onAddPack: (company: string, role: string, url: string | null, description: string) => Promise<any>; predictions?: any[] }) {
   const router = useRouter();
 
@@ -949,25 +967,31 @@ function SignalsTab({ signals = [] }: { signals?: import("@/lib/api").HiddenSign
     return `${Math.floor(hours / 24)}d ago`;
   }
 
-  // Map real signals to card format
-  const cards: SignalCard[] = signals.map((s) => {
+  // Map real signals to card format — defensive against any missing/null fields
+  const cards: SignalCard[] = (signals || []).filter(s => s && s.company_name).map((s) => {
     const signalType = SIGNAL_TYPE_MAP[s.signal_type] || "other";
-    const initials = (s.company_name || "??").split(" ").map((w: string) => w[0]).join("").substring(0, 2).toUpperCase();
+    const companyName = s.company_name || "Unknown";
+    const sourceName = s.source_name && s.source_name.length > 0 ? s.source_name : "Web";
+    const rawConfidence = typeof s.confidence === "number" ? s.confidence : 0;
+    // Handle confidence expressed as 0-1 or 0-100
+    const confidencePct = rawConfidence <= 1 ? Math.round(rawConfidence * 100) : Math.round(rawConfidence);
+    const initials = companyName.split(" ").map((w: string) => w[0] || "").join("").substring(0, 2).toUpperCase() || "??";
+    const signalTypeLabel = s.signal_type ? s.signal_type.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()) : "Signal";
     return {
       type: signalType,
       initials,
-      company: s.company_name,
-      typeLabel: s.signal_type?.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()) || "Signal",
-      time: timeAgo(s.created_at),
-      score: Math.round(s.confidence * 100),
-      headline: `${s.company_name} — ${s.likely_roles?.[0] || s.signal_type?.replace(/_/g, " ") || "signal detected"}`,
+      company: companyName,
+      typeLabel: signalTypeLabel,
+      time: s.created_at ? timeAgo(s.created_at) : "",
+      score: confidencePct,
+      headline: `${companyName} — ${(s.likely_roles && s.likely_roles[0]) || signalTypeLabel.toLowerCase() || "signal detected"}`,
       snippet: s.reasoning || "Signal detected from market activity.",
-      sourceInitials: (s.source_name || "W")[0].toUpperCase(),
-      sourceName: s.source_name || "Web",
+      sourceInitials: sourceName.charAt(0).toUpperCase() || "W",
+      sourceName,
       url: s.source_url || "",
       ai: s.reasoning || "Signal detected — analysing hiring implications.",
-      tags: [s.signal_type?.replace(/_/g, " ") || "signal", ...(s.likely_roles || []).slice(0, 2)],
-      primaryLabel: s.confidence >= 0.7 ? "Apply" : s.confidence >= 0.5 ? "Scout" : "Watch",
+      tags: [signalTypeLabel.toLowerCase(), ...((s.likely_roles || []).slice(0, 2))],
+      primaryLabel: confidencePct >= 70 ? "Apply" : confidencePct >= 50 ? "Scout" : "Watch",
     };
   });
 
