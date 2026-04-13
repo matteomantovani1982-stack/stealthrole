@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import {
   getDashboard,
@@ -53,7 +54,50 @@ const STAGE_COLORS: Record<string, string> = {
 const HOME_CACHE_KEY = "sr_home_cache";
 const HOME_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
+async function createAppAndPack(company: string, role: string, jdUrl: string | null = null): Promise<{ id: string } | null> {
+  const tk = typeof window !== "undefined" ? localStorage.getItem("sr_token") : null;
+  const hdrs = { "Content-Type": "application/json", ...(tk ? { Authorization: `Bearer ${tk}` } : {}) };
+
+  // Get latest parsed CV
+  const cvsRes = await fetch("/api/v1/cvs", { headers: hdrs });
+  const cvs = cvsRes.ok ? await cvsRes.json() : [];
+  const cv = Array.isArray(cvs) ? cvs.find((c: any) => c.status === "parsed") : null;
+  if (!cv) {
+    throw new Error("Upload a CV on the Profile page before generating a pack.");
+  }
+
+  // Start job run
+  const jdText = `Role: ${role}\nCompany: ${company}${jdUrl ? `\n\nSource: ${jdUrl}` : ""}`;
+  const jobRes = await fetch("/api/v1/jobs", {
+    method: "POST",
+    headers: hdrs,
+    body: JSON.stringify({ cv_id: cv.id, jd_text: jdText, preferences: { tone: "professional", region: "MENA" } }),
+  });
+  if (!jobRes.ok) {
+    const body = await jobRes.json().catch(() => ({}));
+    throw new Error(body.detail || "Failed to start pack generation");
+  }
+  const job = await jobRes.json();
+
+  // Create application linked to job run
+  const appRes = await fetch("/api/v1/applications", {
+    method: "POST",
+    headers: hdrs,
+    body: JSON.stringify({
+      company, role,
+      date_applied: new Date().toISOString(),
+      source_channel: "job_board",
+      stage: "watching",
+      url: jdUrl || undefined,
+      job_run_id: job.id,
+    }),
+  });
+  if (!appRes.ok) throw new Error("Failed to create application");
+  return await appRes.json();
+}
+
 export default function HomePage() {
+  const router = useRouter();
   const { user } = useAuth();
   const [dashboard, setDashboard] = useState<DashboardSummary | null>(null);
   const [analytics, setAnalytics] = useState<ApplicationAnalytics | null>(null);
@@ -62,6 +106,23 @@ export default function HomePage() {
   const [signals, setSignals] = useState<HiddenSignal[]>([]);
   // Track which sections have loaded so we can show partial content
   const [sectionsLoaded, setSectionsLoaded] = useState<Set<string>>(new Set());
+  const [generatingFor, setGeneratingFor] = useState<string | null>(null);
+
+  async function handleGeneratePack(company: string, role: string, url: string | null = null) {
+    if (generatingFor) return;
+    setGeneratingFor(`${company}|${role}`);
+    try {
+      const app = await createAppAndPack(company, role, url);
+      if (app?.id) {
+        router.push(`/applications/${app.id}/package`);
+      } else {
+        router.push("/applications");
+      }
+    } catch (err: any) {
+      alert(err?.message || "Failed to start pack generation");
+      setGeneratingFor(null);
+    }
+  }
 
   useEffect(() => {
     // 1. Hydrate from cache instantly (if same user + fresh)
@@ -362,11 +423,23 @@ export default function HomePage() {
                       <div style={{ display: "flex", gap: 8, marginTop: "auto" }}>
                         {isHero ? (
                           <>
-                            <a href="/applications" style={{ background: color, color: "#fff", border: "none", borderRadius: 11, padding: "9px 15px", fontSize: 11, fontWeight: 600, textDecoration: "none", cursor: "pointer" }}>Apply with AI pack</a>
+                            <button
+                              onClick={() => handleGeneratePack(opp.company, opp.role || "Senior Role", (opp as any).apply_url || (opp as any).source_url || null)}
+                              disabled={generatingFor === `${opp.company}|${opp.role || "Senior Role"}`}
+                              style={{ background: color, color: "#fff", border: "none", borderRadius: 11, padding: "9px 15px", fontSize: 11, fontWeight: 600, cursor: "pointer", opacity: generatingFor === `${opp.company}|${opp.role || "Senior Role"}` ? 0.6 : 1 }}
+                            >
+                              {generatingFor === `${opp.company}|${opp.role || "Senior Role"}` ? "Starting..." : "Apply with AI pack"}
+                            </button>
                             <a href="/scout" style={{ background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.5)", border: "0.5px solid rgba(255,255,255,0.1)", borderRadius: 11, padding: "9px 15px", fontSize: 11, fontWeight: 500, textDecoration: "none" }}>View intel →</a>
                           </>
                         ) : (
-                          <a href="/scout" style={{ display: "block", textAlign: "center", background: color, color: "#fff", borderRadius: 10, padding: "8px 0", fontSize: 11, fontWeight: 600, textDecoration: "none", width: "100%" }}>View opportunity</a>
+                          <button
+                            onClick={() => handleGeneratePack(opp.company, opp.role || "Senior Role", (opp as any).apply_url || (opp as any).source_url || null)}
+                            disabled={generatingFor === `${opp.company}|${opp.role || "Senior Role"}`}
+                            style={{ display: "block", textAlign: "center", background: color, color: "#fff", borderRadius: 10, padding: "8px 0", fontSize: 11, fontWeight: 600, border: "none", cursor: "pointer", width: "100%", opacity: generatingFor === `${opp.company}|${opp.role || "Senior Role"}` ? 0.6 : 1 }}
+                          >
+                            {generatingFor === `${opp.company}|${opp.role || "Senior Role"}` ? "Starting..." : "Generate pack"}
+                          </button>
                         )}
                       </div>
                     </div>

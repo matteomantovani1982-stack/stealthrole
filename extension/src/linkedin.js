@@ -356,19 +356,31 @@
       console.log("[StealthRole] scrapeProfileAsync: name='" + fullName + "' title='" + currentTitle + "' company='" + currentCompany + "' degree=" + degree);
       if (!fullName) { resolve(); return; }
 
-      if (degree === 1 || degree === 0) {
-        const strength = degree === 1 ? "medium" : "visited";
-        srApiCall("/linkedin/ingest/connections", { method: "POST", body: JSON.stringify({ connections: [{ linkedin_id: linkedinId, linkedin_url: url, full_name: fullName, headline, current_title: currentTitle, current_company: currentCompany, relationship_strength: strength }] }) },
-          (res) => {
-            console.log("[StealthRole] Profile save response:", JSON.stringify(res));
-            if (res?.ok) showToast("Saved: " + fullName + (currentCompany ? " at " + currentCompany : ""));
-            else showToast("Save failed: " + (res?.error || "unknown error"));
-            resolve();
-          });
-      } else {
-        console.log("[StealthRole] " + fullName + " is " + degree + "nd/rd degree — skipping connection save");
-        resolve();
-      }
+      // ALWAYS save the profile as a contact, regardless of degree.
+      // Strength reflects how directly we know them.
+      const strength = degree === 1 ? "strong" : degree === 2 ? "weak" : degree === 3 ? "discovered" : "visited";
+      const payload = {
+        linkedin_id: linkedinId,
+        linkedin_url: url,
+        full_name: fullName,
+        headline,
+        current_title: currentTitle,
+        current_company: currentCompany,
+        relationship_strength: strength,
+        connection_degree: degree || null,
+      };
+      srApiCall("/linkedin/ingest/connections", { method: "POST", body: JSON.stringify({ connections: [payload] }) },
+        (res) => {
+          console.log("[StealthRole] Profile save response:", JSON.stringify(res));
+          if (res?.ok) {
+            const created = res.data?.created || 0;
+            const msg = created > 0 ? "Saved: " + fullName + (currentCompany ? " at " + currentCompany : "") : "Updated: " + fullName;
+            showToast(msg);
+          } else {
+            showToast("Save failed: " + (res?.error || "unknown error"));
+          }
+          resolve();
+        });
     });
   }
 
@@ -387,20 +399,25 @@
     console.log("[StealthRole] scrapeProfile: name='" + fullName + "' title='" + currentTitle + "' company='" + currentCompany + "' degree=" + degree + " id=" + linkedinId);
     if (!fullName) { console.log("[StealthRole] scrapeProfile: ABORT - no name found"); return; }
 
-    // Only save 1st-degree connections as actual connections
-    // 2nd/3rd degree profiles are saved via mutual connections, not as direct contacts
-    if (degree === 1 || degree === 0) {
-      const strength = degree === 1 ? "medium" : "visited";
-      showToast("Saving " + fullName + "...");
-      srApiCall("/linkedin/ingest/connections", { method: "POST", body: JSON.stringify({ connections: [{ linkedin_id: linkedinId, linkedin_url: url, full_name: fullName, headline, current_title: currentTitle, current_company: currentCompany, relationship_strength: strength }] }) },
-        (res) => {
-          console.log("[StealthRole] Profile save response:", JSON.stringify(res));
-          if (res?.ok) showToast("Saved: " + fullName + (currentCompany ? " at " + currentCompany : ""));
-          else showToast("Save failed: " + (res?.error || "unknown error"));
-        });
-    } else {
-      console.log("[StealthRole] " + fullName + " is " + degree + "nd/rd degree — skipping connection save, mutual scrape will handle it");
-    }
+    // ALWAYS save the profile, regardless of degree.
+    const strength = degree === 1 ? "strong" : degree === 2 ? "weak" : degree === 3 ? "discovered" : "visited";
+    showToast("Saving " + fullName + "...");
+    const payload = {
+      linkedin_id: linkedinId,
+      linkedin_url: url,
+      full_name: fullName,
+      headline,
+      current_title: currentTitle,
+      current_company: currentCompany,
+      relationship_strength: strength,
+      connection_degree: degree || null,
+    };
+    srApiCall("/linkedin/ingest/connections", { method: "POST", body: JSON.stringify({ connections: [payload] }) },
+      (res) => {
+        console.log("[StealthRole] Profile save response:", JSON.stringify(res));
+        if (res?.ok) showToast("Saved: " + fullName + (currentCompany ? " at " + currentCompany : ""));
+        else showToast("Save failed: " + (res?.error || "unknown error"));
+      });
   }
 
   // ── MUTUAL CONNECTIONS — the killer feature

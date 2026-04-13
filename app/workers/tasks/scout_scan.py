@@ -212,3 +212,98 @@ def _send_wa_alerts(user_id: str, opportunities: list, log):
 
         except Exception as e:
             log.warning("wa_alerts_failed", user_id=user_id, error=str(e))
+
+
+@celery.task(
+    bind=True,
+    name="app.workers.tasks.scout_scan.send_realtime_wa_alert",
+    max_retries=2,
+    soft_time_limit=60,
+    time_limit=90,
+)
+def send_realtime_wa_alert(self: Task, user_id: str, opportunities: list) -> dict:
+    """
+    Send a real-time WhatsApp alert when a user runs Unleash the Scout
+    and new opportunities are found.
+
+    Throttle: only send if no alert sent in the last 2 hours
+    (prevents spam if user clicks Unleash multiple times).
+    """
+    from sqlalchemy import select
+    from datetime import timedelta
+    from app.config import settings
+    from app.models.user import User
+
+    log = logger.bind(user_id=user_id, task="realtime_wa_alert")
+
+    if not (settings.twilio_account_sid and settings.twilio_auth_token):
+        log.info("twilio_not_configured")
+        return {"sent": 0, "reason": "no_twilio"}
+
+    if not opportunities:
+        return {"sent": 0, "reason": "no_opportunities"}
+
+    with get_sync_db() as db:
+        user = db.execute(select(User).where(User.id == uuid.UUID(user_id))).scalar_one_or_none()
+        if not user or not user.whatsapp_verified or not user.whatsapp_number:
+            return {"sent": 0, "reason": "no_verified_number"}
+        if user.whatsapp_alert_mode == "OFF":
+            return {"sent": 0, "reason": "alerts_off"}
+
+        # Throttle via Redis: skip if we sent an alert in the last 2 hours
+        try:
+            import redis
+            r = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+            throttle_key = f"wa_alert_throttle:{user_id}"
+            if r.get(throttle_key):
+                return {"sent": 0, "reason": "throttled"}
+        except Exception:
+            r = None  # Continue without throttle if Redis unavailable
+
+        # Send the top 3 opportunities only
+        top = opportunities[:3]
+        if not top:
+            return {"sent": 0, "reason": "no_top"}
+
+        try:
+            from twilio.rest import Client
+            client = Client(settings.twilio_account_sid, settings.twilio_auth_token)
+
+            # Normalize phone
+            phone = user.whatsapp_number.replace(" ", "").replace("-", "")
+            if phone.startswith("0") and not phone.startswith("00"):
+                phone = "+971" + phone[1:]
+            if not phone.startswith("+"):
+                phone = "+" + phone
+
+            # Build a single combined message with all top opportunities
+            app_base = getattr(settings, "app_base_url", "https://stealthrole.com") or "https://stealthrole.com"
+            lines = ["🔥 *New opportunities detected*\n"]
+            for i, opp in enumerate(top, 1):
+                score = opp.get("fit_score") or opp.get("radar_score") or 0
+                role = opp.get("suggested_role") or opp.get("role") or "Senior role"
+                company = opp.get("company", "Unknown")
+                lines.append(f"{i}. *{role}* at {company} — {score}% match")
+            lines.append(f"\n👉 View & generate Intelligence Pack:\n{app_base}/scout")
+
+            client.messages.create(
+                body="\n".join(lines),
+                from_=settings.twilio_whatsapp_from,
+                to=f"whatsapp:{phone}",
+            )
+
+            # Set throttle in Redis (2 hours)
+            try:
+                if r:
+                    r.setex(throttle_key, 7200, "1")
+                user.whatsapp_weekly_quota_used = (user.whatsapp_weekly_quota_used or 0) + 1
+                db.commit()
+            except Exception:
+                pass
+
+            log.info("realtime_wa_alert_sent", count=len(top))
+            return {"sent": len(top)}
+
+        except Exception as e:
+            log.warning("realtime_wa_alert_failed", error=str(e))
+            return {"sent": 0, "error": str(e)}

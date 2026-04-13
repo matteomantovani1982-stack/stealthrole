@@ -909,7 +909,7 @@ function PredictionsTab({ onAddPack, predictions = [] }: { onAddPack: (company: 
                 <div style={{ fontSize: 11, fontStyle: "italic", color: "rgba(255,255,255,0.5)", lineHeight: 1.5, marginBottom: 12, flex: 1 }}>"{card.intel}"</div>
 
                 <div style={{ display: "flex", gap: 6 }}>
-                  <button onClick={() => handleApply(card.company, card.title)} style={{ flex: 1, background: `${c.main}29`, color: c.light, border: `0.5px solid ${c.main}59`, borderRadius: 8, padding: "8px 10px", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>{c.btn}</button>
+                  <button onClick={() => handleApply(card.company, card.title)} style={{ flex: 1, background: "#4d8ef5", color: "#fff", border: "none", borderRadius: 8, padding: "8px 10px", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>Generate pack</button>
                   <button onClick={() => router.push("/applications")} style={{ background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.5)", border: "0.5px solid rgba(255,255,255,0.08)", borderRadius: 8, padding: "8px 12px", fontSize: 10, fontWeight: 500, cursor: "pointer" }}>Intel →</button>
                 </div>
               </div>
