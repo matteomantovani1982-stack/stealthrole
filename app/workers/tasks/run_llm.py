@@ -741,9 +741,10 @@ def run_detail_task(self: Task, job_run_id: str) -> dict:
 
     def call_detail_report():
         from app.services.llm.router import LLMTask as _T
-        # Cost optimization: 6000 is sufficient for the structured report
-        # (was 16000 — most calls used <4000 anyway)
-        c = ClaudeClient(task=_T.REPORT_PACK, max_tokens=6000)
+        # 12000 tokens — detail report needs space for company/role/salary/networking
+        # /application/exec_summary sections. 6000 was too low and caused truncation
+        # → "Unterminated string" JSON parse errors.
+        c = ClaudeClient(task=_T.REPORT_PACK, max_tokens=12000)
         return c.call_structured(
             system_prompt=detail_system,
             user_prompt=rp_user,

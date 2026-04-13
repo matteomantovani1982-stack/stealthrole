@@ -77,8 +77,10 @@ celery.conf.task_routes = {
         "routing_key": "llm",
     },
     "app.workers.tasks.render_docx.render_docx_task": {
-        "queue": "rendering",
-        "routing_key": "rendering",
+        # Was "rendering" but no worker-rendering ECS service exists.
+        # Route to default so worker-default picks it up.
+        "queue": "default",
+        "routing_key": "default",
     },
     "app.workers.tasks.scout_scan.daily_scout_scan": {
         "queue": "default",
