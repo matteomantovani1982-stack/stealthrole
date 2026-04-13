@@ -1,10 +1,50 @@
 // @ts-nocheck
 "use client";
 
-import { useEffect, useState } from "react";
+// Build: scout-fix-v2 — force new chunk hash to bust browser cache
+
+import { useEffect, useState, Component } from "react";
 import { useRouter } from "next/navigation";
 import { getHiddenMarket, type HiddenSignal } from "@/lib/api";
 import MarketSignals from "@/components/market-signals";
+
+// ═══ Error Boundary — catches runtime crashes and shows a friendly message ═══
+class ScoutErrorBoundary extends Component<{ children: React.ReactNode }, { hasError: boolean; error: Error | null }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error: Error, errorInfo: any) {
+    console.error("[ScoutPage] Runtime error:", error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: "48px 24px", textAlign: "center" }}>
+          <div style={{ fontSize: 18, color: "#fca5a5", marginBottom: 12 }}>Something went wrong loading the Scout</div>
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginBottom: 20, maxWidth: 500, margin: "0 auto 20px" }}>
+            {this.state.error?.message || "Unknown error"}
+          </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+            <button
+              onClick={() => { this.setState({ hasError: false, error: null }); window.location.reload(); }}
+              style={{ background: "#4d8ef5", color: "#fff", borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}
+            >
+              Reload page
+            </button>
+            <a href="/" style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.7)", borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 600, textDecoration: "none" }}>
+              Back to home
+            </a>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const TRIGGER_COLORS = {
   funding: "bg-green-50 text-green-700",
@@ -319,7 +359,15 @@ function FindWayInPanel({ company, role, headers }: { company: string; role: str
   );
 }
 
-export default function ScoutPage() {
+export default function ScoutPageWrapper() {
+  return (
+    <ScoutErrorBoundary>
+      <ScoutPage />
+    </ScoutErrorBoundary>
+  );
+}
+
+function ScoutPage() {
   const router = useRouter();
   const [vacancies, setVacancies] = useState([]);
   const [predictions, setPredictions] = useState([]);
