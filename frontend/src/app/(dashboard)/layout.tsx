@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/sidebar";
+import ExtensionBanner from "@/components/extension-banner";
 import { useAuth } from "@/lib/auth-context";
 
 export default function DashboardLayout({
@@ -30,9 +31,10 @@ export default function DashboardLayout({
   if (!user) return null;
 
   return (
-    <div className="min-h-screen" style={{ background: "radial-gradient(ellipse at 60% 50%, #1B2350 0%, #141A3A 40%, #0B0F2A 100%)" }}>
+    <div className="min-h-screen" style={{ background: "#03040f", color: "#ffffff" }}>
       <Sidebar />
       <main className="ml-[180px] p-8 max-w-[1200px]">{children}</main>
+      <ExtensionBanner />
     </div>
   );
 }

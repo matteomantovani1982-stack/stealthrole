@@ -3,7 +3,7 @@
 
 import { useState } from "react";
 import type { JobRun } from "@/lib/api";
-import ConnectionPath from "./connection-path";
+import ConnectionPathPanel from "./connection-path";
 
 interface LinkedInContact {
   name: string;
@@ -250,67 +250,9 @@ export default function PackDisplay({ pack, downloadUrl, linkedinContacts = [] }
       {tab === "contacts" && (
         <div className="space-y-4">
           {/* Connection Path — Find My Way In */}
-          <ConnectionPathLoader company={company?.company_name || pack.company_name || ""} role={pack.role_title || ""} />
+          <ConnectionPathPanel company={company?.company_name || pack.company_name || ""} role={pack.role_title || ""} />
 
-          {/* Your LinkedIn connections at this company */}
-          {linkedinContacts.length > 0 && (
-            <Section title="Your Network at This Company" description="People you already know — warm intro paths from your LinkedIn connections">
-              <div className="space-y-2">
-                {linkedinContacts.map((contact, i) => (
-                  <div key={i} className="bg-brand-50 rounded-lg p-3 flex items-start gap-3 border border-brand-100">
-                    <div className="w-9 h-9 rounded-full bg-brand-200 text-brand-700 flex items-center justify-center text-sm font-bold shrink-0">
-                      {contact.name[0]?.toUpperCase() || "?"}
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <div className="text-sm font-semibold text-ink-900">{contact.name}</div>
-                        {contact.is_recruiter && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium">Recruiter</span>}
-                        {contact.is_hiring_manager && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">Hiring Manager</span>}
-                      </div>
-                      {contact.title && <div className="text-[12px] text-ink-400">{contact.title}</div>}
-                      {contact.linkedin_url && <a href={contact.linkedin_url} target="_blank" rel="noopener" className="text-[12px] text-brand-600 hover:underline">View on LinkedIn →</a>}
-                    </div>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium shrink-0">1st</span>
-                  </div>
-                ))}
-              </div>
-            </Section>
-          )}
-
-          {/* Claude-researched contacts */}
-          {Array.isArray(networking.named_contacts) && networking.named_contacts.length > 0 && (
-            <Section title="Researched Contacts" description="People identified by AI research — reach out via LinkedIn or email">
-              <div className="space-y-2">
-                {networking.named_contacts.map((contact, i) => (
-                  <div key={i} className="bg-surface-50 rounded-lg p-3 flex items-start gap-3">
-                    <div className="w-9 h-9 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-sm font-bold shrink-0">
-                      {(contact.name || "?")[0].toUpperCase()}
-                    </div>
-                    <div>
-                      <div className="text-sm font-semibold text-ink-900">{contact.name}</div>
-                      {contact.title && <div className="text-[12px] text-ink-400">{contact.title}</div>}
-                      {contact.relevance && <div className="text-[12px] text-ink-500 mt-0.5">{contact.relevance}</div>}
-                      <a href={`https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(contact.name + (contact.title ? " " + contact.title : ""))}`} target="_blank" rel="noopener" className="text-[12px] text-brand-600 hover:underline">Search on LinkedIn →</a>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Section>
-          )}
-          {Array.isArray(networking.target_contacts) && networking.target_contacts.length > 0 && (
-            <Section title="Target Roles to Find" description="Job titles to search for on LinkedIn">
-              {networking.target_contacts.map((title, i) => (
-                <BulletItem key={i} icon="🎯" color="brand">{safeStr(title)}</BulletItem>
-              ))}
-            </Section>
-          )}
-          {Array.isArray(networking.linkedin_search_strings) && networking.linkedin_search_strings.length > 0 && (
-            <Section title="LinkedIn Search Strings" description="Copy-paste these into LinkedIn search">
-              {networking.linkedin_search_strings.map((query, i) => (
-                <div key={i} className="bg-surface-50 rounded-lg px-3 py-2 text-sm font-mono text-ink-700 mb-1">{query}</div>
-              ))}
-            </Section>
-          )}
+          {/* 7-Day Action Plan */}
           {Array.isArray(networking.seven_day_action_plan) && networking.seven_day_action_plan.length > 0 && (
             <Section title="7-Day Action Plan" description="Step-by-step networking plan for this application">
               <div className="space-y-2">
@@ -323,6 +265,14 @@ export default function PackDisplay({ pack, downloadUrl, linkedinContacts = [] }
                   </div>
                 ))}
               </div>
+            </Section>
+          )}
+          {/* LinkedIn Search Strings */}
+          {Array.isArray(networking.linkedin_search_strings) && networking.linkedin_search_strings.length > 0 && (
+            <Section title="LinkedIn Search Strings" description="Copy-paste these into LinkedIn search">
+              {networking.linkedin_search_strings.map((query, i) => (
+                <div key={i} className="bg-surface-50 rounded-lg px-3 py-2 text-sm font-mono text-ink-700 mb-1">{query}</div>
+              ))}
             </Section>
           )}
         </div>
@@ -406,9 +356,24 @@ function ConnectionPathLoader({ company, role }: { company: string; role: string
       // Map API response → ConnectionPath keyPeople format
       const people: any[] = [];
 
-      // Direct contacts — separate real 1st-degree from visited profiles
+      const seenNames = new Set<string>();
+
+      // Build a set of names that appear as warm path targets (2nd degree) — don't show them as 1st degree
+      const warmPathTargets = new Set<string>();
+      if (data.best_path?.target?.name) warmPathTargets.add(data.best_path.target.name);
+      for (const bp of (data.backup_paths || [])) {
+        if (bp.target?.name) warmPathTargets.add(bp.target.name);
+      }
+
+      // Direct contacts — separate real 1st-degree from visited/wrongly-saved profiles
       for (const c of (data.direct_contacts || [])) {
-        const isVisited = c.is_visited_profile === true;
+        if (seenNames.has(c.name)) continue;
+        seenNames.add(c.name);
+        // Detect if this is actually a visited profile, not a real 1st-degree connection
+        // Signals: is_visited_profile flag, "visited" strength, or company matches target (likely visited from SR suggestions)
+        // Skip people who are actually 2nd-degree warm path targets (wrongly saved as connections)
+        if (warmPathTargets.has(c.name)) continue;
+        const isVisited = c.is_visited_profile === true || c.relationship_strength === "visited";
         people.push({
           id: c.connection_id || c.name,
           name: c.name,
@@ -437,7 +402,8 @@ function ConnectionPathLoader({ company, role }: { company: string; role: string
 
       // Visited targets (from updated backend — cold outreach)
       for (const c of (data.visited_targets || [])) {
-        if (people.find(p => p.name === c.name)) continue; // skip duplicates
+        if (seenNames.has(c.name)) continue;
+        seenNames.add(c.name);
         people.push({
           id: "visited-" + c.name,
           name: c.name,
@@ -467,6 +433,9 @@ function ConnectionPathLoader({ company, role }: { company: string; role: string
         const bp = data.best_path;
         const target = bp.target || {};
         const connector = bp.connector || {};
+        const targetName = target.name || "Decision maker";
+        if (!seenNames.has(targetName)) {
+        seenNames.add(targetName);
         people.push({
           id: "path-" + (target.name || "target"),
           name: target.name || "Decision maker",
@@ -489,11 +458,13 @@ function ConnectionPathLoader({ company, role }: { company: string; role: string
             suggestedMessage: bp.action || `Ask ${connector.name?.split(" ")[0]} to introduce you.`,
           }],
         });
+        }
       }
       for (const bp of (data.backup_paths || [])) {
         const target = bp.target || {};
         const connector = bp.connector || {};
-        if (target.name && !people.find(p => p.name === target.name)) {
+        if (target.name && !seenNames.has(target.name)) {
+          seenNames.add(target.name);
           people.push({
             id: "bpath-" + target.name,
             name: target.name,
@@ -521,7 +492,8 @@ function ConnectionPathLoader({ company, role }: { company: string; role: string
 
       // Discover targets (not yet visited)
       for (const dt of (data.discover_targets || [])) {
-        if (!people.find(p => p.name === dt.name)) {
+        if (!seenNames.has(dt.name)) {
+          seenNames.add(dt.name);
           people.push({
             id: "discover-" + dt.name,
             name: dt.name,

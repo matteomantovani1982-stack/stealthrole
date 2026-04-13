@@ -126,6 +126,18 @@ export default function ProfilePage() {
     }
   }, [message]);
 
+  // Auto-save preferences on change (debounced 800ms)
+  useEffect(() => {
+    if (!profile) return;
+    // Skip on initial mount before user interaction
+    if (selectedRegions.length === 0 && selectedSectors.length === 0 && selectedRoles.length === 0 && !selectedSeniority && !salaryMin && !salaryMax) return;
+    const timer = setTimeout(() => {
+      handleSavePreferences().catch(() => {});
+    }, 800);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRegions, selectedSectors, selectedRoles, selectedSeniority, salaryMin, salaryMax]);
+
   const ctx = parseGlobalContext(profile?.global_context ?? null);
   const skills = (ctx.skills as string[]) || [];
   const languages = (ctx.languages as string[]) || [];
@@ -815,10 +827,78 @@ export default function ProfilePage() {
           </div>
           <div>
             <label className="text-[12px] font-medium text-[rgba(255,255,255,0.45)] uppercase block mb-2">Salary Range (USD/year)</label>
-            <div className="flex items-center gap-3">
-              <input type="number" value={salaryMin} onChange={(e) => setSalaryMin(e.target.value)} placeholder="Min" className="w-full px-3 py-2.5 rounded-lg border border-[rgba(255,255,255,0.1)] text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20" />
-              <span className="text-[rgba(255,255,255,0.4)]">—</span>
-              <input type="number" value={salaryMax} onChange={(e) => setSalaryMax(e.target.value)} placeholder="Max" className="w-full px-3 py-2.5 rounded-lg border border-[rgba(255,255,255,0.1)] text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20" />
+            {/* Selected range display */}
+            <div className="text-base font-semibold text-white mb-3">
+              USD ${(parseInt(salaryMin) || 80) >= 1000 ? Math.round((parseInt(salaryMin) || 80) / 1000) + "K" : (parseInt(salaryMin) || 80) + "K"}
+              {" → "}
+              ${(parseInt(salaryMax) || 500) >= 1000 ? Math.round((parseInt(salaryMax) || 500) / 1000) + "K" : (parseInt(salaryMax) || 500) + "K"}
+              <span className="text-xs text-[rgba(255,255,255,0.35)] font-normal ml-2">per year</span>
+            </div>
+            {/* Dual range sliders */}
+            <div className="relative h-12 mb-3">
+              <div className="absolute top-[22px] left-0 right-0 h-1 rounded-full bg-[rgba(255,255,255,0.08)]" />
+              <div
+                className="absolute top-[22px] h-1 rounded-full"
+                style={{
+                  background: "linear-gradient(90deg, #4d8ef5, #a78bfa)",
+                  left: `${Math.max(0, Math.min(100, ((parseInt(salaryMin) || 80) - 80) / (500 - 80) * 100))}%`,
+                  right: `${100 - Math.max(0, Math.min(100, ((parseInt(salaryMax) || 500) - 80) / (500 - 80) * 100))}%`,
+                }}
+              />
+              <input
+                type="range"
+                min={80}
+                max={500}
+                step={10}
+                value={parseInt(salaryMin) || 80}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value);
+                  const max = parseInt(salaryMax) || 500;
+                  setSalaryMin(String(Math.min(v, max - 10)));
+                }}
+                className="absolute top-0 left-0 w-full h-12 appearance-none bg-transparent pointer-events-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#4d8ef5] [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:cursor-pointer"
+              />
+              <input
+                type="range"
+                min={80}
+                max={500}
+                step={10}
+                value={parseInt(salaryMax) || 500}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value);
+                  const min = parseInt(salaryMin) || 80;
+                  setSalaryMax(String(Math.max(v, min + 10)));
+                }}
+                className="absolute top-0 left-0 w-full h-12 appearance-none bg-transparent pointer-events-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#a78bfa] [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:cursor-pointer"
+              />
+            </div>
+            {/* Quick bracket chips */}
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                { l: "Under $100K", min: 80, max: 100 },
+                { l: "$100–150K", min: 100, max: 150 },
+                { l: "$150–200K", min: 150, max: 200 },
+                { l: "$200–300K", min: 200, max: 300 },
+                { l: "$300–400K", min: 300, max: 400 },
+                { l: "$400K+", min: 400, max: 500 },
+                { l: "$500K+", min: 500, max: 500 },
+              ].map((b) => {
+                const active = parseInt(salaryMin) === b.min && parseInt(salaryMax) === b.max;
+                return (
+                  <button
+                    key={b.l}
+                    type="button"
+                    onClick={() => { setSalaryMin(String(b.min)); setSalaryMax(String(b.max)); }}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-colors ${
+                      active
+                        ? "bg-[rgba(77,142,245,0.15)] text-[#4d8ef5] border-brand-200"
+                        : "bg-[rgba(255,255,255,0.04)] text-[rgba(255,255,255,0.45)] border-[rgba(255,255,255,0.1)] hover:bg-[rgba(255,255,255,0.08)]"
+                    }`}
+                  >
+                    {b.l}
+                  </button>
+                );
+              })}
             </div>
           </div>
           <button onClick={handleSavePreferences} disabled={saving} className="w-full py-2.5 bg-[#4d8ef5] text-white text-sm font-semibold rounded-lg hover:bg-[#3b7de0] disabled:opacity-50 transition-colors">

@@ -20,29 +20,32 @@ async function addAndGeneratePack(company: string, role: string, url: string | n
   const tk = localStorage.getItem("sr_token");
   const hdrs = tk ? { Authorization: `Bearer ${tk}` } : {};
 
-  // 1. Get latest CV first
+  // 1. Get latest CV first — REQUIRED for pack generation
   const cvsRes = await fetch("/api/v1/cvs", { headers: hdrs });
   const cvs = cvsRes.ok ? await cvsRes.json() : [];
   const cv = Array.isArray(cvs) ? cvs.find((c: any) => c.status === "parsed") : null;
 
-  // 2. Create job run (pack) first so we have the ID
-  let jobRunId: string | null = null;
-  if (cv) {
-    const jdText = `Role: ${role}\nCompany: ${company}\n\n${description || `${role} position at ${company}`}${url ? `\n\nSource: ${url}` : ""}`;
-    const jobRes = await fetch("/api/v1/jobs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...hdrs },
-      body: JSON.stringify({
-        cv_id: cv.id,
-        jd_text: jdText,
-        preferences: { tone: "professional", region: "MENA" },
-      }),
-    });
-    if (jobRes.ok) {
-      const job = await jobRes.json();
-      jobRunId = job.id;
-    }
+  if (!cv) {
+    throw new Error("NO_CV: Upload a CV in your Profile before generating a pack.");
   }
+
+  // 2. Create job run (pack) first so we have the ID
+  const jdText = `Role: ${role}\nCompany: ${company}\n\n${description || `${role} position at ${company}`}${url ? `\n\nSource: ${url}` : ""}`;
+  const jobRes = await fetch("/api/v1/jobs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...hdrs },
+    body: JSON.stringify({
+      cv_id: cv.id,
+      jd_text: jdText,
+      preferences: { tone: "professional", region: "MENA" },
+    }),
+  });
+  if (!jobRes.ok) {
+    const body = await jobRes.json().catch(() => ({}));
+    throw new Error(body.detail || "Failed to start pack generation");
+  }
+  const job = await jobRes.json();
+  const jobRunId = job.id;
 
   // 3. Create application WITH job_run_id already linked
   const appRes = await fetch("/api/v1/applications", {
@@ -54,7 +57,7 @@ async function addAndGeneratePack(company: string, role: string, url: string | n
       source_channel: "job_board",
       stage: "watching",
       url: url || undefined,
-      job_run_id: jobRunId || undefined,
+      job_run_id: jobRunId,
     }),
   });
   if (!appRes.ok) throw new Error("Failed to create application");
@@ -395,7 +398,7 @@ export default function ScoutPage() {
 
   const TABS = [
     { id: "vacancies", label: "Current Vacancies", count: vacancies.length },
-    { id: "predictions", label: "Predicted Opportunities", count: predictions.length },
+    { id: "predictions", label: "Future Openings", count: predictions.length },
     { id: "signals", label: "Hiring Signals", count: signals.length },
     { id: "freelance", label: "Freelance", count: freelance.length || 14 },
   ];
@@ -535,11 +538,25 @@ function VacanciesTab({ onAddPack, vacancies = [] }: { onAddPack: (company: stri
       url: job.url || null,
     }));
 
-  async function handleApply(company: string, role: string) {
+  async function handleApply(company: string, role: string, url?: string | null) {
     try {
-      await onAddPack(company, role, null, "");
-      router.push("/applications");
-    } catch {}
+      const app = await onAddPack(company, role, url || null, "");
+      // FIX 6: navigate to the application package page so user sees real-time progress
+      if (app?.id) {
+        router.push(`/applications/${app.id}/package`);
+      } else {
+        router.push("/applications");
+      }
+    } catch (err: any) {
+      const msg = err?.message || "Failed to start pack generation";
+      if (typeof window !== "undefined") {
+        if (msg.startsWith("NO_CV:")) {
+          alert(msg.replace("NO_CV: ", ""));
+        } else {
+          alert(msg);
+        }
+      }
+    }
   }
 
   if (rows.length === 0) {
@@ -603,19 +620,90 @@ function VacanciesTab({ onAddPack, vacancies = [] }: { onAddPack: (company: stri
       <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.7, color: "rgba(255,255,255,0.25)", marginBottom: 10 }}>
         {rest.length} more vacancies
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 10 }}>
         {rest.map((row, i) => {
           const c = heatColor(row.pct);
           return (
-            <div key={i} style={{ display: "grid", gridTemplateColumns: "40px 1fr 100px 90px", padding: "12px 16px", borderBottom: "0.5px solid rgba(255,255,255,0.04)", alignItems: "center", gap: 8, animation: `slideUp 0.35s ease ${i * 0.04}s both` }}>
-              <MatchGauge pct={row.pct} delay={i * 0.05} />
-              <div style={{ minWidth: 0 }}>
-                <span style={{ fontSize: 14, fontWeight: 500, color: "#fff" }}>{row.role}</span>
-                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>{row.company}{row.location ? ` · ${row.location}` : ""}</div>
+            <div key={i} style={{
+              background: "rgba(255,255,255,0.03)",
+              border: "0.5px solid rgba(255,255,255,0.08)",
+              borderRadius: 14,
+              padding: 16,
+              animation: `slideUp 0.35s ease ${i * 0.04}s both`,
+              display: "flex",
+              flexDirection: "column",
+              gap: 10,
+            }}>
+              {/* Header row: score + title */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 500, color: "#fff", lineHeight: 1.3 }}>{row.role}</div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 3 }}>
+                    {row.company}{row.location ? ` · ${row.location}` : ""}
+                  </div>
+                </div>
+                <div style={{ fontSize: 36, fontWeight: 600, color: c.main, lineHeight: 1, flexShrink: 0 }}>
+                  {row.pct}<span style={{ fontSize: 14, opacity: 0.5 }}>%</span>
+                </div>
               </div>
-              <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)" }}>{row.source}</span>
-              <div style={{ display: "flex", gap: 6 }}>
-                <button onClick={() => handleApply(row.company, row.role)} style={{ background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.6)", border: "0.5px solid rgba(255,255,255,0.08)", borderRadius: 10, padding: "6px 10px", fontSize: 10, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>AI Pack</button>
+
+              {/* Action buttons */}
+              <div style={{ display: "flex", gap: 6, marginTop: "auto" }}>
+                {row.url ? (
+                  <a
+                    href={row.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      flex: 1,
+                      textAlign: "center",
+                      background: "rgba(255,255,255,0.04)",
+                      color: "rgba(255,255,255,0.65)",
+                      border: "0.5px solid rgba(255,255,255,0.1)",
+                      borderRadius: 10,
+                      padding: "8px 10px",
+                      fontSize: 11,
+                      fontWeight: 500,
+                      textDecoration: "none",
+                    }}
+                  >
+                    See posting →
+                  </a>
+                ) : (
+                  <button
+                    disabled
+                    title="Source not available"
+                    style={{
+                      flex: 1,
+                      background: "rgba(255,255,255,0.02)",
+                      color: "rgba(255,255,255,0.25)",
+                      border: "0.5px solid rgba(255,255,255,0.06)",
+                      borderRadius: 10,
+                      padding: "8px 10px",
+                      fontSize: 11,
+                      fontWeight: 500,
+                      cursor: "not-allowed",
+                    }}
+                  >
+                    No source
+                  </button>
+                )}
+                <button
+                  onClick={() => handleApply(row.company, row.role, row.url)}
+                  style={{
+                    flex: 1,
+                    background: "#4d8ef5",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 10,
+                    padding: "8px 10px",
+                    fontSize: 11,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  Generate pack
+                </button>
               </div>
             </div>
           );
@@ -657,11 +745,25 @@ function PredictionsTab({ onAddPack, predictions = [] }: { onAddPack: (company: 
 
   // No hardcoded feed items — use real predictions only
 
-  async function handleApply(company: string, role: string) {
+  async function handleApply(company: string, role: string, url?: string | null) {
     try {
-      await onAddPack(company, role, null, "");
-      router.push("/applications");
-    } catch {}
+      const app = await onAddPack(company, role, url || null, "");
+      // FIX 6: navigate to the application package page so user sees real-time progress
+      if (app?.id) {
+        router.push(`/applications/${app.id}/package`);
+      } else {
+        router.push("/applications");
+      }
+    } catch (err: any) {
+      const msg = err?.message || "Failed to start pack generation";
+      if (typeof window !== "undefined") {
+        if (msg.startsWith("NO_CV:")) {
+          alert(msg.replace("NO_CV: ", ""));
+        } else {
+          alert(msg);
+        }
+      }
+    }
   }
 
   return (

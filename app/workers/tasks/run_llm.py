@@ -741,7 +741,9 @@ def run_detail_task(self: Task, job_run_id: str) -> dict:
 
     def call_detail_report():
         from app.services.llm.router import LLMTask as _T
-        c = ClaudeClient(task=_T.REPORT_PACK, max_tokens=16000)
+        # Cost optimization: 6000 is sufficient for the structured report
+        # (was 16000 — most calls used <4000 anyway)
+        c = ClaudeClient(task=_T.REPORT_PACK, max_tokens=6000)
         return c.call_structured(
             system_prompt=detail_system,
             user_prompt=rp_user,
@@ -773,7 +775,8 @@ def run_detail_task(self: Task, job_run_id: str) -> dict:
                 f"Region: {preferences.get('region', 'UAE')}"
             )
         from app.services.llm.router import LLMTask as _T
-        c = ClaudeClient(task=_T.POSITIONING, max_tokens=8000)
+        # Cost optimization: positioning JSON fits in 4000 tokens
+        c = ClaudeClient(task=_T.POSITIONING, max_tokens=4000)
         raw, result = c.call_raw(
             system_prompt=pos_system, user_prompt=pos_user, temperature=0.3,
         )

@@ -50,6 +50,9 @@ const STAGE_COLORS: Record<string, string> = {
   closed: "rgba(255,255,255,0.3)",
 };
 
+const HOME_CACHE_KEY = "sr_home_cache";
+const HOME_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 export default function HomePage() {
   const { user } = useAuth();
   const [dashboard, setDashboard] = useState<DashboardSummary | null>(null);
@@ -57,21 +60,65 @@ export default function HomePage() {
   const [board, setBoard] = useState<BoardResponse | null>(null);
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [signals, setSignals] = useState<HiddenSignal[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Track which sections have loaded so we can show partial content
+  const [sectionsLoaded, setSectionsLoaded] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    Promise.allSettled([
-      getDashboard().then(setDashboard),
-      getApplicationAnalytics().then(setAnalytics),
-      getBoard().then(setBoard),
-      getRadar(10).then((r) => setOpportunities(r.opportunities || [])),
-      getHiddenMarket().then((r) => setSignals(r.signals || [])),
-    ]).finally(() => setLoading(false));
+    // 1. Hydrate from cache instantly (if same user + fresh)
+    if (typeof window !== "undefined") {
+      try {
+        const cached = localStorage.getItem(HOME_CACHE_KEY);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          const userId = localStorage.getItem("sr_user_id");
+          const age = Date.now() - (parsed._cached_at || 0);
+          if (parsed._user_id === userId && age < HOME_CACHE_TTL_MS) {
+            if (parsed.dashboard) setDashboard(parsed.dashboard);
+            if (parsed.analytics) setAnalytics(parsed.analytics);
+            if (parsed.board) setBoard(parsed.board);
+            if (parsed.opportunities) setOpportunities(parsed.opportunities);
+            if (parsed.signals) setSignals(parsed.signals);
+            setSectionsLoaded(new Set(["dashboard", "analytics", "board", "opportunities", "signals"]));
+          } else if (parsed._user_id !== userId) {
+            // Stale cache from another user
+            localStorage.removeItem(HOME_CACHE_KEY);
+          }
+        }
+      } catch {}
+    }
+
+    // 2. Fetch fresh data in parallel — update each section as it arrives (progressive)
+    const markLoaded = (key: string) => setSectionsLoaded(prev => new Set([...prev, key]));
+    const fetched: Record<string, unknown> = {};
+
+    getDashboard().then(d => { setDashboard(d); fetched.dashboard = d; markLoaded("dashboard"); }).catch(() => markLoaded("dashboard"));
+    getApplicationAnalytics().then(a => { setAnalytics(a); fetched.analytics = a; markLoaded("analytics"); }).catch(() => markLoaded("analytics"));
+    getBoard().then(b => { setBoard(b); fetched.board = b; markLoaded("board"); }).catch(() => markLoaded("board"));
+    getRadar(10).then(r => { const o = r.opportunities || []; setOpportunities(o); fetched.opportunities = o; markLoaded("opportunities"); }).catch(() => markLoaded("opportunities"));
+    getHiddenMarket().then(r => { const s = r.signals || []; setSignals(s); fetched.signals = s; markLoaded("signals"); }).catch(() => markLoaded("signals"));
+
+    // Persist cache once everything has loaded
+    const cacheTimer = setTimeout(() => {
+      if (typeof window !== "undefined") {
+        try {
+          const userId = localStorage.getItem("sr_user_id");
+          localStorage.setItem(HOME_CACHE_KEY, JSON.stringify({
+            ...fetched,
+            _user_id: userId,
+            _cached_at: Date.now(),
+          }));
+        } catch {}
+      }
+    }, 4000);
+    return () => clearTimeout(cacheTimer);
   }, []);
 
   const displayName = user?.full_name || user?.email?.split("@")[0] || "there";
 
-  if (loading) {
+  // Show shell immediately — sections fill in as they arrive
+  // Only show full skeleton if NO section has loaded yet (first visit, no cache)
+  const hasAnyData = sectionsLoaded.size > 0;
+  if (!hasAnyData) {
     return (
       <div style={{ padding: "36px" }}>
         <div className="animate-pulse" style={{ height: 270, borderRadius: 20, background: "rgba(255,255,255,0.04)", marginBottom: 20 }} />

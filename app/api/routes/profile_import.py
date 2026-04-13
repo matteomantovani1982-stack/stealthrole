@@ -205,9 +205,11 @@ CRITICAL RULES:
         import anthropic
         client = anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=120.0)
         logger.info("claude_cv_call_start", key_len=len(settings.anthropic_api_key or ""))
+        # Cost optimization: Haiku is sufficient for structured CV extraction,
+        # and 5000 tokens is enough for any realistic CV (was 8000 on Sonnet)
         resp = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=8000,
+            model="claude-haiku-4-5-20251001",
+            max_tokens=5000,
             messages=[{"role": "user", "content": prompt}],
         )
         logger.info("claude_cv_call_done")

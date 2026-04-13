@@ -525,7 +525,8 @@ CRITICAL: Return ONLY a valid JSON array. No text before or after. No markdown f
     try:
         from app.services.llm.client import ClaudeClient
         from app.services.llm.router import LLMTask
-        client = ClaudeClient(task=LLMTask.SIGNAL_SCORING, max_tokens=6000)
+        # Cost optimization: signal scoring needs at most ~3000 tokens
+        client = ClaudeClient(task=LLMTask.SIGNAL_SCORING, max_tokens=3000)
         raw, _result = client.call_text(
             system_prompt="You are a senior recruiter scoring market signals.",
             user_prompt=prompt,

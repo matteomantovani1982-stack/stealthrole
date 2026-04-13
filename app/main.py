@@ -47,6 +47,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_origins,
+        allow_origin_regex=r"^chrome-extension://.*$",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -115,6 +116,10 @@ def create_app() -> FastAPI:
     # WhatsApp routes — /api/v1/whatsapp
     from app.api.routes import whatsapp
     app.include_router(whatsapp.router)
+
+    # Admin: cost monitor — /api/v1/admin/costs
+    from app.api.routes import admin_costs
+    app.include_router(admin_costs.router)
 
     # Referral routes — /api/v1/referral
     from app.api.routes import referral

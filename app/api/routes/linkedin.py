@@ -133,7 +133,7 @@ async def ingest_mutual_connections(
                     MutualConnection.mutual_name == m["name"],
                 ),
             )
-        )).scalar_one_or_none()
+        )).scalars().first()
 
         if existing:
             # Update with better data if we have it now
@@ -161,6 +161,44 @@ async def ingest_mutual_connections(
         await db.commit()
 
     return {"stored": stored, "target": target.get("full_name", "")}
+
+
+@router.post(
+    "/cleanup/mutual-connections",
+    summary="Deduplicate mutual connections table",
+)
+async def cleanup_mutual_connections(
+    db: DB,
+    user_id: CurrentUserId,
+) -> dict:
+    """Remove duplicate mutual_connection records, keeping one per (target, mutual_name)."""
+    from sqlalchemy import select as sa_select, delete as sa_delete
+    from app.models.mutual_connection import MutualConnection
+
+    # Load all records for this user
+    all_records = (await db.execute(
+        sa_select(MutualConnection).where(MutualConnection.user_id == user_id)
+        .order_by(MutualConnection.created_at)
+    )).scalars().all()
+
+    # Keep first record per (target_linkedin_id, mutual_name), delete rest
+    seen = set()
+    to_delete = []
+    for rec in all_records:
+        key = (rec.target_linkedin_id, rec.mutual_name.lower().strip())
+        if key in seen:
+            to_delete.append(rec.id)
+        else:
+            seen.add(key)
+
+    for did in to_delete:
+        await db.execute(sa_delete(MutualConnection).where(MutualConnection.id == did))
+
+    if to_delete:
+        await db.flush()
+        await db.commit()
+
+    return {"deleted": len(to_delete), "remaining": len(seen)}
 
 
 @router.post(

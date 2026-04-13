@@ -108,6 +108,9 @@ export interface User {
   email: string;
   full_name: string | null;
   is_verified: boolean;
+  whatsapp_number?: string | null;
+  whatsapp_verified?: boolean;
+  whatsapp_alert_mode?: string | null;
 }
 
 export async function login(email: string, password: string) {
