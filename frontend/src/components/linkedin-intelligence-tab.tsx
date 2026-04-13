@@ -38,11 +38,20 @@ export default function LinkedInIntelligenceTab() {
   useEffect(() => {
     const token = localStorage.getItem("sr_token");
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const currentUserId = localStorage.getItem("sr_user_id");
 
-    // Load cached AI insights from localStorage
+    // SECURITY: Load cached AI insights ONLY if they belong to the current user
     try {
       const cached = localStorage.getItem("sr_linkedin_insights");
-      if (cached) setAiInsights(JSON.parse(cached));
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && parsed._user_id && parsed._user_id === currentUserId) {
+          setAiInsights(parsed);
+        } else {
+          // Stale cache from another user — discard
+          localStorage.removeItem("sr_linkedin_insights");
+        }
+      }
     } catch { /* ignore */ }
 
     Promise.allSettled([
@@ -67,7 +76,11 @@ export default function LinkedInIntelligenceTab() {
       if (res.ok) {
         const data = await res.json();
         setAiInsights(data);
-        try { localStorage.setItem("sr_linkedin_insights", JSON.stringify(data)); } catch { /* ignore */ }
+        // SECURITY: tag the cached insights with the current user_id
+        try {
+          const userId = localStorage.getItem("sr_user_id");
+          localStorage.setItem("sr_linkedin_insights", JSON.stringify({ ...data, _user_id: userId }));
+        } catch { /* ignore */ }
       } else {
         const body = await res.json().catch(() => ({}));
         setError(`Error ${res.status}: ${body.detail || "Analysis failed"}`);

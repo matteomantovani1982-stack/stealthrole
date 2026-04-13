@@ -332,16 +332,23 @@ export default function ScoutPage() {
 
   // Load on mount — use sessionStorage cache to avoid re-fetching on navigation
   useEffect(() => {
+    const currentUserId = typeof window !== "undefined" ? localStorage.getItem("sr_user_id") : null;
     try {
       const cached = sessionStorage.getItem("sr_scout_data");
       if (cached) {
         const d = JSON.parse(cached);
-        if (d.vacancies?.length) setVacancies(d.vacancies);
-        if (d.signals?.length) setSignals(d.signals);
-        if (d.predictions?.length) setPredictions(d.predictions);
-        if (d.freelance?.length) setFreelance(d.freelance);
-        if (d.platformLinks?.length) setPlatformLinks(d.platformLinks);
-        return; // Use cache, don't re-fetch
+        // SECURITY: only restore cache if it belongs to the current user
+        if (d._user_id && d._user_id === currentUserId) {
+          if (d.vacancies?.length) setVacancies(d.vacancies);
+          if (d.signals?.length) setSignals(d.signals);
+          if (d.predictions?.length) setPredictions(d.predictions);
+          if (d.freelance?.length) setFreelance(d.freelance);
+          if (d.platformLinks?.length) setPlatformLinks(d.platformLinks);
+          return; // Use cache, don't re-fetch
+        } else {
+          // Stale cache from another user — discard
+          sessionStorage.removeItem("sr_scout_data");
+        }
       }
     } catch {}
     setLoading(true);
@@ -355,7 +362,8 @@ export default function ScoutPage() {
   useEffect(() => {
     if (vacancies.length || signals.length || predictions.length || freelance.length) {
       try {
-        sessionStorage.setItem("sr_scout_data", JSON.stringify({ vacancies, signals, predictions, freelance, platformLinks }));
+        const userId = typeof window !== "undefined" ? localStorage.getItem("sr_user_id") : null;
+        sessionStorage.setItem("sr_scout_data", JSON.stringify({ vacancies, signals, predictions, freelance, platformLinks, _user_id: userId }));
       } catch {}
     }
   }, [vacancies, signals, predictions, freelance, platformLinks]);

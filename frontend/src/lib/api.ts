@@ -7,6 +7,19 @@
 
 const API_BASE = "/api/v1";
 
+// Keys that hold per-user data and MUST be cleared on logout/login switch
+const USER_DATA_LOCAL_KEYS = [
+  "sr_token",
+  "sr_refresh",
+  "sr_linkedin_insights",
+  "sr_user_id",
+  "sr_home_cache",
+];
+const USER_DATA_SESSION_KEYS = [
+  "sr_scout_data",
+  "sr_profile_cache",
+];
+
 function getToken(): string | null {
   if (typeof window === "undefined") return null;
   return localStorage.getItem("sr_token");
@@ -16,8 +29,32 @@ export function setToken(token: string) {
   localStorage.setItem("sr_token", token);
 }
 
+export function getCurrentUserId(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("sr_user_id");
+}
+
+export function setCurrentUserId(userId: string) {
+  localStorage.setItem("sr_user_id", userId);
+}
+
+/**
+ * Clear ALL per-user data from browser storage.
+ * Called on logout AND before login (in case prior user's data is stale).
+ */
+export function clearAllUserData() {
+  if (typeof window === "undefined") return;
+  for (const k of USER_DATA_LOCAL_KEYS) {
+    try { localStorage.removeItem(k); } catch {}
+  }
+  for (const k of USER_DATA_SESSION_KEYS) {
+    try { sessionStorage.removeItem(k); } catch {}
+  }
+}
+
 export function clearToken() {
-  localStorage.removeItem("sr_token");
+  // Backward-compatible alias — now clears everything
+  clearAllUserData();
 }
 
 export function isAuthenticated(): boolean {
@@ -74,6 +111,8 @@ export interface User {
 }
 
 export async function login(email: string, password: string) {
+  // SECURITY: clear ALL prior user data before storing new token
+  clearAllUserData();
   const data = await request<{ access_token: string }>(
     "/auth/login",
     {
@@ -84,6 +123,7 @@ export async function login(email: string, password: string) {
   setToken(data.access_token);
   // Login response doesn't include user — fetch it separately
   const user = await getMe();
+  setCurrentUserId(user.id);
   return { ...data, user };
 }
 
@@ -92,6 +132,8 @@ export async function register(
   password: string,
   full_name?: string
 ) {
+  // SECURITY: clear ALL prior user data before storing new token
+  clearAllUserData();
   const data = await request<{ access_token: string; user: User }>(
     "/auth/register",
     {
@@ -100,6 +142,7 @@ export async function register(
     }
   );
   setToken(data.access_token);
+  if (data.user?.id) setCurrentUserId(data.user.id);
   return data;
 }
 

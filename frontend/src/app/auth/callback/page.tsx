@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { clearAllUserData, setCurrentUserId, getMe } from "@/lib/api";
 
 export default function AuthCallbackPage() {
   return (
@@ -34,6 +35,8 @@ function AuthCallbackInner() {
 
   async function handleGoogleLogin(code: string) {
     try {
+      // SECURITY: clear ALL prior user data before storing new tokens
+      clearAllUserData();
       const res = await fetch("/api/v1/auth/google", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -43,7 +46,12 @@ function AuthCallbackInner() {
       if (res.ok) {
         const data = await res.json();
         localStorage.setItem("sr_token", data.access_token);
-        localStorage.setItem("sr_refresh", data.refresh_token);
+        if (data.refresh_token) localStorage.setItem("sr_refresh", data.refresh_token);
+        // Fetch the new user's identity and pin it
+        try {
+          const me = await getMe();
+          if (me?.id) setCurrentUserId(me.id);
+        } catch {}
         setStatus(data.is_new_user ? "Account created! Redirecting..." : "Signed in! Redirecting...");
         setTimeout(() => {
           window.location.href = data.is_new_user ? "/profile" : "/applications";

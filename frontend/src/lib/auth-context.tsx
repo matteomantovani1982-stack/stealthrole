@@ -13,8 +13,10 @@ import {
   getMe,
   login as apiLogin,
   register as apiRegister,
-  clearToken,
+  clearAllUserData,
   isAuthenticated,
+  getCurrentUserId,
+  setCurrentUserId,
 } from "@/lib/api";
 
 interface AuthState {
@@ -41,10 +43,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (isAuthenticated()) {
       getMe()
-        .then(setUser)
-        .catch(() => clearToken())
+        .then((me) => {
+          // SECURITY: if the cached user_id doesn't match the API response,
+          // a different user has logged in — wipe all cached data
+          const cachedUserId = getCurrentUserId();
+          if (cachedUserId && cachedUserId !== me.id) {
+            clearAllUserData();
+            // After clearAllUserData the token is gone too — force re-login
+            window.location.href = "/login";
+            return;
+          }
+          if (!cachedUserId) setCurrentUserId(me.id);
+          setUser(me);
+        })
+        .catch(() => clearAllUserData())
         .finally(() => setLoading(false));
     } else {
+      // No token — make sure no stale data lingers
+      clearAllUserData();
       setLoading(false);
     }
   }, []);
@@ -68,7 +84,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const logout = useCallback(() => {
-    clearToken();
+    // SECURITY: wipe ALL per-user data from localStorage and sessionStorage
+    clearAllUserData();
     setUser(null);
     router.push("/login");
   }, [router]);
