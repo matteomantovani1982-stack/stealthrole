@@ -102,7 +102,7 @@ export default function PackagePage() {
         const job = await createJobRun({
           cv_id: cv.id,
           jd_text: jdText,
-          preferences: { tone: "professional", region: "MENA" },
+          preferences: { tone: "executive", region: "UAE" },
         } as any);
         // Link the job_run to the application
         try {

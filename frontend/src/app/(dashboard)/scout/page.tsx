@@ -77,12 +77,13 @@ async function addAndGeneratePack(company: string, role: string, url: string | n
     body: JSON.stringify({
       cv_id: cv.id,
       jd_text: jdText,
-      preferences: { tone: "professional", region: "MENA" },
+      preferences: { tone: "executive", region: "UAE" },
     }),
   });
   if (!jobRes.ok) {
     const body = await jobRes.json().catch(() => ({}));
-    throw new Error(body.detail || "Failed to start pack generation");
+    const { formatApiError } = await import("@/lib/api");
+    throw new Error(formatApiError(body.detail) || `Failed to start pack generation (HTTP ${jobRes.status})`);
   }
   const job = await jobRes.json();
   const jobRunId = job.id;

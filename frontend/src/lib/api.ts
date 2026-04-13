@@ -88,17 +88,38 @@ async function request<T>(
       window.location.href = "/login";
     }
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || "Invalid email or password");
+    throw new Error(formatApiError(body.detail) || "Invalid email or password");
   }
 
   if (res.status === 204) return undefined as T;
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || `API error ${res.status}`);
+    throw new Error(formatApiError(body.detail) || `API error ${res.status}`);
   }
 
   return res.json();
+}
+
+// FastAPI returns validation errors as: [{type, loc, msg, input, url}, ...]
+// This formats any detail (string | array | object) into a readable message.
+export function formatApiError(detail: any): string {
+  if (!detail) return "";
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((e: any) => {
+        if (typeof e === "string") return e;
+        const loc = Array.isArray(e?.loc) ? e.loc.slice(1).join(".") : "";
+        const msg = e?.msg || "invalid";
+        return loc ? `${loc}: ${msg}` : msg;
+      })
+      .join("; ");
+  }
+  if (typeof detail === "object") {
+    return detail.msg || detail.message || JSON.stringify(detail);
+  }
+  return String(detail);
 }
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
