@@ -110,6 +110,8 @@ function FindWayInPanel({ company, role, headers }: { company: string; role: str
   const [result, setResult] = useState<any>(null);
   const [open, setOpen] = useState(false);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+  const [scanProgress, setScanProgress] = useState<string | null>(null);
+  const [scanningConnector, setScanningConnector] = useState<string | null>(null);
 
   async function findPath(forceRefresh = false) {
     if (result && !forceRefresh) { setOpen(!open); return; }
@@ -132,6 +134,57 @@ function FindWayInPanel({ company, role, headers }: { company: string; role: str
       setTimeout(() => setCopiedIdx(null), 2000);
     });
   }
+
+  // Trigger the Chrome extension to open the connector's profile and
+  // scrape their connections list for matches at the target company
+  function scanConnectorNetwork(connectorUrl: string, connectorName: string) {
+    if (typeof window === "undefined") return;
+    if (!connectorUrl) {
+      alert("This contact has no LinkedIn URL on file. Re-import your CSV from LinkedIn.");
+      return;
+    }
+    const marker = document.getElementById("sr-extension-marker");
+    if (!marker) {
+      alert("Install the StealthRole Chrome extension first to scan networks. (chrome://extensions → load unpacked from the extension folder)");
+      return;
+    }
+    setScanningConnector(connectorUrl);
+    setScanProgress("Opening LinkedIn in a new tab...");
+    window.postMessage({
+      type: "SR_SCAN_NETWORK",
+      connectorUrl,
+      connectorName,
+      targetCompany: company,
+    }, window.location.origin);
+  }
+
+  // Listen for progress updates from the extension
+  useEffect(() => {
+    function onMsg(event: MessageEvent) {
+      if (event.source !== window || !event.data || typeof event.data !== "object") return;
+      const msg = event.data;
+      if (msg.type === "SR_SCAN_NETWORK_ACK") {
+        if (!msg.ok) {
+          setScanProgress("Scan failed: " + (msg.error || "unknown"));
+          setTimeout(() => { setScanProgress(null); setScanningConnector(null); }, 4000);
+        }
+      }
+      if (msg.type === "SR_SCAN_NETWORK_PROGRESS" && msg.payload) {
+        setScanProgress(msg.payload.progress || "Scanning...");
+        if (msg.payload.status === "complete") {
+          // Refetch paths so the new matches show up
+          setTimeout(() => {
+            findPath(true);
+            setScanProgress(null);
+            setScanningConnector(null);
+          }, 1500);
+        }
+      }
+    }
+    window.addEventListener("message", onMsg);
+    return () => window.removeEventListener("message", onMsg);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const {
     direct_contacts = [],
@@ -158,6 +211,29 @@ function FindWayInPanel({ company, role, headers }: { company: string; role: str
       </button>
       {open && !loading && result && (
         <div className="mt-3 space-y-2 animate-in fade-in slide-in-from-top-2 duration-300">
+          {/* ═══ Scan progress banner (extension) ═══ */}
+          {scanProgress && (
+            <div className="rounded-lg p-3 border border-violet-500/30" style={{ background: "rgba(139,92,246,0.12)" }}>
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 rounded-full border-2 border-violet-400 border-t-transparent animate-spin shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-[11px] font-semibold text-violet-300">Scanning network via Chrome extension</div>
+                  <div className="text-[10px] text-violet-200/70 truncate">{scanProgress}</div>
+                </div>
+                <button
+                  onClick={() => {
+                    if (typeof window !== "undefined") window.postMessage({ type: "SR_CANCEL_SCAN" }, window.location.origin);
+                    setScanProgress(null);
+                    setScanningConnector(null);
+                  }}
+                  className="text-[10px] text-violet-300 hover:text-white"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Recommended action + refresh */}
           {recommended_action && (
             <div className="rounded-lg p-3 border border-[#7F8CFF]/20" style={{ background: "rgba(127,140,255,0.08)" }}>
@@ -296,9 +372,18 @@ function FindWayInPanel({ company, role, headers }: { company: string; role: str
                     {b.message && (
                       <div className="pl-[42px]">
                         <div className="text-[11px] text-[#8B92B0] p-2 rounded bg-white/[0.03] border border-white/[0.05] leading-relaxed">{b.message}</div>
-                        <button onClick={() => copyMessage(b.message, 300 + i)} className="mt-1.5 text-[10px] font-medium text-violet-400 hover:text-white transition-colors">
-                          {copiedIdx === 300 + i ? "Copied!" : "Copy message"}
-                        </button>
+                        <div className="flex items-center gap-2 mt-1.5">
+                          <button onClick={() => copyMessage(b.message, 300 + i)} className="text-[10px] font-medium text-violet-400 hover:text-white transition-colors">
+                            {copiedIdx === 300 + i ? "Copied!" : "Copy message"}
+                          </button>
+                          <button
+                            onClick={() => scanConnectorNetwork(b.linkedin_url || "", b.name || "")}
+                            disabled={scanningConnector === b.linkedin_url}
+                            className="text-[10px] font-medium text-[#7F8CFF] hover:text-white disabled:opacity-50"
+                          >
+                            {scanningConnector === b.linkedin_url ? "Scanning..." : "Scan their network →"}
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>

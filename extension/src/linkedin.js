@@ -94,6 +94,153 @@
       // Retry after more results load
       setTimeout(() => scrapeMutualSearchResults(), 5000);
     }
+
+    // ── On-demand network scan: web app set sr_scan_target asking us
+    //    to scrape this connector's connections list for matches at a
+    //    target company ──────────────────────────────────────────────
+    try {
+      chrome.storage.local.get("sr_scan_target", (data) => {
+        const scan = data.sr_scan_target;
+        if (!scan || !scan.target_company) return;
+        // If we're on the connector's profile page → click through to connections
+        if (pageType === "profile") {
+          const connectorSlug = (scan.connector_url || "").split("/in/")[1]?.replace(/\/$/, "") || "";
+          const currentSlug = window.location.pathname.split("/in/")[1]?.replace(/\/$/, "") || "";
+          if (connectorSlug && currentSlug && connectorSlug === currentSlug) {
+            updateScanProgress(scan, "Opening connections list...");
+            // LinkedIn's "Connections" link on a profile uses /search/results/people/?connectionOf=...
+            setTimeout(() => clickConnectionsLink(connectorSlug), 2500);
+          }
+        }
+        // If we're on a search results page with the network scan target set,
+        // scrape it for matches at the target company
+        if (pageType === "search" && window.location.href.includes("network=") && scan.target_company) {
+          setTimeout(() => scrapeNetworkForCompany(scan), 2500);
+        }
+      });
+    } catch (e) {
+      console.warn("[StealthRole] sr_scan_target check failed:", e);
+    }
+  }
+
+  // ── On-demand network scan helpers ───────────────────────────────────
+  function updateScanProgress(currentScan, progressText) {
+    try {
+      const updated = { ...currentScan, status: "scanning", progress: progressText };
+      chrome.storage.local.set({ sr_scan_target: updated });
+      console.log("[StealthRole] scan progress:", progressText);
+    } catch (e) {}
+  }
+
+  function clickConnectionsLink(connectorSlug) {
+    // Strategy 1: find a link to /search/results/people/?connectionOf=...
+    const links = document.querySelectorAll("a[href*='connectionOf'], a[href*='/search/results/people']");
+    for (const link of links) {
+      if (link.offsetParent === null) continue;
+      const text = (link.innerText || link.textContent || "").toLowerCase();
+      if (text.includes("connection")) {
+        console.log("[StealthRole] clicking connections link:", link.href);
+        link.click();
+        return;
+      }
+    }
+    // Strategy 2: find any clickable element with text "X connections"
+    const all = document.querySelectorAll("a, button, span, div");
+    for (const el of all) {
+      if (el.offsetParent === null) continue;
+      const text = (el.innerText || el.textContent || "").trim().toLowerCase();
+      // Match e.g. "500+ connections", "1234 connections"
+      if (/^[\d,]+\+?\s+connections?$/i.test(text) || text === "connections") {
+        const clickTarget = el.closest("a, button") || el;
+        console.log("[StealthRole] clicking text-matched connections el");
+        clickTarget.click();
+        return;
+      }
+    }
+    console.log("[StealthRole] connections link not found on profile");
+  }
+
+  function scrapeNetworkForCompany(scanTarget) {
+    if (_mutualScrapeInProgress) return;
+    _mutualScrapeInProgress = true;
+    const targetCompany = (scanTarget.target_company || "").toLowerCase().trim();
+    const matches = [];
+    const seen = new Set();
+    let totalScraped = 0;
+    let currentPage = 1;
+    const maxPages = 10;
+
+    function scrapePage() {
+      // Scroll to load all results on this page
+      let scrollCount = 0;
+      function scrollDown() {
+        window.scrollTo(0, document.body.scrollHeight);
+        scrollCount++;
+        setTimeout(() => {
+          if (scrollCount < 3) {
+            scrollDown();
+          } else {
+            const pageResults = scrapeSearchResults();
+            for (const p of pageResults) {
+              if (seen.has(p.name)) continue;
+              seen.add(p.name);
+              totalScraped++;
+              // Check if their headline / snippet mentions the target company
+              const blob = ((p.headline || "") + " " + (p.name || "")).toLowerCase();
+              if (blob.includes(targetCompany)) {
+                matches.push(p);
+              }
+            }
+            updateScanProgress(scanTarget, `Scanning page ${currentPage} — ${totalScraped} connections checked, ${matches.length} matches at ${scanTarget.target_company}`);
+
+            const nextBtn = findNextPageButton();
+            if (nextBtn && currentPage < maxPages) {
+              currentPage++;
+              nextBtn.click();
+              setTimeout(scrapePage, 3000);
+            } else {
+              // Done — POST matches to backend
+              finishScan(scanTarget, matches, totalScraped);
+            }
+          }
+        }, 1000);
+      }
+      scrollDown();
+    }
+
+    setTimeout(scrapePage, 1500);
+  }
+
+  function finishScan(scanTarget, matches, totalScraped) {
+    showToast(`Found ${matches.length} mutual connection${matches.length === 1 ? "" : "s"} at ${scanTarget.target_company}`);
+    const payload = {
+      connector_url: scanTarget.connector_url,
+      connector_name: scanTarget.connector_name,
+      target_company: scanTarget.target_company,
+      total_scraped: totalScraped,
+      matches: matches.map(m => ({
+        name: m.name,
+        linkedin_url: m.linkedin_url || "",
+        headline: m.headline || "",
+      })),
+    };
+    srApiCall("/linkedin/ingest/network-scan", { method: "POST", body: JSON.stringify(payload) }, (res) => {
+      console.log("[StealthRole] network-scan save:", res);
+      try {
+        const final = {
+          ...scanTarget,
+          status: "complete",
+          progress: `Found ${matches.length} mutual${matches.length === 1 ? "" : "s"} at ${scanTarget.target_company}`,
+          matches: payload.matches,
+          total_scraped: totalScraped,
+          finished_at: Date.now(),
+        };
+        chrome.storage.local.set({ sr_scan_target: final });
+        // Auto-clear after 30s
+        setTimeout(() => chrome.storage.local.remove("sr_scan_target"), 30000);
+      } catch (e) {}
+      _mutualScrapeInProgress = false;
+    });
   }
 
   function waitForProfileName(maxWait = 15000) {

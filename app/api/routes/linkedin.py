@@ -164,6 +164,103 @@ async def ingest_mutual_connections(
 
 
 @router.post(
+    "/ingest/network-scan",
+    summary="Store an on-demand network scan: connector + matches at target company",
+)
+async def ingest_network_scan(
+    payload: dict,
+    db: DB,
+    user_id: CurrentUserId,
+) -> dict:
+    """
+    Extension scraped a connector's connections list and found people
+    who work at the target company. Store each match as a MutualConnection
+    so find_way_in() will surface them as 2nd-degree paths.
+    """
+    from sqlalchemy import select as sa_select
+    from app.models.mutual_connection import MutualConnection
+    from app.models.linkedin_connection import LinkedInConnection
+
+    connector_url = (payload.get("connector_url") or "").strip()
+    connector_name = (payload.get("connector_name") or "").strip()
+    target_company = (payload.get("target_company") or "").strip()
+    matches = payload.get("matches", [])
+
+    if not connector_url or not target_company or not matches:
+        return {"stored": 0, "reason": "missing_required_fields"}
+
+    # Find the connector in the user's 1st-degree connections by URL or name
+    connector = None
+    if connector_url:
+        result = await db.execute(
+            sa_select(LinkedInConnection).where(
+                LinkedInConnection.user_id == user_id,
+                LinkedInConnection.linkedin_url == connector_url,
+            ).limit(1)
+        )
+        connector = result.scalar_one_or_none()
+    if not connector and connector_name:
+        result = await db.execute(
+            sa_select(LinkedInConnection).where(
+                LinkedInConnection.user_id == user_id,
+            )
+        )
+        for c in result.scalars().all():
+            if c.full_name and c.full_name.lower().strip() == connector_name.lower().strip():
+                connector = c
+                break
+
+    connector_linkedin_id = connector.linkedin_id if connector else (connector_url.split("/in/")[-1].rstrip("/") if "/in/" in connector_url else connector_name.lower().replace(" ", "-"))
+
+    stored = 0
+    for m in matches:
+        target_name = (m.get("name") or "").strip()
+        target_url = (m.get("linkedin_url") or "").strip()
+        target_headline = (m.get("headline") or "").strip()
+        if not target_name:
+            continue
+
+        target_lid = target_url.split("/in/")[-1].rstrip("/") if "/in/" in target_url else target_name.lower().replace(" ", "-")
+
+        # Skip if already stored
+        existing = (await db.execute(
+            sa_select(MutualConnection).where(
+                MutualConnection.user_id == user_id,
+                MutualConnection.target_linkedin_id == target_lid,
+                MutualConnection.mutual_linkedin_id == connector_linkedin_id,
+            ).limit(1)
+        )).scalar_one_or_none()
+        if existing:
+            continue
+
+        db.add(MutualConnection(
+            user_id=user_id,
+            target_linkedin_id=target_lid,
+            target_name=target_name,
+            target_title=target_headline[:200],
+            target_company=target_company,
+            target_linkedin_url=target_url,
+            mutual_linkedin_id=connector_linkedin_id,
+            mutual_name=connector_name or (connector.full_name if connector else ""),
+            mutual_linkedin_url=connector_url,
+            total_mutual_count=len(matches),
+        ))
+        stored += 1
+
+    if stored:
+        await db.flush()
+        await db.commit()
+
+    logger.info("network_scan_ingest", user_id=user_id, connector=connector_name, target_company=target_company, stored=stored, total=len(matches))
+    return {
+        "stored": stored,
+        "connector": connector_name,
+        "target_company": target_company,
+        "total_matches": len(matches),
+    }
+
+
+@router.post(
     "/cleanup/mutual-connections",
     summary="Deduplicate mutual connections table",
 )
