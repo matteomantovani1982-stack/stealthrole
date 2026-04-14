@@ -216,9 +216,9 @@ class S3StorageService:
                 Params={"Bucket": self.bucket, "Key": s3_key},
                 ExpiresIn=expires_in_seconds,
             )
-            # MinIO generates URLs with its internal Docker hostname (e.g. minio:9000)
-            # Replace with the public URL so the browser can reach it
-            if settings.s3_endpoint_url:
+            # ONLY rewrite for local MinIO dev (internal Docker hostname).
+            # For real AWS S3 endpoints, leave the URL untouched.
+            if settings.s3_endpoint_url and "amazonaws.com" not in settings.s3_endpoint_url:
                 import re as _re
                 internal = settings.s3_endpoint_url.replace("http://", "").replace("https://", "")
                 public_s3_url = getattr(settings, "s3_public_url", None) or "http://localhost:9000"

@@ -95,8 +95,16 @@ def companies_match(a: str, b: str) -> bool:
     if na in nb or nb in na:
         return True
     # First word match (handles "Careem" matching "Careem Networks")
-    if na.split()[0] == nb.split()[0] and len(na.split()[0]) >= 4:
-        return True
+    if na.split() and nb.split():
+        # Lowered min length from 4 to 3 so "noon" (4), "kfc" (3) match
+        first_a = na.split()[0]
+        first_b = nb.split()[0]
+        if first_a == first_b and len(first_a) >= 3:
+            return True
+    # Substring match on full normalized strings (for "noon" vs "noon middle east")
+    if len(na) >= 3 and len(nb) >= 3:
+        if na in nb or nb in na:
+            return True
     return False
 
 
@@ -581,6 +589,46 @@ class RelationshipEngine:
         if not real_paths and not direct and not visited_targets:
             discover_targets = await self._find_people_to_discover(company, role)
 
+        # FALLBACK: if no direct connections at this company, surface the
+        # user's most relevant network connections (senior people, recruiters,
+        # same-domain peers). They can act as warm-intro brokers.
+        network_brokers = []
+        if not direct and not visited_targets and not real_paths:
+            broker_candidates = []
+            for c in all_conns:
+                if not c.current_company:
+                    continue
+                title = c.current_title or ""
+                seniority = detect_seniority(title)
+                is_rec = c.is_recruiter or detect_domain(title) == "hr"
+                same_domain = target_domain != "general" and detect_domain(title) == target_domain
+                # Brokers must be senior, recruiters, or same-function peers
+                if seniority >= 60 or is_rec or same_domain:
+                    score = (
+                        (40 if is_rec else 0)
+                        + (seniority * 0.5)
+                        + (20 if same_domain else 0)
+                    )
+                    broker_candidates.append((score, c))
+            broker_candidates.sort(key=lambda x: x[0], reverse=True)
+            for _score, c in broker_candidates[:10]:
+                network_brokers.append({
+                    "name": c.full_name,
+                    "title": c.current_title or "",
+                    "company": c.current_company or "",
+                    "linkedin_url": c.linkedin_url or "",
+                    "is_recruiter": c.is_recruiter or detect_domain(c.current_title or "") == "hr",
+                    "is_hiring_manager": c.is_hiring_manager or detect_seniority(c.current_title or "") >= 70,
+                    "seniority": detect_seniority(c.current_title or ""),
+                    "intro_angle": f"Ask {c.full_name.split()[0]} for an intro to anyone they know at {company}",
+                    "message": (
+                        f"Hi {c.full_name.split()[0]}, hope you're well! "
+                        f"I'm exploring an opportunity at {company} — do you happen to know anyone there "
+                        f"who could give me an inside view? Even a quick intro would mean a lot."
+                    ),
+                    "connection_id": str(c.id),
+                })
+
         return {
             "company": company,
             "role": role,
@@ -588,6 +636,8 @@ class RelationshipEngine:
             "backup_paths": backup_paths,
             "verified_paths": len(real_paths),
             "discover_targets": discover_targets,
+            "network_brokers": network_brokers,
+            "total_connections": len(all_conns),
             "direct_contacts": direct[:5],
             "total_direct": len(direct),
             "visited_targets": visited_targets[:5],

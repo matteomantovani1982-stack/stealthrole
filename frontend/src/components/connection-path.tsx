@@ -226,6 +226,34 @@ function mapApiToKeyPeople(data: any, company: string, role: string): KeyPerson[
     });
   }
 
+  // FALLBACK: network brokers — senior/recruiter people in the user's network
+  // who can intro to anyone they know at the target company
+  for (const b of (data.network_brokers || [])) {
+    if (targetNames.has(b.name)) continue;
+    people.push({
+      id: b.connection_id || b.name,
+      name: b.name,
+      role: b.title || "",
+      company: b.company || "",
+      connectionDegree: 1,
+      linkedinUrl: b.linkedin_url || "",
+      avatarInitials: initials(b.name),
+      avatarColor: color(b.name),
+      connections: [{
+        id: "broker-" + b.name,
+        name: b.name,
+        role: b.title || "",
+        company: b.company || "",
+        source: "mutual",
+        sourceLabel: b.is_recruiter ? "Recruiter in your network" : "Senior contact in your network",
+        avatarInitials: initials(b.name),
+        avatarColor: color(b.name),
+        linkedinUrl: b.linkedin_url || "",
+        suggestedMessage: b.message || `Hi ${b.name.split(" ")[0]}, do you happen to know anyone at ${company}?`,
+      }],
+    });
+  }
+
   return people;
 }
 
