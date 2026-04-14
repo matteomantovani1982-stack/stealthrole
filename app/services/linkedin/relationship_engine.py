@@ -504,25 +504,62 @@ class RelationshipEngine:
         all_conns = await self._get_all_connections(user_id)
 
         # Step 1: Direct contacts at target company
+        # SENIORITY TIERS — ranked top to bottom:
+        #   C_SUITE (4) → VP_DIRECTOR (3) → MANAGER (2) → IC (1) → RECRUITER (0)
+        # Recruiters are EXCLUDED from direct contacts (Layer 1) per product spec —
+        # they belong in a separate Recruiters layer, not the warm-intro funnel.
+        def _seniority_tier(title: str) -> tuple[int, str]:
+            t = (title or "").lower()
+            if any(k in t for k in ["recruiter", "talent acquisition", "talent partner", "headhunter", "head hunter", "human resources", "people operations", "people partner", "staffing", "executive search", "search consultant", "resourcing", "recruitment"]):
+                return (0, "RECRUITER")
+            if any(k in t for k in ["ceo", "coo", "cfo", "cto", "cio", "cpo", "chro", "chief", "founder", "co-founder", "president", "managing director", "managing partner", "general manager"]):
+                return (4, "C_SUITE")
+            if any(k in t for k in ["vp", "vice president", " director", "head of", "svp", "evp", "group director", "regional director"]):
+                return (3, "VP_DIRECTOR")
+            if any(k in t for k in [" manager", "lead", "principal", "senior manager", "team lead", "supervisor", "department head"]):
+                return (2, "MANAGER")
+            return (1, "IC")
+
+        def _seniority_message(first_name: str, company: str, role: str | None, tier: str) -> str:
+            role_str = role or "senior role"
+            if tier in ("C_SUITE", "VP_DIRECTOR"):
+                return (
+                    f"Hi {first_name}, I hope you're well. "
+                    f"I've been following {company}'s growth closely and I'm "
+                    f"genuinely excited about where the business is heading. "
+                    f"I noticed there may be an opportunity for a {role_str} — "
+                    f"I'd love to get your perspective on the team and direction. "
+                    f"Would you have 20 minutes for a quick call this week? "
+                    f"Really appreciate it."
+                )
+            return (
+                f"Hi {first_name}, great to be connected! "
+                f"I'm exploring an opportunity at {company} and would love to get "
+                f"an insider's view on the team and culture. "
+                f"Would you be open to a quick 15-minute chat? "
+                f"Happy to return the favour anytime."
+            )
+
         direct = []
+        recruiter_contacts = []
         visited_targets = []
         for c in all_conns:
             if c.current_company and companies_match(c.current_company, company):
                 is_visited = c.relationship_strength == "visited"
+                tier_rank, tier_name = _seniority_tier(c.current_title or "")
+                first_name = (c.full_name or "there").split()[0]
                 entry = {
                     "name": c.full_name,
                     "title": c.current_title or "",
                     "company": c.current_company,
                     "linkedin_url": c.linkedin_url,
-                    "is_recruiter": c.is_recruiter or detect_domain(c.current_title or "") == "hr",
-                    "is_hiring_manager": c.is_hiring_manager or detect_seniority(c.current_title or "") >= 70,
+                    "is_recruiter": tier_name == "RECRUITER",
+                    "is_hiring_manager": tier_rank >= 3 and tier_name != "RECRUITER",
+                    "seniority_tier": tier_name,
+                    "_tier_rank": tier_rank,
                     "relevance_score": rank_connection(c, role),
                     "intro_angle": _suggest_intro_angle(c, role),
-                    "message": _generate_intro_message(
-                        c.full_name, company, role, None, c.is_recruiter,
-                        connection_title=c.current_title,
-                        connection_seniority=detect_seniority(c.current_title or ""),
-                    ),
+                    "message": _seniority_message(first_name, company, role, tier_name),
                     "connection_id": str(c.id),
                     "is_visited_profile": is_visited,
                 }
@@ -530,13 +567,23 @@ class RelationshipEngine:
                     entry["intro_angle"] = _suggest_cold_outreach_angle(c, company, role)
                     entry["message"] = _generate_cold_outreach(
                         c.full_name, company, role,
-                        title=c.current_title, is_recruiter=c.is_recruiter,
+                        title=c.current_title, is_recruiter=(tier_name == "RECRUITER"),
                     )
                     visited_targets.append(entry)
+                elif tier_name == "RECRUITER":
+                    # Recruiters get their own bucket — NOT shown in Layer 1 direct contacts
+                    recruiter_contacts.append(entry)
                 else:
                     direct.append(entry)
-        direct.sort(key=lambda x: x["relevance_score"], reverse=True)
+        # Sort by seniority tier (C_SUITE first), then by relevance score within tier
+        direct.sort(key=lambda x: (-x["_tier_rank"], -x["relevance_score"]))
+        recruiter_contacts.sort(key=lambda x: -x["relevance_score"])
         visited_targets.sort(key=lambda x: x["relevance_score"], reverse=True)
+        # Strip internal sort key from response payload
+        for d in direct:
+            d.pop("_tier_rank", None)
+        for d in recruiter_contacts:
+            d.pop("_tier_rank", None)
 
         # Step 2: Check REAL 2nd-degree paths from mutual connection data
         from app.models.mutual_connection import MutualConnection
@@ -696,45 +743,11 @@ class RelationshipEngine:
         if not real_paths and not direct and not visited_targets:
             discover_targets = await self._find_people_to_discover(company, role)
 
-        # FALLBACK: if no direct connections at this company, surface the
-        # user's most relevant network connections (senior people, recruiters,
-        # same-domain peers). They can act as warm-intro brokers.
-        network_brokers = []
-        if not direct and not visited_targets and not real_paths:
-            broker_candidates = []
-            for c in all_conns:
-                if not c.current_company:
-                    continue
-                title = c.current_title or ""
-                seniority = detect_seniority(title)
-                is_rec = c.is_recruiter or detect_domain(title) == "hr"
-                same_domain = target_domain != "general" and detect_domain(title) == target_domain
-                # Brokers must be senior, recruiters, or same-function peers
-                if seniority >= 60 or is_rec or same_domain:
-                    score = (
-                        (40 if is_rec else 0)
-                        + (seniority * 0.5)
-                        + (20 if same_domain else 0)
-                    )
-                    broker_candidates.append((score, c))
-            broker_candidates.sort(key=lambda x: x[0], reverse=True)
-            for _score, c in broker_candidates[:10]:
-                network_brokers.append({
-                    "name": c.full_name,
-                    "title": c.current_title or "",
-                    "company": c.current_company or "",
-                    "linkedin_url": c.linkedin_url or "",
-                    "is_recruiter": c.is_recruiter or detect_domain(c.current_title or "") == "hr",
-                    "is_hiring_manager": c.is_hiring_manager or detect_seniority(c.current_title or "") >= 70,
-                    "seniority": detect_seniority(c.current_title or ""),
-                    "intro_angle": f"Ask {c.full_name.split()[0]} for an intro to anyone they know at {company}",
-                    "message": (
-                        f"Hi {c.full_name.split()[0]}, hope you're well! "
-                        f"I'm exploring an opportunity at {company} — do you happen to know anyone there "
-                        f"who could give me an inside view? Even a quick intro would mean a lot."
-                    ),
-                    "connection_id": str(c.id),
-                })
+        # No more "network brokers" fallback. Surfacing random recruiters and
+        # senior people from unrelated companies confused users — they expected
+        # contacts AT the target company, not generic suggestions.
+        # Empty array kept for response shape backward-compat.
+        network_brokers: list = []
 
         return {
             "company": company,
@@ -743,10 +756,12 @@ class RelationshipEngine:
             "backup_paths": backup_paths,
             "verified_paths": len(real_paths),
             "discover_targets": discover_targets,
-            "network_brokers": network_brokers,
+            "network_brokers": network_brokers,  # always [] — kept for response shape
             "total_connections": len(all_conns),
-            "direct_contacts": direct[:5],
+            "direct_contacts": direct[:10],  # 1st-degree, recruiter-free, sorted by seniority
             "total_direct": len(direct),
+            "recruiter_contacts": recruiter_contacts[:10],  # separate bucket
+            "total_recruiters": len(recruiter_contacts),
             "visited_targets": visited_targets[:5],
             "total_visited": len(visited_targets),
             "recommended_action": recommended,

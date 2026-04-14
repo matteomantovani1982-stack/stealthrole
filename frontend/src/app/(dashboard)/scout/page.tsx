@@ -188,21 +188,29 @@ function FindWayInPanel({ company, role, headers }: { company: string; role: str
 
   const {
     direct_contacts = [],
+    recruiter_contacts = [],
     visited_targets = [],
     best_path,
     backup_paths = [],
     recommended_action,
     discover_targets = [],
-    network_brokers = [],
     total_connections = 0,
   } = result || {};
+
+  // Always return a usable LinkedIn URL — fall back to a search URL
+  // so the "Open LinkedIn ↗" button NEVER does nothing.
+  function linkedInUrlFor(contact: any): string {
+    if (contact?.linkedin_url) return contact.linkedin_url;
+    const q = encodeURIComponent(`${contact?.name || ""} ${contact?.company || company || ""}`.trim());
+    return `https://www.linkedin.com/search/results/people/?keywords=${q}`;
+  }
 
   // Combine best_path + backup_paths into a single layer-2 list
   const introPaths: any[] = [];
   if (best_path) introPaths.push(best_path);
   introPaths.push(...backup_paths);
 
-  const hasAnyPaths = direct_contacts.length > 0 || introPaths.length > 0 || network_brokers.length > 0 || visited_targets.length > 0;
+  const hasAnyPaths = direct_contacts.length > 0 || introPaths.length > 0 || recruiter_contacts.length > 0 || visited_targets.length > 0;
 
   return (
     <>
@@ -247,47 +255,47 @@ function FindWayInPanel({ company, role, headers }: { company: string; role: str
             </div>
           )}
 
-          {/* ═══ LAYER 1 — DIRECT (1st degree) ═══ */}
+          {/* ═══ LAYER 1 — DIRECT (1st degree, recruiter-free, sorted by seniority) ═══ */}
           {direct_contacts.length > 0 && (
             <div className="rounded-lg p-3 border border-emerald-500/20" style={{ background: "rgba(52,211,153,0.06)" }}>
               <div className="text-[10px] font-medium text-emerald-400 uppercase mb-2">
                 Direct contacts at {company} · {result.total_direct} found
               </div>
               <div className="space-y-3">
-                {direct_contacts.map((c: any, i: number) => (
-                  <div key={i} className="rounded-lg p-2.5 bg-white/[0.04]">
-                    <div className="flex items-center gap-2.5 mb-1.5">
-                      <div className="w-8 h-8 rounded-full bg-emerald-500/15 text-emerald-400 flex items-center justify-center text-[12px] font-bold shrink-0">
-                        {c.name?.[0]?.toUpperCase() || "?"}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[12px] font-medium text-white">{c.name}</span>
-                          {c.is_recruiter && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-medium">Recruiter</span>}
-                          {c.is_hiring_manager && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-[#4d8ef5]/20 text-[#4d8ef5] font-medium">Decision maker</span>}
-                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/10 text-[#8B92B0] font-medium">1st</span>
+                {direct_contacts.map((c: any, i: number) => {
+                  const tier = c.seniority_tier || "IC";
+                  const tierLabel = tier === "C_SUITE" ? "C-Suite" : tier === "VP_DIRECTOR" ? "VP / Director" : tier === "MANAGER" ? "Manager" : "IC";
+                  const tierColor = tier === "C_SUITE" ? "#fbbf24" : tier === "VP_DIRECTOR" ? "#4d8ef5" : tier === "MANAGER" ? "#a78bfa" : "#86efac";
+                  const linkUrl = linkedInUrlFor(c);
+                  return (
+                    <div key={i} className="rounded-lg p-2.5 bg-white/[0.04]">
+                      <div className="flex items-center gap-2.5 mb-1.5">
+                        <div className="w-8 h-8 rounded-full bg-emerald-500/15 text-emerald-400 flex items-center justify-center text-[12px] font-bold shrink-0">
+                          {c.name?.[0]?.toUpperCase() || "?"}
                         </div>
-                        <div className="text-[11px] text-[#6B7194]">{c.title}</div>
-                      </div>
-                      {c.linkedin_url && (
-                        <a href={c.linkedin_url} target="_blank" rel="noopener" className="text-[11px] text-emerald-400 hover:text-white font-medium shrink-0">
-                          LinkedIn →
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[12px] font-medium text-white">{c.name}</span>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded-full font-medium" style={{ background: `${tierColor}26`, color: tierColor }}>{tierLabel}</span>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/10 text-[#8B92B0] font-medium">1st</span>
+                          </div>
+                          <div className="text-[11px] text-[#6B7194]">{c.title}{c.company ? ` · ${c.company}` : ""}</div>
+                        </div>
+                        <a href={linkUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] text-emerald-400 hover:text-white font-medium shrink-0 px-2 py-1 rounded bg-emerald-500/10 hover:bg-emerald-500/20">
+                          Open LinkedIn ↗
                         </a>
+                      </div>
+                      {c.message && (
+                        <div className="pl-[42px]">
+                          <div className="text-[11px] text-[#8B92B0] p-2 rounded bg-white/[0.03] border border-white/[0.05] leading-relaxed whitespace-pre-wrap">{c.message}</div>
+                          <button onClick={() => copyMessage(c.message, i)} className="mt-1.5 text-[10px] font-medium text-emerald-400 hover:text-white transition-colors">
+                            {copiedIdx === i ? "Copied!" : "Copy message"}
+                          </button>
+                        </div>
                       )}
                     </div>
-                    {c.intro_angle && (
-                      <div className="text-[11px] text-emerald-400 mb-1.5 pl-[42px]">{c.intro_angle}</div>
-                    )}
-                    {c.message && (
-                      <div className="pl-[42px]">
-                        <div className="text-[11px] text-[#8B92B0] p-2 rounded bg-white/[0.03] border border-white/[0.05] leading-relaxed">{c.message}</div>
-                        <button onClick={() => copyMessage(c.message, i)} className="mt-1.5 text-[10px] font-medium text-emerald-400 hover:text-white transition-colors">
-                          {copiedIdx === i ? "Copied!" : "Copy intro message"}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -326,11 +334,14 @@ function FindWayInPanel({ company, role, headers }: { company: string; role: str
                           >
                             {copiedIdx === 200 + i ? "Copied!" : "Copy message"}
                           </button>
-                          {p.connector?.linkedin_url && (
-                            <a href={p.connector.linkedin_url} target="_blank" rel="noopener" className="text-[10px] font-medium text-[#7F8CFF] hover:text-white">
-                              Open {p.connector.name?.split(" ")[0]} on LinkedIn →
-                            </a>
-                          )}
+                          <a
+                            href={linkedInUrlFor({ name: p.connector?.name, company: p.connector?.company, linkedin_url: p.connector?.linkedin_url })}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[10px] font-medium text-[#7F8CFF] hover:text-white"
+                          >
+                            Open {p.connector?.name?.split(" ")[0]} on LinkedIn ↗
+                          </a>
                         </div>
                       </div>
                     )}
@@ -340,54 +351,39 @@ function FindWayInPanel({ company, role, headers }: { company: string; role: str
             </div>
           )}
 
-          {/* ═══ LAYER 3 — NETWORK BROKERS (people in your network who may know someone) ═══ */}
-          {network_brokers.length > 0 && direct_contacts.length === 0 && introPaths.length === 0 && (
-            <div className="rounded-lg p-3 border border-violet-500/20" style={{ background: "rgba(139,92,246,0.06)" }}>
-              <div className="text-[10px] font-medium text-violet-400 uppercase mb-2">
-                Senior contacts in your network · ask for intro
+          {/* ═══ RECRUITERS AT TARGET COMPANY (separate bucket from direct contacts) ═══ */}
+          {recruiter_contacts.length > 0 && (
+            <div className="rounded-lg p-3 border border-amber-500/20" style={{ background: "rgba(245,158,11,0.06)" }}>
+              <div className="text-[10px] font-medium text-amber-400 uppercase mb-2">
+                Recruiters / talent at {company} · {result.total_recruiters} found
               </div>
               <div className="text-[11px] text-[#6B7194] mb-2">
-                You have no direct contacts at {company} yet. These senior people in your network may know someone there.
+                Reach out directly about open roles. They handle hiring pipeline.
               </div>
               <div className="space-y-3">
-                {network_brokers.map((b: any, i: number) => (
-                  <div key={i} className="rounded-lg p-2.5 bg-white/[0.04]">
-                    <div className="flex items-center gap-2.5 mb-1.5">
-                      <div className="w-8 h-8 rounded-full bg-violet-500/15 text-violet-400 flex items-center justify-center text-[12px] font-bold shrink-0">
-                        {b.name?.[0]?.toUpperCase() || "?"}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[12px] font-medium text-white">{b.name}</span>
-                          {b.is_recruiter && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-medium">Recruiter</span>}
+                {recruiter_contacts.map((c: any, i: number) => {
+                  const linkUrl = linkedInUrlFor(c);
+                  return (
+                    <div key={i} className="rounded-lg p-2.5 bg-white/[0.04]">
+                      <div className="flex items-center gap-2.5 mb-1.5">
+                        <div className="w-8 h-8 rounded-full bg-amber-500/15 text-amber-400 flex items-center justify-center text-[12px] font-bold shrink-0">
+                          {c.name?.[0]?.toUpperCase() || "?"}
                         </div>
-                        <div className="text-[11px] text-[#6B7194]">{b.title}{b.company ? ` · ${b.company}` : ""}</div>
-                      </div>
-                      {b.linkedin_url && (
-                        <a href={b.linkedin_url} target="_blank" rel="noopener" className="text-[11px] text-violet-400 hover:text-white font-medium shrink-0">
-                          LinkedIn →
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[12px] font-medium text-white">{c.name}</span>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 font-medium">Recruiter</span>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/10 text-[#8B92B0] font-medium">1st</span>
+                          </div>
+                          <div className="text-[11px] text-[#6B7194]">{c.title}{c.company ? ` · ${c.company}` : ""}</div>
+                        </div>
+                        <a href={linkUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] text-amber-400 hover:text-white font-medium shrink-0 px-2 py-1 rounded bg-amber-500/10 hover:bg-amber-500/20">
+                          Open LinkedIn ↗
                         </a>
-                      )}
-                    </div>
-                    {b.message && (
-                      <div className="pl-[42px]">
-                        <div className="text-[11px] text-[#8B92B0] p-2 rounded bg-white/[0.03] border border-white/[0.05] leading-relaxed">{b.message}</div>
-                        <div className="flex items-center gap-2 mt-1.5">
-                          <button onClick={() => copyMessage(b.message, 300 + i)} className="text-[10px] font-medium text-violet-400 hover:text-white transition-colors">
-                            {copiedIdx === 300 + i ? "Copied!" : "Copy message"}
-                          </button>
-                          <button
-                            onClick={() => scanConnectorNetwork(b.linkedin_url || "", b.name || "")}
-                            disabled={scanningConnector === b.linkedin_url}
-                            className="text-[10px] font-medium text-[#7F8CFF] hover:text-white disabled:opacity-50"
-                          >
-                            {scanningConnector === b.linkedin_url ? "Scanning..." : "Scan their network →"}
-                          </button>
-                        </div>
                       </div>
-                    )}
-                  </div>
-                ))}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
