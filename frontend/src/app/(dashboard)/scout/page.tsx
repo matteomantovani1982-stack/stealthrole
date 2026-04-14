@@ -7,6 +7,7 @@ import { useEffect, useState, Component } from "react";
 import { useRouter } from "next/navigation";
 import { getHiddenMarket, type HiddenSignal } from "@/lib/api";
 import MarketSignals from "@/components/market-signals";
+import FindWayInPanel from "@/components/find-way-in";
 
 // ═══ Error Boundary — catches runtime crashes and shows a friendly message ═══
 class ScoutErrorBoundary extends Component<{ children: React.ReactNode }, { hasError: boolean; error: Error | null }> {
@@ -105,384 +106,6 @@ async function addAndGeneratePack(company: string, role: string, url: string | n
   return await appRes.json();
 }
 
-function FindWayInPanel({ company, role, headers }: { company: string; role: string; headers: Record<string, string> }) {
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<any>(null);
-  const [open, setOpen] = useState(false);
-  const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
-  const [scanProgress, setScanProgress] = useState<string | null>(null);
-  const [scanningConnector, setScanningConnector] = useState<string | null>(null);
-
-  async function findPath(forceRefresh = false) {
-    if (result && !forceRefresh) { setOpen(!open); return; }
-    setOpen(true);
-    setLoading(true);
-    try {
-      const res = await fetch("/api/v1/relationships/find-way-in", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...headers },
-        body: JSON.stringify({ company, role }),
-      });
-      if (res.ok) setResult(await res.json());
-    } catch {}
-    setLoading(false);
-  }
-
-  function copyMessage(msg: string, idx: number) {
-    navigator.clipboard.writeText(msg).then(() => {
-      setCopiedIdx(idx);
-      setTimeout(() => setCopiedIdx(null), 2000);
-    });
-  }
-
-  // Trigger the Chrome extension to open the connector's profile and
-  // scrape their connections list for matches at the target company
-  function scanConnectorNetwork(connectorUrl: string, connectorName: string) {
-    if (typeof window === "undefined") return;
-    if (!connectorUrl) {
-      alert("This contact has no LinkedIn URL on file. Re-import your CSV from LinkedIn.");
-      return;
-    }
-    const marker = document.getElementById("sr-extension-marker");
-    if (!marker) {
-      alert("Install the StealthRole Chrome extension first to scan networks. (chrome://extensions → load unpacked from the extension folder)");
-      return;
-    }
-    setScanningConnector(connectorUrl);
-    setScanProgress("Opening LinkedIn in a new tab...");
-    window.postMessage({
-      type: "SR_SCAN_NETWORK",
-      connectorUrl,
-      connectorName,
-      targetCompany: company,
-    }, window.location.origin);
-  }
-
-  // Listen for progress updates from the extension
-  useEffect(() => {
-    function onMsg(event: MessageEvent) {
-      if (event.source !== window || !event.data || typeof event.data !== "object") return;
-      const msg = event.data;
-      if (msg.type === "SR_SCAN_NETWORK_ACK") {
-        if (!msg.ok) {
-          setScanProgress("Scan failed: " + (msg.error || "unknown"));
-          setTimeout(() => { setScanProgress(null); setScanningConnector(null); }, 4000);
-        }
-      }
-      if (msg.type === "SR_SCAN_NETWORK_PROGRESS" && msg.payload) {
-        setScanProgress(msg.payload.progress || "Scanning...");
-        if (msg.payload.status === "complete") {
-          // Refetch paths so the new matches show up
-          setTimeout(() => {
-            findPath(true);
-            setScanProgress(null);
-            setScanningConnector(null);
-          }, 1500);
-        }
-      }
-    }
-    window.addEventListener("message", onMsg);
-    return () => window.removeEventListener("message", onMsg);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const {
-    direct_contacts = [],
-    recruiter_contacts = [],
-    visited_targets = [],
-    best_path,
-    backup_paths = [],
-    recommended_action,
-    discover_targets = [],
-    total_connections = 0,
-  } = result || {};
-
-  // Always return a usable LinkedIn URL — fall back to a search URL
-  // so the "Open LinkedIn ↗" button NEVER does nothing.
-  function linkedInUrlFor(contact: any): string {
-    if (contact?.linkedin_url) return contact.linkedin_url;
-    const q = encodeURIComponent(`${contact?.name || ""} ${contact?.company || company || ""}`.trim());
-    return `https://www.linkedin.com/search/results/people/?keywords=${q}`;
-  }
-
-  // Combine best_path + backup_paths into a single layer-2 list
-  const introPaths: any[] = [];
-  if (best_path) introPaths.push(best_path);
-  introPaths.push(...backup_paths);
-
-  const hasAnyPaths = direct_contacts.length > 0 || introPaths.length > 0 || recruiter_contacts.length > 0 || visited_targets.length > 0;
-
-  return (
-    <>
-      <button onClick={() => findPath(false)} className="px-3 py-1.5 border border-white/10 text-[#8B92B0] text-[12px] font-semibold rounded-lg hover:bg-white/[0.04] transition-colors">
-        {loading ? "Mapping connections..." : "Find My Way In"}
-      </button>
-      {open && !loading && result && (
-        <div className="mt-3 space-y-2 animate-in fade-in slide-in-from-top-2 duration-300">
-          {/* ═══ Scan progress banner (extension) ═══ */}
-          {scanProgress && (
-            <div className="rounded-lg p-3 border border-violet-500/30" style={{ background: "rgba(139,92,246,0.12)" }}>
-              <div className="flex items-center gap-2">
-                <div className="w-4 h-4 rounded-full border-2 border-violet-400 border-t-transparent animate-spin shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <div className="text-[11px] font-semibold text-violet-300">Scanning network via Chrome extension</div>
-                  <div className="text-[10px] text-violet-200/70 truncate">{scanProgress}</div>
-                </div>
-                <button
-                  onClick={() => {
-                    if (typeof window !== "undefined") window.postMessage({ type: "SR_CANCEL_SCAN" }, window.location.origin);
-                    setScanProgress(null);
-                    setScanningConnector(null);
-                  }}
-                  className="text-[10px] text-violet-300 hover:text-white"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Recommended action + refresh */}
-          {recommended_action && (
-            <div className="rounded-lg p-3 border border-[#7F8CFF]/20" style={{ background: "rgba(127,140,255,0.08)" }}>
-              <div className="flex items-center justify-between mb-1">
-                <div className="text-[10px] font-medium text-[#7F8CFF] uppercase">Recommended Action</div>
-                <button onClick={() => findPath(true)} className="text-[10px] text-[#7F8CFF] hover:text-white font-medium transition-colors">
-                  Refresh paths
-                </button>
-              </div>
-              <div className="text-[13px] font-semibold text-white">{recommended_action}</div>
-            </div>
-          )}
-
-          {/* ═══ LAYER 1 — DIRECT (1st degree, recruiter-free, sorted by seniority) ═══ */}
-          {direct_contacts.length > 0 && (
-            <div className="rounded-lg p-3 border border-emerald-500/20" style={{ background: "rgba(52,211,153,0.06)" }}>
-              <div className="text-[10px] font-medium text-emerald-400 uppercase mb-2">
-                Direct contacts at {company} · {result.total_direct} found
-              </div>
-              <div className="space-y-3">
-                {direct_contacts.map((c: any, i: number) => {
-                  const tier = c.seniority_tier || "IC";
-                  const tierLabel = tier === "C_SUITE" ? "C-Suite" : tier === "VP_DIRECTOR" ? "VP / Director" : tier === "MANAGER" ? "Manager" : "IC";
-                  const tierColor = tier === "C_SUITE" ? "#fbbf24" : tier === "VP_DIRECTOR" ? "#4d8ef5" : tier === "MANAGER" ? "#a78bfa" : "#86efac";
-                  const linkUrl = linkedInUrlFor(c);
-                  return (
-                    <div key={i} className="rounded-lg p-2.5 bg-white/[0.04]">
-                      <div className="flex items-center gap-2.5 mb-1.5">
-                        <div className="w-8 h-8 rounded-full bg-emerald-500/15 text-emerald-400 flex items-center justify-center text-[12px] font-bold shrink-0">
-                          {c.name?.[0]?.toUpperCase() || "?"}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-[12px] font-medium text-white">{c.name}</span>
-                            <span className="text-[9px] px-1.5 py-0.5 rounded-full font-medium" style={{ background: `${tierColor}26`, color: tierColor }}>{tierLabel}</span>
-                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/10 text-[#8B92B0] font-medium">1st</span>
-                          </div>
-                          <div className="text-[11px] text-[#6B7194]">{c.title}{c.company ? ` · ${c.company}` : ""}</div>
-                        </div>
-                        <a href={linkUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] text-emerald-400 hover:text-white font-medium shrink-0 px-2 py-1 rounded bg-emerald-500/10 hover:bg-emerald-500/20">
-                          Open LinkedIn ↗
-                        </a>
-                      </div>
-                      {c.message && (
-                        <div className="pl-[42px]">
-                          <div className="text-[11px] text-[#8B92B0] p-2 rounded bg-white/[0.03] border border-white/[0.05] leading-relaxed whitespace-pre-wrap">{c.message}</div>
-                          <button onClick={() => copyMessage(c.message, i)} className="mt-1.5 text-[10px] font-medium text-emerald-400 hover:text-white transition-colors">
-                            {copiedIdx === i ? "Copied!" : "Copy message"}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* ═══ LAYER 2 — INTRO PATHS (2nd degree) ═══ */}
-          {introPaths.length > 0 && (
-            <div className="rounded-lg p-3 border border-[#4d8ef5]/20" style={{ background: "rgba(77,142,245,0.06)" }}>
-              <div className="text-[10px] font-medium text-[#4d8ef5] uppercase mb-2">
-                Intro paths via your network · {introPaths.length}
-              </div>
-              <div className="space-y-3">
-                {introPaths.slice(0, 10).map((p: any, i: number) => (
-                  <div key={i} className="rounded-lg p-3 bg-white/[0.04]">
-                    {/* Path chain */}
-                    <div className="flex items-center gap-1.5 flex-wrap mb-2">
-                      <span className="text-[10px] px-2 py-0.5 rounded bg-[#4d8ef5]/20 text-[#4d8ef5] font-medium">You</span>
-                      <span className="text-[#555C7A] text-[10px]">→</span>
-                      <span className="text-[10px] px-2 py-0.5 rounded bg-white/[0.08] text-[#c4c9e0] font-medium">{p.connector?.name}</span>
-                      <span className="text-[#555C7A] text-[10px]">→</span>
-                      <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-medium">{p.target?.name}</span>
-                    </div>
-                    {/* Connector details */}
-                    {p.connector && (
-                      <div className="text-[11px] text-[#8B92B0] mb-1">
-                        Ask <span className="text-white font-medium">{p.connector.name}</span> ({p.connector.title}{p.connector.company ? ` at ${p.connector.company}` : ""}) to introduce you to <span className="text-emerald-400">{p.target?.name}</span>{p.target?.title ? ` (${p.target.title})` : ""}.
-                      </div>
-                    )}
-                    {/* AI-generated intro message */}
-                    {p.intro_message && (
-                      <div className="mt-2">
-                        <div className="text-[11px] text-[#8B92B0] p-2 rounded bg-white/[0.03] border border-white/[0.05] leading-relaxed whitespace-pre-wrap">{p.intro_message}</div>
-                        <div className="flex items-center gap-2 mt-1.5">
-                          <button
-                            onClick={() => copyMessage(p.intro_message, 200 + i)}
-                            className="text-[10px] font-medium text-[#4d8ef5] hover:text-white transition-colors"
-                          >
-                            {copiedIdx === 200 + i ? "Copied!" : "Copy message"}
-                          </button>
-                          <a
-                            href={linkedInUrlFor({ name: p.connector?.name, company: p.connector?.company, linkedin_url: p.connector?.linkedin_url })}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-[10px] font-medium text-[#7F8CFF] hover:text-white"
-                          >
-                            Open {p.connector?.name?.split(" ")[0]} on LinkedIn ↗
-                          </a>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* ═══ RECRUITERS AT TARGET COMPANY (separate bucket from direct contacts) ═══ */}
-          {recruiter_contacts.length > 0 && (
-            <div className="rounded-lg p-3 border border-amber-500/20" style={{ background: "rgba(245,158,11,0.06)" }}>
-              <div className="text-[10px] font-medium text-amber-400 uppercase mb-2">
-                Recruiters / talent at {company} · {result.total_recruiters} found
-              </div>
-              <div className="text-[11px] text-[#6B7194] mb-2">
-                Reach out directly about open roles. They handle hiring pipeline.
-              </div>
-              <div className="space-y-3">
-                {recruiter_contacts.map((c: any, i: number) => {
-                  const linkUrl = linkedInUrlFor(c);
-                  return (
-                    <div key={i} className="rounded-lg p-2.5 bg-white/[0.04]">
-                      <div className="flex items-center gap-2.5 mb-1.5">
-                        <div className="w-8 h-8 rounded-full bg-amber-500/15 text-amber-400 flex items-center justify-center text-[12px] font-bold shrink-0">
-                          {c.name?.[0]?.toUpperCase() || "?"}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-[12px] font-medium text-white">{c.name}</span>
-                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 font-medium">Recruiter</span>
-                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/10 text-[#8B92B0] font-medium">1st</span>
-                          </div>
-                          <div className="text-[11px] text-[#6B7194]">{c.title}{c.company ? ` · ${c.company}` : ""}</div>
-                        </div>
-                        <a href={linkUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] text-amber-400 hover:text-white font-medium shrink-0 px-2 py-1 rounded bg-amber-500/10 hover:bg-amber-500/20">
-                          Open LinkedIn ↗
-                        </a>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* ═══ Visited targets (cold outreach to people you researched) ═══ */}
-          {visited_targets.length > 0 && (
-            <div className="rounded-lg p-3 border border-amber-500/20" style={{ background: "rgba(245,158,11,0.06)" }}>
-              <div className="text-[10px] font-medium text-amber-400 uppercase mb-2">
-                Profiles you researched at {company} ({result.total_visited})
-              </div>
-              <div className="space-y-3">
-                {visited_targets.map((c: any, i: number) => (
-                  <div key={i} className="rounded-lg p-2.5 bg-white/[0.04]">
-                    <div className="flex items-center gap-2.5 mb-1.5">
-                      <div className="w-8 h-8 rounded-full bg-amber-500/15 text-amber-400 flex items-center justify-center text-[12px] font-bold shrink-0">
-                        {c.name?.[0]?.toUpperCase() || "?"}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[12px] font-medium text-white">{c.name}</span>
-                          {c.is_hiring_manager && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 font-medium">Decision Maker</span>}
-                          {c.is_recruiter && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-medium">Recruiter</span>}
-                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/10 text-[#8B92B0] font-medium">Cold outreach</span>
-                        </div>
-                        <div className="text-[11px] text-[#6B7194]">{c.title}</div>
-                      </div>
-                      {c.linkedin_url && (
-                        <a href={c.linkedin_url} target="_blank" rel="noopener" className="text-[11px] text-amber-400 hover:text-white font-medium shrink-0">
-                          LinkedIn →
-                        </a>
-                      )}
-                    </div>
-                    {c.intro_angle && (
-                      <div className="text-[11px] text-amber-400 mb-1.5 pl-[42px]">{c.intro_angle}</div>
-                    )}
-                    {c.message && (
-                      <div className="pl-[42px]">
-                        <div className="text-[11px] text-[#8B92B0] p-2 rounded bg-white/[0.03] border border-white/[0.05] leading-relaxed">{c.message}</div>
-                        <button onClick={() => copyMessage(c.message, 100 + i)} className="mt-1.5 text-[10px] font-medium text-amber-400 hover:text-white transition-colors">
-                          {copiedIdx === 100 + i ? "Copied!" : "Copy outreach message"}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Discover targets — people to visit on LinkedIn */}
-          {discover_targets.length > 0 && !best_path && (
-            <div className="rounded-lg p-3 border border-violet-500/20" style={{ background: "rgba(139,92,246,0.06)" }}>
-              <div className="text-[10px] font-medium text-violet-400 uppercase mb-1">Visit These Profiles to Map Your Paths</div>
-              <div className="text-[11px] text-[#6B7194] mb-2">
-                Open each profile with the StealthRole extension active. It will scan mutual connections automatically. Then come back and hit <strong className="text-violet-400">Refresh paths</strong> above.
-              </div>
-              <div className="space-y-1.5">
-                {discover_targets.map((person: any, i: number) => (
-                  <a key={i} href={person.linkedin_url} target="_blank" rel="noopener" className="flex items-center gap-2.5 p-2.5 rounded-lg bg-white/[0.04] hover:bg-violet-500/10 border border-transparent hover:border-violet-500/20 transition-all">
-                    <div className="w-8 h-8 rounded-full bg-violet-500/15 text-violet-400 flex items-center justify-center text-[11px] font-bold shrink-0">
-                      {person.name?.[0]?.toUpperCase() || "?"}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[12px] font-medium text-white">{person.name}</div>
-                      {person.title && <div className="text-[11px] text-[#6B7194]">{person.title}</div>}
-                    </div>
-                    <span className="text-[10px] text-violet-400 font-medium shrink-0">Visit profile →</span>
-                  </a>
-                ))}
-              </div>
-              <div className="mt-2.5 text-center">
-                <button
-                  onClick={() => findPath(true)}
-                  className="text-[11px] font-semibold text-violet-400 hover:text-white px-4 py-1.5 rounded-lg border border-violet-500/20 hover:bg-violet-500/10 transition-all"
-                >
-                  I visited profiles — refresh paths
-                </button>
-              </div>
-            </div>
-          )}
-
-          {!hasAnyPaths && discover_targets.length === 0 && (
-            <div className="rounded-lg p-4 text-center border border-white/10" style={{ background: "rgba(255,255,255,0.04)" }}>
-              <div className="text-[13px] text-white font-medium mb-1">No direct or indirect connections at {company} yet</div>
-              <div className="text-[11px] text-[#6B7194] mb-3">
-                {total_connections > 0
-                  ? `You have ${total_connections} connections imported, but none at this company. Import more LinkedIn connections to improve coverage.`
-                  : "Import your LinkedIn connections to start finding paths into companies."}
-              </div>
-              <a href="/settings#linkedin" className="inline-block px-4 py-1.5 rounded-lg bg-[#4d8ef5] text-white text-[11px] font-semibold hover:bg-[#3b7de0] transition-colors">
-                Import connections →
-              </a>
-            </div>
-          )}
-        </div>
-      )}
-    </>
-  );
-}
 
 export default function ScoutPageWrapper() {
   return (
@@ -906,6 +529,7 @@ const PRED_LABELS: Record<PredStatus, string> = {
 
 function PredictionsTab({ onAddPack, predictions = [] }: { onAddPack: (company: string, role: string, url: string | null, description: string) => Promise<any>; predictions?: any[] }) {
   const router = useRouter();
+  const [wayInTarget, setWayInTarget] = useState<{ company: string; role: string } | null>(null);
 
   // Map real predictions to cards if available
   function mapUrgencyToStatus(urgency: string, confidence: number): PredStatus {
@@ -1035,12 +659,38 @@ function PredictionsTab({ onAddPack, predictions = [] }: { onAddPack: (company: 
 
                 <div style={{ display: "flex", gap: 6 }}>
                   <button onClick={() => handleApply(card.company, card.title)} style={{ flex: 1, background: "#4d8ef5", color: "#fff", border: "none", borderRadius: 8, padding: "8px 10px", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>Generate pack</button>
-                  <button onClick={() => router.push("/applications")} style={{ background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.5)", border: "0.5px solid rgba(255,255,255,0.08)", borderRadius: 8, padding: "8px 12px", fontSize: 10, fontWeight: 500, cursor: "pointer" }}>Intel →</button>
+                  <button
+                    onClick={() => setWayInTarget(wayInTarget?.company === card.company ? null : { company: card.company, role: card.title })}
+                    style={{
+                      background: wayInTarget?.company === card.company ? "#4d8ef5" : "rgba(255,255,255,0.04)",
+                      color: wayInTarget?.company === card.company ? "#fff" : "rgba(255,255,255,0.55)",
+                      border: "0.5px solid rgba(255,255,255,0.08)",
+                      borderRadius: 8,
+                      padding: "8px 12px",
+                      fontSize: 10,
+                      fontWeight: 500,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Way in
+                  </button>
                 </div>
               </div>
             );
           })}
         </div>
+
+        {/* Way In panel for the selected prediction */}
+        {wayInTarget && (
+          <div style={{ marginTop: 16 }}>
+            <FindWayInPanel
+              company={wayInTarget.company}
+              role={wayInTarget.role}
+              headers={typeof window !== "undefined" && localStorage.getItem("sr_token") ? { Authorization: `Bearer ${localStorage.getItem("sr_token")}` } : {}}
+              alwaysOpen={true}
+            />
+          </div>
+        )}
       </div>
 
       {/* ═══ RIGHT: Bloomberg feed ═══ */}
@@ -1112,6 +762,7 @@ interface SignalCard {
 }
 
 function SignalsTab({ signals = [] }: { signals?: import("@/lib/api").HiddenSignal[] }) {
+  const router = useRouter();
   const [filter, setFilter] = useState("All");
   const [wayInCard, setWayInCard] = useState<string | null>(null);
 
@@ -1334,7 +985,22 @@ function SignalsTab({ signals = [] }: { signals?: import("@/lib/api").HiddenSign
                       ))}
                     </div>
                     <div style={{ display: "flex", gap: 5 }}>
-                      <button style={{ background: c.main, color: "#fff", border: "none", borderRadius: 8, padding: "5px 11px", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>{card.primaryLabel}</button>
+                      <button
+                        onClick={async () => {
+                          try {
+                            const app = await addAndGeneratePack(card.company, card.headline.split(" — ")[0] || "Senior Role", card.url || null, "");
+                            if (app?.id) router.push(`/applications/${app.id}/package`);
+                            else router.push("/applications");
+                          } catch (err: any) {
+                            const msg = err?.message || "Failed to start pack generation";
+                            if (msg.startsWith("NO_CV:")) alert(msg.replace("NO_CV: ", ""));
+                            else alert(msg);
+                          }
+                        }}
+                        style={{ background: c.main, color: "#fff", border: "none", borderRadius: 8, padding: "5px 11px", fontSize: 10, fontWeight: 600, cursor: "pointer" }}
+                      >
+                        Generate pack
+                      </button>
                       <button onClick={() => setWayInCard(wayInCard === card.company ? null : card.company)} style={{ background: wayInCard === card.company ? "#4d8ef5" : "rgba(255,255,255,0.04)", color: wayInCard === card.company ? "#fff" : "rgba(255,255,255,0.55)", border: "0.5px solid rgba(255,255,255,0.08)", borderRadius: 8, padding: "5px 11px", fontSize: 10, fontWeight: 500, cursor: "pointer" }}>Way in</button>
                     </div>
                   </div>

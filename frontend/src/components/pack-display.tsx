@@ -4,6 +4,7 @@
 import { useState } from "react";
 import type { JobRun } from "@/lib/api";
 import ConnectionPathPanel from "./connection-path";
+import FindWayInPanel from "./find-way-in";
 
 interface LinkedInContact {
   name: string;
@@ -249,8 +250,15 @@ export default function PackDisplay({ pack, downloadUrl, linkedinContacts = [] }
       {/* ═══ CONTACTS ═══ */}
       {tab === "contacts" && (
         <div className="space-y-4">
-          {/* Connection Path — Find My Way In */}
-          <ConnectionPathPanel company={company?.company_name || pack.company_name || ""} role={pack.role_title || ""} />
+          {/* Connection Path — Find My Way In (shared component, always-open mode) */}
+          <FindWayInPanel
+            company={company?.company_name || pack.company_name || ""}
+            role={pack.role_title || ""}
+            headers={typeof window !== "undefined" && localStorage.getItem("sr_token")
+              ? { Authorization: `Bearer ${localStorage.getItem("sr_token")}` }
+              : {}}
+            alwaysOpen={true}
+          />
 
           {/* 7-Day Action Plan */}
           {Array.isArray(networking.seven_day_action_plan) && networking.seven_day_action_plan.length > 0 && (
