@@ -343,6 +343,91 @@ class RelationshipEngine:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    def _ai_intro_message(
+        self,
+        mutual_name: str,
+        target_name: str,
+        target_title: str,
+        company: str,
+        role: str,
+    ) -> str:
+        """
+        Generate a personalized LinkedIn message asking a mutual connection
+        for an intro to a target person. Uses Claude Haiku (cheap). Cached
+        in Redis for 7 days per (mutual, target, company, role) tuple.
+        """
+        import hashlib
+        cache_key = None
+        try:
+            import redis
+            from app.config import settings as _s
+            r = redis.Redis.from_url(_s.redis_url, decode_responses=True)
+            key_hash = hashlib.sha256(
+                f"{mutual_name}|{target_name}|{target_title}|{company}|{role}".encode()
+            ).hexdigest()[:16]
+            cache_key = f"intro_msg:{key_hash}"
+            cached = r.get(cache_key)
+            if cached:
+                return cached
+        except Exception:
+            r = None
+
+        # Call Haiku (cheap, ~150 tokens)
+        try:
+            from app.services.llm.client import ClaudeClient
+            from app.services.llm.router import LLMTask
+
+            mutual_first = mutual_name.split()[0] if mutual_name else "there"
+            target_first = target_name.split()[0] if target_name else "them"
+
+            system_prompt = (
+                "You are drafting a short, warm, professional LinkedIn message. "
+                "The user is asking their connection for an introduction to a target person "
+                "at a target company. Keep it under 80 words. Warm but professional. "
+                "Reference the target's actual title and the specific role being pursued. "
+                "End with 'no pressure at all'. Do NOT use generic openers like 'Hope you're doing well'. "
+                "Do NOT include subject lines. Do NOT include placeholder brackets. "
+                "Return ONLY the message body."
+            )
+
+            user_prompt = (
+                f"Mutual connection (recipient): {mutual_name}\n"
+                f"Target person: {target_name}, {target_title}, at {company}\n"
+                f"Role the user is pursuing: {role}\n\n"
+                f"Write the message from the user to {mutual_first}, asking for an intro to {target_first}."
+            )
+
+            client = ClaudeClient(task=LLMTask.CLASSIFICATION, max_tokens=200)
+            raw, _ = client.call_text(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                temperature=0.6,
+            )
+            message = raw.strip()
+            # Strip any leading/trailing quote marks
+            if message.startswith('"') and message.endswith('"'):
+                message = message[1:-1]
+
+            # Cache for 7 days
+            if r and cache_key:
+                try:
+                    r.setex(cache_key, 7 * 86400, message)
+                except Exception:
+                    pass
+
+            return message
+        except Exception:
+            # Fallback template
+            mutual_first = mutual_name.split()[0] if mutual_name else "there"
+            target_first = target_name.split()[0] if target_name else "them"
+            return (
+                f"Hi {mutual_first}, I saw you're connected with {target_name} "
+                f"({target_title}) at {company}. I'm exploring a {role} opportunity there and think "
+                f"{target_first} would be a great person to speak with. Would you be comfortable "
+                f"making a quick intro? Happy to send you a short bio to forward. "
+                f"No pressure at all."
+            )
+
     async def _get_all_connections(self, user_id: str) -> list[LinkedInConnection]:
         """Load all connections for a user."""
         result = await self.db.execute(
@@ -568,6 +653,28 @@ class RelationshipEngine:
         # Cap at 50 to match LinkedIn's visible mutual count
         if real_paths:
             real_paths = real_paths[:50]
+            # Attach a personalized intro message to the top 5 paths (cached)
+            for p in real_paths[:5]:
+                try:
+                    p["intro_message"] = self._ai_intro_message(
+                        mutual_name=p["connector"]["name"],
+                        target_name=p["target"]["name"],
+                        target_title=p["target"].get("title") or "employee",
+                        company=company,
+                        role=role or "senior role",
+                    )
+                except Exception:
+                    # Fallback to template if LLM fails
+                    p["intro_message"] = (
+                        f"Hi {p['connector']['name'].split()[0]}, hope you're well! "
+                        f"I noticed you're connected with {p['target']['name']} "
+                        f"who is {p['target'].get('title', 'at')} at {company}. "
+                        f"I'm exploring a {role or 'senior'} opportunity there and I think "
+                        f"{p['target']['name'].split()[0]} could be a great person to speak with. "
+                        f"Would you be comfortable making a quick introduction? "
+                        f"Happy to send you a short bio to forward. "
+                        f"Really appreciate it — no pressure at all."
+                    )
             best_path = real_paths[0]
             backup_paths = real_paths[1:]
 
