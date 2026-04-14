@@ -464,25 +464,85 @@
   }
 
   // ── Scrape connections list
+  //
+  // LinkedIn obfuscates and rotates its class names, so instead of relying on
+  // fixed selectors we walk up from every profile link (/in/...) to the card
+  // container and extract name + subtitle from the surrounding DOM. This keeps
+  // working across redesigns of the connections, search, and mutual pages.
   function scrapeConnections() {
     showToast("Scanning connections...");
-    const cards = document.querySelectorAll(".mn-connection-card, .artdeco-list__item, li.reusable-search__result-container");
+    const profileLinks = document.querySelectorAll("a[href*='/in/']");
+    const seen = new Set();
     const connections = [];
-    cards.forEach((card) => {
-      const nameEl = card.querySelector(".mn-connection-card__name, .entity-result__title-text a span[aria-hidden='true'], .app-aware-link span[aria-hidden='true']");
-      const titleEl = card.querySelector(".mn-connection-card__occupation, .entity-result__primary-subtitle, .artdeco-entity-lockup__subtitle");
-      const linkEl = card.querySelector("a[href*='/in/']");
-      if (!nameEl) return;
-      const fullName = nameEl.textContent.trim();
-      const headline = titleEl?.textContent?.trim() || "";
-      const linkedinUrl = linkEl?.href?.split("?")[0] || "";
-      const linkedinId = linkedinUrl.split("/in/")[1]?.replace(/\/$/, "") || "";
+
+    profileLinks.forEach((link) => {
+      const href = (link.href || "").split("?")[0];
+      const linkedinId = href.split("/in/")[1]?.replace(/\/$/, "") || "";
+      if (!linkedinId || seen.has(linkedinId)) return;
+
+      // Walk up to a plausible card container (li, article, or a wrapping div)
+      let card = link.closest("li") || link.closest("article") || link.parentElement;
+      for (let i = 0; card && i < 4 && card.tagName && card.children.length < 2; i++) {
+        card = card.parentElement;
+      }
+      if (!card) return;
+
+      // Name: prefer aria-hidden span inside the profile link (LinkedIn's
+      // canonical name marker), fall back to the link's own visible text.
+      let fullName = "";
+      const nameSpan = link.querySelector("span[aria-hidden='true']");
+      if (nameSpan && nameSpan.textContent) fullName = nameSpan.textContent.trim();
+      if (!fullName) {
+        // Link text can contain the accessibility label "View <Name>'s profile"
+        const raw = (link.textContent || "").trim().replace(/\s+/g, " ");
+        fullName = raw.replace(/^view\s+/i, "").replace(/'s profile.*$/i, "").trim();
+      }
+      // Reject obvious non-name strings (CTAs, counts, single words like "Message")
+      if (!fullName || fullName.length < 3 || /^(message|connect|follow|view|pending)$/i.test(fullName)) return;
+      if (fullName.length > 80) return;
+
+      // Subtitle / headline: first descendant text block that isn't the name and
+      // isn't a button/link. LinkedIn consistently renders the occupation in a
+      // sibling container with classes containing "subtitle" or "occupation",
+      // but we also accept any short text sibling as a fallback.
+      let headline = "";
+      const subtitleEl = card.querySelector(
+        "[class*='subtitle'], [class*='occupation'], [class*='headline'], [class*='primary-subtitle']"
+      );
+      if (subtitleEl && subtitleEl.textContent) {
+        headline = subtitleEl.textContent.trim().replace(/\s+/g, " ");
+      }
+      if (!headline) {
+        // Fallback: scan direct descendants for a non-link text node near the name
+        const candidates = card.querySelectorAll("div, span, p");
+        for (const el of candidates) {
+          const t = (el.textContent || "").trim().replace(/\s+/g, " ");
+          if (!t || t === fullName || t.length < 4 || t.length > 200) continue;
+          if (el.querySelector("a, button")) continue;
+          if (/^(message|connect|follow|pending|\d+(st|nd|rd) degree)$/i.test(t)) continue;
+          headline = t;
+          break;
+        }
+      }
+
       let currentTitle = headline, currentCompany = "";
       const atMatch = headline.match(/^(.+?)\s+(?:at|@)\s+(.+)/i);
       if (atMatch) { currentTitle = atMatch[1].trim(); currentCompany = atMatch[2].trim(); }
-      connections.push({ linkedin_id: linkedinId, linkedin_url: linkedinUrl, full_name: fullName, headline, current_title: currentTitle, current_company: currentCompany });
+
+      seen.add(linkedinId);
+      connections.push({
+        linkedin_id: linkedinId,
+        linkedin_url: href,
+        full_name: fullName,
+        headline,
+        current_title: currentTitle,
+        current_company: currentCompany,
+      });
     });
+
+    console.log("[StealthRole] scrapeConnections found " + connections.length + " unique profiles");
     if (connections.length === 0) { showToast("No connections found. Scroll down to load more."); return; }
+    showToast("Importing " + connections.length + " connections...");
     srApiCall("/linkedin/ingest/connections", { method: "POST", body: JSON.stringify({ connections }) },
       (res) => { if (res?.ok) showToast("Imported " + (res.data?.created || 0) + " connections"); else showToast(res?.error || "Import failed"); });
   }

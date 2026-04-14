@@ -345,7 +345,7 @@ def _detect_news_signals(prefs: dict) -> list[dict]:
                 signals.append({
                     "company": company,
                     "signal_type": signal_type,
-                    "confidence": 0.6,  # Will be refined by Claude
+                    "confidence": _initial_confidence(signal_type, url, title, snippet),
                     "likely_roles": [],  # Will be filled by Claude
                     "reasoning": snippet[:500],
                     "source_url": url,
@@ -377,6 +377,56 @@ def _extract_company(title: str) -> str:
         if sep in title:
             return title.split(sep, 1)[0].strip()[:80]
     return ""
+
+
+# Tier-1 credible sources — higher base confidence
+_TIER1_SOURCES = {
+    "techcrunch", "bloomberg", "reuters", "crunchbase", "forbes",
+    "ft.com", "wsj", "theinformation", "pitchbook",
+}
+# Tier-2 regional / trade sources
+_TIER2_SOURCES = {
+    "magnitt", "wamda", "zawya", "arabianbusiness", "gulfbusiness",
+    "thenationalnews", "menabytes", "entrepreneur", "linkedin",
+}
+
+# Signal types with stronger hiring implication
+_STRONG_SIGNAL_TYPES = {"funding", "leadership", "expansion", "ma_activity", "board_change"}
+_MEDIUM_SIGNAL_TYPES = {"hiring_surge", "product_launch", "velocity"}
+
+
+def _initial_confidence(signal_type: str, url: str, title: str, snippet: str) -> float:
+    """Compute a pre-enrichment confidence score based on signal type, source, and
+    whether the signal keyword appears in the title (direct) vs only the snippet
+    (inferred). Returns a float in [0.30, 0.85]. Replaces the old flat 0.6.
+    """
+    # Base by signal type
+    if signal_type in _STRONG_SIGNAL_TYPES:
+        base = 0.60
+    elif signal_type in _MEDIUM_SIGNAL_TYPES:
+        base = 0.50
+    else:
+        base = 0.40
+
+    # Source credibility bump
+    u = (url or "").lower()
+    if any(s in u for s in _TIER1_SOURCES):
+        base += 0.15
+    elif any(s in u for s in _TIER2_SOURCES):
+        base += 0.08
+
+    # Signal in title is stronger evidence than snippet-only
+    title_l = (title or "").lower()
+    keywords = SIGNAL_KEYWORDS.get(signal_type, [])
+    if any(kw in title_l for kw in keywords):
+        base += 0.08
+
+    # Explicit hiring language boosts confidence
+    combined = f"{title_l} {(snippet or '').lower()}"
+    if any(kw in combined for kw in ("hiring", "recruiting", "is looking for", "seeking", "join our team")):
+        base += 0.05
+
+    return round(max(0.30, min(0.85, base)), 2)
 
 
 def _source_label(url: str) -> str:

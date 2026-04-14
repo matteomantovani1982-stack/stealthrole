@@ -154,6 +154,8 @@ function ScoutPage() {
     Promise.allSettled([
       fetch("/api/v1/scout/vacancies?limit=30", { headers }).then(r => r.ok ? r.json() : {}).then(d => setVacancies(d.vacancies || [])),
       getHiddenMarket().then(r => setSignals(r.signals || [])),
+      // Prefetch predictions so the Future Openings tab count is accurate on first render
+      fetch("/api/v1/scout/predictions", { headers }).then(r => r.ok ? r.json() : {}).then(d => setPredictions(d.predictions || [])).catch(() => {}),
     ]).finally(() => setLoading(false));
   }, []);
 
