@@ -69,6 +69,7 @@
 
   let _lastUrl = window.location.href;
   let _mutualScrapeInProgress = false;
+  let _autoScrapeInProgress = false;
 
   function initForPage() {
     _mutualScrapeInProgress = false; // Reset on new page navigation
@@ -705,6 +706,11 @@
   // - We loop for up to 6 minutes or until 6 consecutive idle ticks
   //   (no new profiles found) — whichever comes first.
   async function autoScrapeConnections() {
+    if (_autoScrapeInProgress) {
+      console.warn("[StealthRole] autoScrapeConnections already running — ignoring duplicate trigger");
+      return;
+    }
+    _autoScrapeInProgress = true;
     console.log("[StealthRole] autoScrapeConnections starting");
     const sendProgress = (count, status, error) => {
       try {
@@ -851,6 +857,8 @@
     } catch (e) {
       console.error("[StealthRole] autoScrapeConnections error:", e);
       sendProgress(allConnections.length, "error", String(e?.message || e));
+    } finally {
+      _autoScrapeInProgress = false;
     }
   }
 
