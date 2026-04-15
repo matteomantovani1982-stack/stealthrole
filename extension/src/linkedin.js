@@ -1,6 +1,6 @@
 // StealthRole LinkedIn content script
 (() => {
-  console.log("%c[StealthRole v1.0.13] linkedin.js loaded", "color: #7F8CFF; font-weight: bold");
+  console.log("%c[StealthRole v1.0.14] linkedin.js loaded", "color: #7F8CFF; font-weight: bold");
 
   // API call: background script first, direct fetch fallback
   function srApiCall(path, options, callback) {
@@ -759,6 +759,155 @@
     });
   }
 
+  // ── LinkedIn Voyager API fetcher ──
+  //
+  // LinkedIn's own frontend uses /voyager/api endpoints to fetch connections
+  // as paginated JSON. Content scripts on linkedin.com share cookies with
+  // the page, so we can call these endpoints directly with the user's
+  // existing session — no login, no DOM scraping, no scroll gymnastics.
+  //
+  // The CSRF token lives in the JSESSIONID cookie, prefixed "ajax:".
+  // We pass it back as the csrf-token header.
+  function getLinkedInCsrfToken() {
+    const match = document.cookie.match(/JSESSIONID="?(ajax:[^";]+)"?/);
+    return match ? match[1] : null;
+  }
+
+  async function fetchAllConnectionsViaVoyager() {
+    const csrf = getLinkedInCsrfToken();
+    if (!csrf) {
+      console.warn("[StealthRole] voyager: no CSRF token found in JSESSIONID cookie");
+      return null;
+    }
+    console.log("[StealthRole] voyager: CSRF ok, fetching paginated connections…");
+
+    const headers = {
+      "csrf-token": csrf,
+      "x-restli-protocol-version": "2.0.0",
+      "accept": "application/vnd.linkedin.normalized+json+2.1",
+      "x-li-lang": "en_US",
+    };
+
+    // Try multiple endpoint variants — LinkedIn has shipped a few over the
+    // years and they rotate the shape. First one that returns a usable
+    // payload wins.
+    const endpointBuilders = [
+      (start, count) =>
+        `https://www.linkedin.com/voyager/api/relationships/dash/connections?count=${count}&q=search&sortType=RECENTLY_ADDED&start=${start}`,
+      (start, count) =>
+        `https://www.linkedin.com/voyager/api/relationships/connections?count=${count}&start=${start}`,
+      (start, count) =>
+        `https://www.linkedin.com/voyager/api/relationships/dash/connections?count=${count}&q=search&start=${start}`,
+    ];
+
+    for (const build of endpointBuilders) {
+      const testUrl = build(0, 10);
+      try {
+        const res = await fetch(testUrl, { headers, credentials: "include" });
+        console.log("[StealthRole] voyager probe:", testUrl.slice(0, 80), "→", res.status);
+        if (!res.ok) continue;
+        const data = await res.json();
+        const firstPageElements = data.elements || data.included || [];
+        if (!firstPageElements.length) {
+          console.log("[StealthRole] voyager: endpoint returned empty, trying next");
+          continue;
+        }
+        // This endpoint works! Now paginate through it.
+        return await paginateVoyager(build, headers, data);
+      } catch (e) {
+        console.warn("[StealthRole] voyager probe failed:", e.message);
+      }
+    }
+    console.warn("[StealthRole] voyager: no endpoint worked");
+    return null;
+  }
+
+  async function paginateVoyager(build, headers, firstPageData) {
+    const all = [];
+    const BATCH = 40;
+    const MAX_TOTAL = 10000;
+
+    // Seed with first page already fetched
+    const seenIds = new Set();
+    let extracted = extractVoyagerRecords(firstPageData);
+    for (const c of extracted) {
+      if (!seenIds.has(c.linkedin_id)) { seenIds.add(c.linkedin_id); all.push(c); }
+    }
+    console.log(`[StealthRole] voyager: page 0 → ${extracted.length} records`);
+
+    let start = BATCH;
+    while (start < MAX_TOTAL) {
+      const url = build(start, BATCH);
+      try {
+        const res = await fetch(url, { headers, credentials: "include" });
+        if (!res.ok) { console.warn("[StealthRole] voyager page", start, "status", res.status); break; }
+        const data = await res.json();
+        extracted = extractVoyagerRecords(data);
+        if (extracted.length === 0) { console.log("[StealthRole] voyager: end of list at start=", start); break; }
+        let added = 0;
+        for (const c of extracted) {
+          if (!seenIds.has(c.linkedin_id)) { seenIds.add(c.linkedin_id); all.push(c); added++; }
+        }
+        console.log(`[StealthRole] voyager: page ${start / BATCH} → ${extracted.length} records (${added} new, total ${all.length})`);
+        if (extracted.length < BATCH) break; // last page
+        start += BATCH;
+        // Gentle rate limit
+        await new Promise((r) => setTimeout(r, 400));
+      } catch (e) {
+        console.warn("[StealthRole] voyager page", start, "error:", e.message);
+        break;
+      }
+    }
+    return all;
+  }
+
+  // Extract connection records from a voyager API response. The response
+  // structure varies: sometimes `elements` contains the connection rows with
+  // embedded profile data; sometimes `included` is a flat list that needs
+  // joining. Best effort: scan both for profile-shaped objects.
+  function extractVoyagerRecords(data) {
+    const results = [];
+    const seen = new Set();
+
+    const visit = (obj) => {
+      if (!obj || typeof obj !== "object") return;
+      // A profile-shaped object has a public identifier + first/last name
+      if (obj.publicIdentifier && (obj.firstName || obj.lastName)) {
+        const slug = obj.publicIdentifier;
+        if (!seen.has(slug)) {
+          seen.add(slug);
+          const fullName = [obj.firstName, obj.lastName].filter(Boolean).join(" ").trim();
+          // Headline + company come from various fields across API versions
+          const headline = obj.headline || obj.occupation || "";
+          // Extract company from headline (same logic as DOM parse)
+          let currentTitle = headline;
+          let currentCompany = "";
+          const m = headline.match(/^(.+?)\s+(?:at|@)\s+(.+)$/i);
+          if (m) { currentTitle = m[1].trim(); currentCompany = m[2].trim(); }
+          results.push({
+            linkedin_id: slug,
+            linkedin_url: `https://www.linkedin.com/in/${slug}/`,
+            full_name: fullName,
+            headline,
+            current_title: currentTitle,
+            current_company: currentCompany,
+          });
+        }
+      }
+      // Recurse
+      if (Array.isArray(obj)) {
+        for (const item of obj) visit(item);
+      } else {
+        for (const key in obj) {
+          if (typeof obj[key] === "object") visit(obj[key]);
+        }
+      }
+    };
+
+    visit(data);
+    return results;
+  }
+
   // ── Auto-scrape: full sync flow triggered by background on /mynetwork/invite-connect/connections/
   // Scrolls to the bottom loading all connections, then POSTs them to
   // /linkedin/ingest/connections in chunks of 100, reporting PROGRESS between
@@ -782,6 +931,48 @@
     }
     _autoScrapeInProgress = true;
     console.log("[StealthRole] autoScrapeConnections starting");
+
+    // ── Try Voyager API first ──
+    // LinkedIn's own JSON endpoint returns the full authoritative list.
+    // If it works, we skip DOM scraping entirely and get clean data in seconds.
+    try {
+      const sendProgress = (count, status, error) => {
+        try { chrome.runtime.sendMessage({ type: "PROGRESS", feature: "connections", count, status, error }); } catch {}
+      };
+      sendProgress(0, "scanning");
+      console.log("[StealthRole] attempting Voyager API first…");
+      const voyagerRecords = await fetchAllConnectionsViaVoyager();
+      if (voyagerRecords && voyagerRecords.length > 0) {
+        console.log(`[StealthRole] Voyager returned ${voyagerRecords.length} connections — skipping DOM scroll`);
+        sendProgress(voyagerRecords.length, "scanning");
+        // POST in chunks of 100
+        const CHUNK = 100;
+        let posted = 0;
+        for (let i = 0; i < voyagerRecords.length; i += CHUNK) {
+          const batch = voyagerRecords.slice(i, i + CHUNK);
+          await new Promise((resolve) => {
+            srApiCall(
+              "/linkedin/ingest/connections",
+              { method: "POST", body: JSON.stringify({ connections: batch }) },
+              (res) => {
+                if (!res?.ok) console.warn("[StealthRole] voyager batch error:", res?.error);
+                resolve();
+              }
+            );
+          });
+          posted += batch.length;
+          sendProgress(posted, "scanning");
+        }
+        sendProgress(voyagerRecords.length, "done");
+        _autoScrapeInProgress = false;
+        return;
+      }
+      console.warn("[StealthRole] Voyager API did not work — falling back to DOM scroll");
+    } catch (e) {
+      console.error("[StealthRole] Voyager attempt errored:", e);
+    }
+
+    console.log("[StealthRole] starting DOM scroll fallback");
     const sendProgress = (count, status, error) => {
       try {
         chrome.runtime.sendMessage({ type: "PROGRESS", feature: "connections", count, status, error });
