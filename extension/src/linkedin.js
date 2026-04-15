@@ -81,6 +81,38 @@
     // ── Auto-sync: if we're on the connections page and background set
     //    sr_sync_task, start the automated scroll+scrape+batch flow.
     if (pageType === "connections") {
+      // Auto-diagnose the DOM structure after the page stabilizes — tells
+      // us what LinkedIn is actually rendering this week without any user action.
+      setTimeout(() => {
+        try {
+          const links = Array.from(document.querySelectorAll("a[href*='/in/']"))
+            .filter((a) => {
+              const href = a.href || "";
+              return /\/in\/[^\/]+\/?$/.test(href.split("?")[0]);
+            })
+            .slice(0, 5);
+          console.log(`[StealthRole-DIAG] found ${document.querySelectorAll("a[href*='/in/']").length} /in/ links on page`);
+          console.log(`[StealthRole-DIAG] probing first ${links.length} unique profile links:`);
+          links.forEach((link, idx) => {
+            console.log(`[StealthRole-DIAG] === Link ${idx} href=${link.href.split('?')[0]} ===`);
+            let el = link;
+            for (let i = 0; i < 8; i++) {
+              if (!el) break;
+              const tag = el.tagName;
+              const role = el.getAttribute && el.getAttribute("role");
+              const view = el.getAttribute && el.getAttribute("data-view-name");
+              const cls = (el.className || "").toString().slice(0, 50);
+              const kids = el.children ? el.children.length : 0;
+              const txt = (el.innerText || "").replace(/\n+/g, " | ").slice(0, 150);
+              console.log(`[StealthRole-DIAG]   L${i} ${tag}${role ? '[role='+role+']' : ''}${view ? '[dv='+view+']' : ''} cls="${cls}" kids=${kids} txt="${txt}"`);
+              el = el.parentElement;
+            }
+          });
+        } catch (e) {
+          console.warn("[StealthRole-DIAG] probe failed:", e);
+        }
+      }, 3000);
+
       try {
         chrome.storage.local.get("sr_sync_task", (data) => {
           const task = data.sr_sync_task;
@@ -530,8 +562,16 @@
       const linkedinId = href.split("/in/")[1]?.replace(/\/$/, "") || "";
       if (!linkedinId || seen.has(linkedinId)) return;
 
-      // Walk up to a plausible card container (li, article, or a wrapping div)
-      let card = link.closest("li") || link.closest("article") || link.parentElement;
+      // Walk up to a plausible card container. LinkedIn obfuscates all class
+      // names (generated hashes), so use semantic anchors: li, article, or
+      // elements with role="listitem" or a data-view-name attribute. Fall
+      // back to walking up 4 levels if none of those are present.
+      let card =
+        link.closest("li") ||
+        link.closest("[role='listitem']") ||
+        link.closest("[data-view-name]") ||
+        link.closest("article") ||
+        link.parentElement;
       for (let i = 0; card && i < 4 && card.tagName && card.children.length < 2; i++) {
         card = card.parentElement;
       }
