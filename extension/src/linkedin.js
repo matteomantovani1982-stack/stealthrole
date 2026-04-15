@@ -575,61 +575,74 @@
 
   // ── Collect currently-visible connection cards ──
   //
-  // Brute-force approach: iterate every element in the document, check if
-  // its innerText matches the single-card pattern (exactly one "Connected
-  // on", reasonable length). Dedupe by linkedin_id. Slower than a targeted
-  // walk but bulletproof — we can't miss cards by traversal mistakes.
+  // TreeWalker approach: find every text node in the document containing
+  // "Connected on". For each, walk up from its parent until we find an
+  // ancestor whose innerText has exactly one "Connected on" occurrence —
+  // that's the single-card boundary. Extract from there.
   //
-  // LinkedIn 2026 card innerText format:
-  //   "Name | Title@Company | headline | ... | Connected on DATE | Me"
+  // Why TreeWalker: can't miss a card if its text node exists. Works
+  // regardless of DOM nesting, class names, or layout quirks.
   function collectVisibleConnectionCards(existingSeen, debug) {
     const seen = existingSeen || new Set();
     const connections = [];
+    const capturedCardEls = new WeakSet();
 
-    const stats = { scanned: 0, withText: 0, hasConnected: 0, singleConnected: 0, hasProfileLink: 0, parsed: 0, deduped: 0 };
+    const stats = {
+      textNodesFound: 0,
+      walkedUp: 0,
+      singleMatchCards: 0,
+      hasProfileLink: 0,
+      parsed: 0,
+      deduped: 0,
+    };
 
-    const all = document.body.querySelectorAll("*");
-    stats.scanned = all.length;
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+    let node;
+    while ((node = walker.nextNode())) {
+      const v = node.nodeValue;
+      if (!v || v.indexOf("Connected on") === -1) continue;
+      stats.textNodesFound++;
 
-    for (const el of all) {
-      const tag = el.tagName;
-      if (tag === "SCRIPT" || tag === "STYLE" || tag === "svg" || tag === "SVG" || tag === "PATH") continue;
+      // Walk up from the text node's parent until we find the card boundary:
+      // the smallest ancestor whose innerText has exactly 1 "Connected on".
+      let el = node.parentElement;
+      for (let i = 0; el && i < 12; i++) {
+        stats.walkedUp++;
+        const text = (el.innerText || "").replace(/\s+/g, " ").trim();
+        if (!text || text.length > 1500) { el = el.parentElement; continue; }
+        const matches = text.match(/Connected on /gi);
+        if (!matches) { el = el.parentElement; continue; }
+        if (matches.length > 1) break; // went too far up — abort
+        // matches.length === 1 — this is the card
+        if (capturedCardEls.has(el)) break;
+        capturedCardEls.add(el);
+        stats.singleMatchCards++;
 
-      const text = (el.innerText || "").replace(/\s+/g, " ").trim();
-      if (!text || text.length < 20 || text.length > 800) continue;
-      stats.withText++;
+        const link = el.querySelector("a[href*='/in/']");
+        if (!link) break;
+        const href = (link.href || "").split("?")[0];
+        if (!/\/in\/[^/]+\/?$/.test(href)) break;
+        stats.hasProfileLink++;
 
-      // Must contain exactly one " Connected on "
-      const matches = text.match(/\|\s*Connected on /gi);
-      if (!matches) continue;
-      stats.hasConnected++;
-      if (matches.length !== 1) continue;
-      stats.singleConnected++;
+        const linkedinId = href.split("/in/")[1]?.replace(/\/$/, "") || "";
+        if (!linkedinId) break;
+        if (seen.has(linkedinId)) { stats.deduped++; break; }
 
-      // Must contain a real /in/ profile link
-      const link = el.querySelector("a[href*='/in/']");
-      if (!link) continue;
-      const href = (link.href || "").split("?")[0];
-      if (!/\/in\/[^/]+\/?$/.test(href)) continue;
-      stats.hasProfileLink++;
+        const parsed = parseCardText(text);
+        if (!parsed) break;
+        stats.parsed++;
 
-      const linkedinId = href.split("/in/")[1]?.replace(/\/$/, "") || "";
-      if (!linkedinId) continue;
-      if (seen.has(linkedinId)) { stats.deduped++; continue; }
-
-      const parsed = parseCardText(text);
-      if (!parsed) continue;
-      stats.parsed++;
-
-      seen.add(linkedinId);
-      connections.push({
-        linkedin_id: linkedinId,
-        linkedin_url: href,
-        full_name: parsed.fullName,
-        headline: parsed.headline,
-        current_title: parsed.currentTitle,
-        current_company: parsed.currentCompany,
-      });
+        seen.add(linkedinId);
+        connections.push({
+          linkedin_id: linkedinId,
+          linkedin_url: href,
+          full_name: parsed.fullName,
+          headline: parsed.headline,
+          current_title: parsed.currentTitle,
+          current_company: parsed.currentCompany,
+        });
+        break;
+      }
     }
 
     if (debug) {
@@ -642,13 +655,41 @@
   // ── Manual scrape (triggered from the ⚡ Import Connections overlay button)
   function scrapeConnections() {
     showToast("Scanning connections...");
-    const connections = collectVisibleConnectionCards();
+    // Debug=true so we see collect stats every time — critical while diagnosing
+    const connections = collectVisibleConnectionCards(new Set(), true);
     console.log("[StealthRole] scrapeConnections found " + connections.length + " unique profiles");
+    if (connections.length > 0) {
+      console.log("[StealthRole] first 3 parsed records:");
+      for (const c of connections.slice(0, 3)) {
+        console.log(`  ${c.full_name} | title="${c.current_title}" | company="${c.current_company}"`);
+      }
+    }
     if (connections.length === 0) { showToast("No connections found. Scroll down to load more."); return; }
     showToast("Importing " + connections.length + " connections...");
     srApiCall("/linkedin/ingest/connections", { method: "POST", body: JSON.stringify({ connections }) },
       (res) => { if (res?.ok) showToast("Imported " + (res.data?.created || 0) + " connections"); else showToast(res?.error || "Import failed"); });
   }
+
+  // Bridge via DOM custom events. User dispatches the event from the
+  // DevTools console (which runs in the page's main world). DOM events
+  // on window cross the content-script isolation boundary. CSP-safe.
+  //
+  // Console commands the user can paste:
+  //   dispatchEvent(new Event('sr-run-sync'))   → full auto-scroll sync
+  //   dispatchEvent(new Event('sr-run-scan'))   → one-off collect + stats
+  try {
+    window.addEventListener("sr-run-sync", () => {
+      console.log("[StealthRole] sr-run-sync received from console — starting");
+      autoScrapeConnections();
+    });
+    window.addEventListener("sr-run-scan", () => {
+      const results = collectVisibleConnectionCards(new Set(), true);
+      console.log("[StealthRole] sr-run-scan found", results.length, "cards");
+      for (const c of results.slice(0, 5)) {
+        console.log(`  ${c.full_name} | title="${c.current_title}" | company="${c.current_company}"`);
+      }
+    });
+  } catch (e) {}
 
   // ── Auto scroll helper: scroll to bottom until height stops growing
   async function scrollToBottom(maxDurationMs = 180000) {
