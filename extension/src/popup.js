@@ -1,133 +1,138 @@
-// StealthRole popup script
+// StealthRole popup script — v1.0.0
+// Expanded UI with stats grid, Sync connections orchestration, and live progress.
+// Keeps the legacy "Save this job" and "Auto-fill application" flows intact.
 
 const loginView = document.getElementById("login-view");
-const mainView = document.getElementById("main-view");
+const mainView  = document.getElementById("main-view");
 const loginError = document.getElementById("login-error");
 const loginBtn = document.getElementById("login-btn");
 const logoutBtn = document.getElementById("btn-logout");
-const importBtn = document.getElementById("btn-import");
+
+const syncBtn = document.getElementById("btn-sync-connections");
 const saveJobBtn = document.getElementById("btn-save-job");
 const autofillBtn = document.getElementById("btn-autofill");
 
-// Check login state on popup open
+const progressWrap = document.getElementById("progress-wrap");
+const progressLabel = document.getElementById("progress-label");
+const progressCount = document.getElementById("progress-count");
+const progressFill = document.getElementById("progress-fill");
+
+// ── Auth state ───────────────────────────────────────────────────────────────
 chrome.runtime.sendMessage({ type: "GET_TOKEN" }, async (res) => {
-  if (res.token) {
+  if (res && res.token) {
     showMainView();
     loadStats();
+    restoreSyncStatus();
   } else {
     showLoginView();
   }
 });
 
-function showLoginView() {
-  loginView.style.display = "block";
-  mainView.style.display = "none";
-}
+function showLoginView() { loginView.style.display = "block"; mainView.style.display = "none"; }
+function showMainView()  { loginView.style.display = "none";  mainView.style.display = "block"; }
 
-function showMainView() {
-  loginView.style.display = "none";
-  mainView.style.display = "block";
-}
-
-// Login
+// ── Login / logout ───────────────────────────────────────────────────────────
 loginBtn.addEventListener("click", () => {
   const email = document.getElementById("email").value.trim();
   const password = document.getElementById("password").value;
   if (!email || !password) return;
-
-  loginBtn.textContent = "...";
+  loginBtn.textContent = "…";
   loginError.style.display = "none";
 
-  chrome.runtime.sendMessage(
-    { type: "LOGIN", email, password },
-    (res) => {
-      loginBtn.textContent = "Sign in";
-      if (res.ok) {
-        document.getElementById("user-email").textContent = res.user?.email || "Connected";
-        showMainView();
-        loadStats();
-      } else {
-        loginError.textContent = res.error || "Login failed";
-        loginError.style.display = "block";
-      }
-    }
-  );
-});
-
-// Logout
-logoutBtn.addEventListener("click", () => {
-  chrome.runtime.sendMessage({ type: "LOGOUT" }, () => {
-    showLoginView();
-  });
-});
-
-// Import LinkedIn — send message to content script
-importBtn.addEventListener("click", async () => {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.url?.includes("linkedin.com")) {
-    alert("Navigate to LinkedIn first, then click Import.");
-    return;
-  }
-  // Detect page type and run appropriate action
-  const isProfile = tab.url.includes("/in/");
-  importBtn.textContent = isProfile ? "Saving profile..." : "Importing...";
-
-  const msgType = isProfile ? "IMPORT_CONNECTIONS" : "IMPORT_CONNECTIONS";
-  chrome.tabs.sendMessage(tab.id, { type: msgType }, (res) => {
-    importBtn.textContent = "Import LinkedIn Page";
-    if (isProfile) {
-      // Also trigger mutual connection scrape
-      chrome.tabs.sendMessage(tab.id, { type: "SCRAPE_MUTUALS" });
-    }
-    if (chrome.runtime.lastError) {
-      alert("Extension not loaded on this page. Refresh the LinkedIn page and try again.");
-      return;
-    }
-    if (res?.ok) {
+  chrome.runtime.sendMessage({ type: "LOGIN", email, password }, (res) => {
+    loginBtn.textContent = "Sign in";
+    if (res && res.ok) {
+      document.getElementById("user-email").textContent = res.user?.email || "Connected";
+      showMainView();
       loadStats();
+    } else {
+      loginError.textContent = (res && res.error) || "Login failed";
+      loginError.style.display = "block";
     }
   });
 });
 
-// Save job — send message to content script
+logoutBtn.addEventListener("click", () => {
+  chrome.runtime.sendMessage({ type: "LOGOUT" }, () => showLoginView());
+});
+
+// ── Sync connections ─────────────────────────────────────────────────────────
+syncBtn.addEventListener("click", () => {
+  setProgress({ status: "scanning", count: 0, indet: true });
+  syncBtn.disabled = true;
+  chrome.runtime.sendMessage({ type: "START_CONNECTIONS_SYNC" }, (res) => {
+    if (!res || !res.ok) {
+      setProgress({ status: "error", count: 0, error: (res && res.error) || "Failed to start" });
+      syncBtn.disabled = false;
+    }
+    // Success: tab opened. PROGRESS messages will stream in from the content script.
+  });
+});
+
+// Restore progress UI if a sync is already running when the popup opens
+function restoreSyncStatus() {
+  chrome.runtime.sendMessage({ type: "GET_SYNC_STATUS" }, (res) => {
+    const task = res && res.task;
+    if (task && task.type === "connections" && task.status === "scanning") {
+      setProgress({ status: "scanning", count: task.count || 0, indet: true });
+      syncBtn.disabled = true;
+    }
+  });
+}
+
+// Listen for PROGRESS broadcasts from background
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg?.type !== "PROGRESS" || msg.feature !== "connections") return;
+  setProgress(msg);
+  if (msg.status === "done" || msg.status === "error") {
+    syncBtn.disabled = false;
+    loadStats();
+  }
+});
+
+function setProgress({ status, count, error, indet }) {
+  if (!status) { progressWrap.classList.remove("active"); return; }
+  progressWrap.classList.add("active");
+  progressWrap.classList.toggle("progress-indet", !!indet);
+
+  if (status === "scanning") {
+    progressLabel.textContent = "Scanning connections…";
+    progressCount.textContent = String(count || 0);
+    // Indeterminate bar while scrolling; once counts exceed target estimate, show %
+    progressFill.style.width = indet ? "40%" : Math.min(100, ((count || 0) / 50)) + "%";
+  } else if (status === "done") {
+    progressLabel.textContent = "✓ Done";
+    progressCount.textContent = String(count || 0);
+    progressFill.style.width = "100%";
+    progressWrap.classList.remove("progress-indet");
+    setTimeout(() => progressWrap.classList.remove("active"), 3000);
+  } else if (status === "error") {
+    progressLabel.textContent = "⚠ " + (error || "Error");
+    progressCount.textContent = "";
+    progressFill.style.width = "0%";
+    progressWrap.classList.remove("progress-indet");
+  }
+}
+
+// ── Save current tab as a job (legacy flow — preserved) ─────────────────────
 saveJobBtn.addEventListener("click", async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   chrome.tabs.sendMessage(tab.id, { type: "SAVE_JOB" }, (res) => {
-    if (chrome.runtime.lastError) {
-      // No content script on this page — capture from tab info
-      saveJobFromTab(tab);
-      return;
-    }
-    if (res?.ok) {
-      alert(`Saved: ${res.company} — ${res.role}`);
-    } else {
-      saveJobFromTab(tab);
-    }
+    if (chrome.runtime.lastError) { saveJobFromTab(tab); return; }
+    if (res?.ok) alert(`Saved: ${res.company} — ${res.role}`);
+    else saveJobFromTab(tab);
   });
 });
 
 async function saveJobFromTab(tab) {
-  // Fallback: use page title + URL
   const title = tab.title || "";
   const url = tab.url || "";
-
-  // Try to extract company and role from page title
-  // Common patterns: "Role at Company" or "Company - Role"
-  let company = "";
-  let role = "";
+  let company = "", role = "";
   const atMatch = title.match(/^(.+?)\s+(?:at|@)\s+(.+?)(?:\s*[-|]|$)/i);
   const dashMatch = title.match(/^(.+?)\s*[-|]\s*(.+?)(?:\s*[-|]|$)/);
-
-  if (atMatch) {
-    role = atMatch[1].trim();
-    company = atMatch[2].trim();
-  } else if (dashMatch) {
-    company = dashMatch[1].trim();
-    role = dashMatch[2].trim();
-  } else {
-    company = title.substring(0, 100);
-    role = "Unknown Role";
-  }
+  if (atMatch) { role = atMatch[1].trim(); company = atMatch[2].trim(); }
+  else if (dashMatch) { company = dashMatch[1].trim(); role = dashMatch[2].trim(); }
+  else { company = title.substring(0, 100); role = "Unknown Role"; }
 
   chrome.runtime.sendMessage(
     {
@@ -136,8 +141,7 @@ async function saveJobFromTab(tab) {
       options: {
         method: "POST",
         body: JSON.stringify({
-          company,
-          role,
+          company, role,
           date_applied: new Date().toISOString(),
           source_channel: "job_board",
           url,
@@ -145,17 +149,13 @@ async function saveJobFromTab(tab) {
       },
     },
     (res) => {
-      if (res.ok) {
-        alert(`Saved: ${company} — ${role}`);
-        loadStats();
-      } else {
-        alert(res.error || "Failed to save");
-      }
+      if (res?.ok) { alert(`Saved: ${company} — ${role}`); loadStats(); }
+      else alert(res?.error || "Failed to save");
     }
   );
 }
 
-// Auto-fill — send message to content script
+// ── Auto-fill (legacy flow — preserved) ─────────────────────────────────────
 autofillBtn.addEventListener("click", async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const atsUrls = ["greenhouse.io", "lever.co", "workable.com", "ashbyhq.com"];
@@ -163,42 +163,31 @@ autofillBtn.addEventListener("click", async () => {
     alert("Navigate to a Greenhouse, Lever, Workable, or Ashby application form first.");
     return;
   }
-  autofillBtn.textContent = "Filling...";
+  autofillBtn.textContent = "Filling…";
   chrome.tabs.sendMessage(tab.id, { type: "AUTOFILL" }, (res) => {
-    autofillBtn.textContent = "Auto-Fill Application";
-    if (res?.ok) {
-      alert("Form filled! Review and submit.");
-    } else {
-      alert(res?.error || "Auto-fill failed — the form may not be detected");
-    }
+    autofillBtn.textContent = "⚡ Auto-fill application";
+    if (res?.ok) alert("Form filled! Review and submit.");
+    else alert(res?.error || "Auto-fill failed — the form may not be detected");
   });
 });
 
-// Load stats
+// ── Stats ────────────────────────────────────────────────────────────────────
 function loadStats() {
-  chrome.runtime.sendMessage(
-    { type: "API_REQUEST", path: "/linkedin/stats", options: {} },
-    (res) => {
-      if (res?.ok && res.data) {
-        document.getElementById("stat-connections").textContent = res.data.total_connections || 0;
-      }
+  chrome.runtime.sendMessage({ type: "API_REQUEST", path: "/linkedin/stats", options: {} }, (res) => {
+    if (res?.ok && res.data) {
+      document.getElementById("stat-connections").textContent = res.data.total_connections ?? 0;
+      const sub = document.getElementById("stat-connections-sub");
+      if (res.data.total_connections) sub.textContent = `${res.data.recruiters || 0} recruiters`;
     }
-  );
-  chrome.runtime.sendMessage(
-    { type: "API_REQUEST", path: "/applications/analytics", options: {} },
-    (res) => {
-      if (res?.ok && res.data) {
-        document.getElementById("stat-apps").textContent = res.data.total_applications || 0;
-      }
+  });
+  chrome.runtime.sendMessage({ type: "API_REQUEST", path: "/applications/analytics", options: {} }, (res) => {
+    if (res?.ok && res.data) {
+      document.getElementById("stat-apps").textContent = res.data.total_applications ?? 0;
     }
-  );
-  // Show user email
-  chrome.runtime.sendMessage(
-    { type: "API_REQUEST", path: "/auth/me", options: {} },
-    (res) => {
-      if (res?.ok && res.data) {
-        document.getElementById("user-email").textContent = res.data.email;
-      }
+  });
+  chrome.runtime.sendMessage({ type: "API_REQUEST", path: "/auth/me", options: {} }, (res) => {
+    if (res?.ok && res.data) {
+      document.getElementById("user-email").textContent = res.data.email;
     }
-  );
+  });
 }

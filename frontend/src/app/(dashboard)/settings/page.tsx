@@ -41,6 +41,8 @@ export default function SettingsPage() {
   const [message, setMessage] = useState("");
   const [linkedinUrl, setLinkedinUrl] = useState("");
   const [linkedinImporting, setLinkedinImporting] = useState(false);
+  const [extensionSync, setExtensionSync] = useState<{ status: "idle" | "scanning" | "done" | "error"; count: number; error?: string }>({ status: "idle", count: 0 });
+  const [extensionInstalled, setExtensionInstalled] = useState(false);
 
   useEffect(() => {
     const headers = { Authorization: `Bearer ${localStorage.getItem("sr_token")}` };
@@ -51,6 +53,41 @@ export default function SettingsPage() {
       fetch("/api/v1/linkedin/stats", { headers }).then((r) => r.ok ? r.json() : null).then(setLinkedinStats),
     ]).finally(() => setLoading(false));
   }, []);
+
+  // ── Chrome extension detection + live sync progress ───────────────────────
+  useEffect(() => {
+    // Extension injects <div id="sr-extension-marker" data-version="..."> on load
+    const check = () => {
+      const el = document.getElementById("sr-extension-marker");
+      setExtensionInstalled(!!el);
+    };
+    check();
+    const t = setTimeout(check, 800);
+
+    const handler = (event: MessageEvent) => {
+      if (event.source !== window || !event.data) return;
+      const msg = event.data;
+      if (msg.type === "SR_SYNC_PROGRESS" && msg.payload?.feature === "connections") {
+        const p = msg.payload;
+        setExtensionSync({ status: p.status, count: p.count || 0, error: p.error });
+        // On done, refresh the imported count
+        if (p.status === "done") {
+          const headers = { Authorization: `Bearer ${localStorage.getItem("sr_token")}` };
+          fetch("/api/v1/linkedin/stats", { headers }).then((r) => r.ok ? r.json() : null).then(setLinkedinStats);
+        }
+      }
+      if (msg.type === "SR_SYNC_STARTED") {
+        if (!msg.ok) setExtensionSync({ status: "error", count: 0, error: msg.error || "Could not start sync" });
+      }
+    };
+    window.addEventListener("message", handler);
+    return () => { clearTimeout(t); window.removeEventListener("message", handler); };
+  }, []);
+
+  function startExtensionSync() {
+    setExtensionSync({ status: "scanning", count: 0 });
+    window.postMessage({ type: "SR_START_CONNECTIONS_SYNC" }, "*");
+  }
 
   async function handleConnectEmail(provider: "gmail" | "outlook") {
     setConnectingEmail(provider);
@@ -237,6 +274,42 @@ export default function SettingsPage() {
               <span className="text-[rgba(255,255,255,0.4)] ml-2">({linkedinStats.recruiters} recruiters, {linkedinStats.unique_companies} companies)</span>
             </div>
           )}
+
+          {/* Sync via Chrome extension */}
+          <div className="mb-4">
+            <label className="text-sm font-medium text-[rgba(255,255,255,0.7)] block mb-2">Sync with Chrome extension</label>
+            <p className="text-[12px] text-[rgba(255,255,255,0.4)] mb-2">
+              The fastest way — opens LinkedIn, scrolls automatically, imports everything in batches. Runs in the background.
+            </p>
+            {!extensionInstalled && (
+              <div className="text-[12px] text-amber-400 mb-2">
+                Chrome extension not detected. <a href="https://stealthrole.com/extension" className="underline" target="_blank" rel="noreferrer">Install it</a>, reload this page, and try again.
+              </div>
+            )}
+            <button
+              onClick={startExtensionSync}
+              disabled={!extensionInstalled || extensionSync.status === "scanning"}
+              className="px-4 py-2.5 bg-[#7F8CFF] text-white text-sm font-semibold rounded-lg hover:bg-[#6B7CFF] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {extensionSync.status === "scanning" ? `Scanning… ${extensionSync.count}` : "🔄 Sync now via extension"}
+            </button>
+            {extensionSync.status === "scanning" && (
+              <div className="mt-3">
+                <div className="h-1.5 bg-[rgba(255,255,255,0.08)] rounded-full overflow-hidden">
+                  <div className="h-full bg-gradient-to-r from-[#5B6CFF] to-[#7F8CFF] animate-pulse" style={{ width: "40%" }} />
+                </div>
+                <div className="text-[11px] text-[rgba(255,255,255,0.5)] mt-1">
+                  {extensionSync.count} connections found so far — keep this tab open
+                </div>
+              </div>
+            )}
+            {extensionSync.status === "done" && (
+              <div className="text-[12px] text-green-400 mt-2">✓ Imported {extensionSync.count} connections</div>
+            )}
+            {extensionSync.status === "error" && (
+              <div className="text-[12px] text-red-400 mt-2">⚠ {extensionSync.error || "Sync failed"}</div>
+            )}
+          </div>
 
           {/* Direct URL import */}
           <div className="mb-4">

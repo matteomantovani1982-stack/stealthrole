@@ -1,11 +1,16 @@
 {
   "manifest_version": 3,
   "name": "StealthRole",
-  "version": "0.5.1",
-  "description": "AI Job Hunter — import LinkedIn connections, auto-fill applications, save jobs",
+  "version": "1.0.0",
+  "description": "Your LinkedIn intelligence hub — powered by StealthRole",
   "permissions": [
     "storage",
-    "activeTab"
+    "activeTab",
+    "tabs",
+    "scripting",
+    "alarms",
+    "notifications",
+    "cookies"
   ],
   "host_permissions": [
     "https://www.linkedin.com/*",
@@ -14,7 +19,9 @@
     "https://apply.workable.com/*",
     "https://jobs.ashbyhq.com/*",
     "https://api.stealthrole.com/*",
-    "https://stealthrole.com/*"
+    "https://stealthrole.com/*",
+    "http://localhost:8000/*",
+    "http://localhost:3000/*"
   ],
   "action": {
     "default_popup": "src/popup.html",

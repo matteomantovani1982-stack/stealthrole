@@ -78,6 +78,24 @@
       injectOverlayButton(pageType);
     }
 
+    // ── Auto-sync: if we're on the connections page and background set
+    //    sr_sync_task, start the automated scroll+scrape+batch flow.
+    if (pageType === "connections") {
+      try {
+        chrome.storage.local.get("sr_sync_task", (data) => {
+          const task = data.sr_sync_task;
+          if (task && task.type === "connections" && task.status !== "done") {
+            console.log("[StealthRole] sr_sync_task detected, starting autoScrapeConnections");
+            // Mark as scanning so a second tab doesn't double-run
+            chrome.storage.local.set({ sr_sync_task: { ...task, status: "scanning" } });
+            setTimeout(() => autoScrapeConnections(), 2000);
+          }
+        });
+      } catch (e) {
+        console.warn("[StealthRole] sr_sync_task check failed:", e);
+      }
+    }
+
     // Auto-save profile + scrape mutual connections on profile pages
     if (pageType === "profile") {
       waitForProfileName().then(() => {
@@ -463,16 +481,17 @@
     else if (type === "search") scrapeConnections();
   }
 
-  // ── Scrape connections list
+  // ── Collect currently-visible connection cards via DOM walk-up ──
   //
   // LinkedIn obfuscates and rotates its class names, so instead of relying on
   // fixed selectors we walk up from every profile link (/in/...) to the card
   // container and extract name + subtitle from the surrounding DOM. This keeps
   // working across redesigns of the connections, search, and mutual pages.
-  function scrapeConnections() {
-    showToast("Scanning connections...");
+  // Shared helper used by both the manual overlay button (scrapeConnections)
+  // and the auto-sync flow (autoScrapeConnections).
+  function collectVisibleConnectionCards(existingSeen) {
     const profileLinks = document.querySelectorAll("a[href*='/in/']");
-    const seen = new Set();
+    const seen = existingSeen || new Set();
     const connections = [];
 
     profileLinks.forEach((link) => {
@@ -493,18 +512,13 @@
       const nameSpan = link.querySelector("span[aria-hidden='true']");
       if (nameSpan && nameSpan.textContent) fullName = nameSpan.textContent.trim();
       if (!fullName) {
-        // Link text can contain the accessibility label "View <Name>'s profile"
         const raw = (link.textContent || "").trim().replace(/\s+/g, " ");
         fullName = raw.replace(/^view\s+/i, "").replace(/'s profile.*$/i, "").trim();
       }
-      // Reject obvious non-name strings (CTAs, counts, single words like "Message")
       if (!fullName || fullName.length < 3 || /^(message|connect|follow|view|pending)$/i.test(fullName)) return;
       if (fullName.length > 80) return;
 
-      // Subtitle / headline: first descendant text block that isn't the name and
-      // isn't a button/link. LinkedIn consistently renders the occupation in a
-      // sibling container with classes containing "subtitle" or "occupation",
-      // but we also accept any short text sibling as a fallback.
+      // Subtitle / headline
       let headline = "";
       const subtitleEl = card.querySelector(
         "[class*='subtitle'], [class*='occupation'], [class*='headline'], [class*='primary-subtitle']"
@@ -513,7 +527,6 @@
         headline = subtitleEl.textContent.trim().replace(/\s+/g, " ");
       }
       if (!headline) {
-        // Fallback: scan direct descendants for a non-link text node near the name
         const candidates = card.querySelectorAll("div, span, p");
         for (const el of candidates) {
           const t = (el.textContent || "").trim().replace(/\s+/g, " ");
@@ -540,11 +553,123 @@
       });
     });
 
+    return connections;
+  }
+
+  // ── Manual scrape (triggered from the ⚡ Import Connections overlay button)
+  function scrapeConnections() {
+    showToast("Scanning connections...");
+    const connections = collectVisibleConnectionCards();
     console.log("[StealthRole] scrapeConnections found " + connections.length + " unique profiles");
     if (connections.length === 0) { showToast("No connections found. Scroll down to load more."); return; }
     showToast("Importing " + connections.length + " connections...");
     srApiCall("/linkedin/ingest/connections", { method: "POST", body: JSON.stringify({ connections }) },
       (res) => { if (res?.ok) showToast("Imported " + (res.data?.created || 0) + " connections"); else showToast(res?.error || "Import failed"); });
+  }
+
+  // ── Auto scroll helper: scroll to bottom until height stops growing
+  async function scrollToBottom(maxDurationMs = 180000) {
+    const startedAt = Date.now();
+    return new Promise((resolve) => {
+      let lastHeight = 0;
+      let unchanged = 0;
+      const interval = setInterval(() => {
+        window.scrollTo(0, document.body.scrollHeight);
+        // Some LinkedIn pages use an inner scroll container — also push that
+        const scrollers = document.querySelectorAll("[class*='scaffold-finite-scroll']");
+        scrollers.forEach((s) => { s.scrollTop = s.scrollHeight; });
+
+        const h = document.body.scrollHeight;
+        if (h === lastHeight) {
+          unchanged++;
+          if (unchanged >= 3) { clearInterval(interval); resolve(); }
+        } else {
+          unchanged = 0;
+          lastHeight = h;
+        }
+        if (Date.now() - startedAt > maxDurationMs) {
+          clearInterval(interval);
+          resolve();
+        }
+      }, 1500);
+    });
+  }
+
+  // ── Auto-scrape: full sync flow triggered by background on /mynetwork/invite-connect/connections/
+  // Scrolls to the bottom loading all connections, then POSTs them to
+  // /linkedin/ingest/connections in chunks of 100, reporting PROGRESS between
+  // chunks so the popup and Settings page can show a live count.
+  async function autoScrapeConnections() {
+    console.log("[StealthRole] autoScrapeConnections starting");
+    const sendProgress = (count, status, error) => {
+      try {
+        chrome.runtime.sendMessage({ type: "PROGRESS", feature: "connections", count, status, error });
+      } catch {}
+    };
+    sendProgress(0, "scanning");
+
+    // Incremental scroll + collect so we don't drop early batches if LinkedIn
+    // virtualizes its list and removes off-screen DOM nodes.
+    const seen = new Set();
+    const allConnections = [];
+    const collectNow = () => {
+      const newOnes = collectVisibleConnectionCards(seen);
+      for (const c of newOnes) allConnections.push(c);
+    };
+
+    try {
+      collectNow();
+      sendProgress(allConnections.length, "scanning");
+
+      const startedAt = Date.now();
+      const MAX_MS = 180000; // 3 minutes hard cap
+      let lastHeight = 0;
+      let unchanged = 0;
+
+      while (Date.now() - startedAt < MAX_MS && unchanged < 4) {
+        window.scrollTo(0, document.body.scrollHeight);
+        const scrollers = document.querySelectorAll("[class*='scaffold-finite-scroll']");
+        scrollers.forEach((s) => { s.scrollTop = s.scrollHeight; });
+        await new Promise((r) => setTimeout(r, 1500));
+
+        collectNow();
+        sendProgress(allConnections.length, "scanning");
+
+        const h = document.body.scrollHeight;
+        if (h === lastHeight) unchanged++;
+        else { unchanged = 0; lastHeight = h; }
+      }
+
+      console.log("[StealthRole] autoScrapeConnections collected " + allConnections.length);
+      if (allConnections.length === 0) {
+        sendProgress(0, "error", "No connections found — are you on the connections page and logged in?");
+        return;
+      }
+
+      // POST in chunks of 100
+      const CHUNK = 100;
+      let posted = 0;
+      for (let i = 0; i < allConnections.length; i += CHUNK) {
+        const batch = allConnections.slice(i, i + CHUNK);
+        await new Promise((resolve) => {
+          srApiCall(
+            "/linkedin/ingest/connections",
+            { method: "POST", body: JSON.stringify({ connections: batch }) },
+            (res) => {
+              if (!res?.ok) console.warn("[StealthRole] batch import error:", res?.error);
+              resolve();
+            }
+          );
+        });
+        posted += batch.length;
+        sendProgress(posted, "scanning");
+      }
+
+      sendProgress(allConnections.length, "done");
+    } catch (e) {
+      console.error("[StealthRole] autoScrapeConnections error:", e);
+      sendProgress(allConnections.length, "error", String(e?.message || e));
+    }
   }
 
   // ── Async version of scrapeProfile (returns promise so mutual scrape waits for save)

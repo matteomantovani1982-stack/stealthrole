@@ -8,7 +8,7 @@
   // Set data-version so the web app can detect old extension versions.
   const marker = document.createElement("div");
   marker.id = "sr-extension-marker";
-  marker.dataset.version = "0.5.0";
+  marker.dataset.version = "1.0.0";
   marker.style.display = "none";
   document.body.appendChild(marker);
 
@@ -57,7 +57,30 @@
         chrome.storage.local.remove("sr_scan_target");
       } catch {}
     }
+
+    // Trigger the automated connections sync (opens a LinkedIn tab, scrolls,
+    // scrapes, batches to backend). Fired by the Settings page "Sync now via
+    // extension" button.
+    if (msg.type === "SR_START_CONNECTIONS_SYNC") {
+      try {
+        chrome.runtime.sendMessage({ type: "START_CONNECTIONS_SYNC" }, (res) => {
+          window.postMessage({ type: "SR_SYNC_STARTED", ok: !!(res && res.ok), error: res && res.error }, "*");
+        });
+      } catch (e) {
+        window.postMessage({ type: "SR_SYNC_STARTED", ok: false, error: String(e) }, "*");
+      }
+    }
   });
+
+  // Forward PROGRESS broadcasts from the background service worker back to
+  // the page so Settings can render a live count during sync.
+  try {
+    chrome.runtime.onMessage.addListener((msg) => {
+      if (msg && msg.type === "PROGRESS") {
+        window.postMessage({ type: "SR_SYNC_PROGRESS", payload: msg }, "*");
+      }
+    });
+  } catch {}
 
   // Forward storage updates back to the page so it can show progress
   try {
