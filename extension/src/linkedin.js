@@ -549,25 +549,38 @@
       if (!fullName || fullName.length < 3 || /^(message|connect|follow|view|pending)$/i.test(fullName)) return;
       if (fullName.length > 80) return;
 
-      // Subtitle / headline
+      // ── Subtitle / headline extraction ─
+      // LinkedIn rotates class names constantly, so don't rely on class
+      // patterns. Instead, collect every leaf text node inside the card and
+      // pick the one that looks like a job headline: not the name, not a
+      // date/timestamp, not a CTA button, not a degree label, not generic
+      // chrome text. Prefer longer strings containing " at " or " · " which
+      // are the canonical separators for "Title at Company" headlines.
       let headline = "";
-      const subtitleEl = card.querySelector(
-        "[class*='subtitle'], [class*='occupation'], [class*='headline'], [class*='primary-subtitle']"
-      );
-      if (subtitleEl && subtitleEl.textContent) {
-        headline = subtitleEl.textContent.trim().replace(/\s+/g, " ");
-      }
-      if (!headline) {
-        const candidates = card.querySelectorAll("div, span, p");
-        for (const el of candidates) {
-          const t = (el.textContent || "").trim().replace(/\s+/g, " ");
-          if (!t || t === fullName || t.length < 4 || t.length > 200) continue;
-          if (el.querySelector("a, button")) continue;
-          if (/^(message|connect|follow|pending|\d+(st|nd|rd) degree)$/i.test(t)) continue;
-          headline = t;
-          break;
+      const REJECT_RE = /^(message|connect|follow|pending|following|view|more|\d+(st|nd|rd|th)\b|connected (on|\d+)|\d+\s*(years?|months?|weeks?|days?|hours?|minutes?)\s*ago|invitation sent|add|remove)/i;
+      const DATE_RE = /^(\d{1,2}[\/\-\.]\d{1,2}|\w+\s+\d{1,2},?\s+\d{4})/i;
+      const candidates = [];
+      const walk = (node) => {
+        if (!node || node.nodeType !== 1) return;
+        if (node.tagName === "A" || node.tagName === "BUTTON") return; // skip links/buttons
+        if (!node.children || node.children.length === 0) {
+          const t = (node.textContent || "").trim().replace(/\s+/g, " ");
+          if (t && t !== fullName && t.length >= 4 && t.length <= 200 && !REJECT_RE.test(t) && !DATE_RE.test(t)) {
+            candidates.push(t);
+          }
+          return;
         }
-      }
+        for (const child of node.children) walk(child);
+      };
+      walk(card);
+      // Score candidates: those containing " at " or " · " are strongest,
+      // then longer ones. Pick the best.
+      candidates.sort((a, b) => {
+        const sa = (/ at | · /i.test(a) ? 100 : 0) + Math.min(a.length, 120);
+        const sb = (/ at | · /i.test(b) ? 100 : 0) + Math.min(b.length, 120);
+        return sb - sa;
+      });
+      if (candidates.length) headline = candidates[0];
 
       let currentTitle = headline, currentCompany = "";
       const atMatch = headline.match(/^(.+?)\s+(?:at|@)\s+(.+)/i);
@@ -696,32 +709,54 @@
       };
 
       const startedAt = Date.now();
-      const MAX_MS = 420000; // 7 minute hard cap
-      const IDLE_TICKS_LIMIT = 10;
+      const MAX_MS = 600000; // 10 minute hard cap
+      const IDLE_TICKS_LIMIT = 20; // ~60s of idle before giving up
       let idleTicks = 0;
       let tickNo = 0;
 
       while (Date.now() - startedAt < MAX_MS && idleTicks < IDLE_TICKS_LIMIT) {
         tickNo++;
         const scrollers = findScrollers();
+
+        // Telemetry snapshot of the primary scroller (largest scrollHeight)
+        let primary = scrollers[0] || document.documentElement;
+        for (const s of scrollers) {
+          if ((s.scrollHeight || 0) > (primary.scrollHeight || 0)) primary = s;
+        }
+        const beforeTop = primary.scrollTop;
+        const beforeHeight = primary.scrollHeight;
+
         for (const s of scrollers) {
           try { s.scrollTop = s.scrollHeight; } catch {}
           try { s.dispatchEvent(new Event("scroll", { bubbles: true })); } catch {}
         }
-        // Also push the window itself and dispatch a scroll event
         try { window.scrollTo(0, document.body.scrollHeight); } catch {}
         try { window.dispatchEvent(new Event("scroll", { bubbles: true })); } catch {}
 
+        // Every 4 idle ticks try tapping the keyboard End key — LinkedIn
+        // sometimes only loads more on keyboard-driven scroll events.
+        if (idleTicks > 0 && idleTicks % 4 === 0) {
+          try {
+            window.dispatchEvent(new KeyboardEvent("keydown", { key: "End", code: "End", keyCode: 35, bubbles: true }));
+            window.dispatchEvent(new KeyboardEvent("keyup", { key: "End", code: "End", keyCode: 35, bubbles: true }));
+          } catch {}
+        }
+
         clickShowMore();
 
-        await new Promise((r) => setTimeout(r, 2200));
+        await new Promise((r) => setTimeout(r, 2500));
 
         const newCount = collectNow();
         sendProgress(allConnections.length, "scanning");
 
+        const afterTop = primary.scrollTop;
+        const afterHeight = primary.scrollHeight;
+        const profileLinkCount = document.querySelectorAll("a[href*='/in/']").length;
+
         console.log(
           `[StealthRole] tick ${tickNo}: +${newCount} new (total ${allConnections.length}), ` +
-          `scrollers=${scrollers.length}, idleTicks=${idleTicks}`
+          `scrollTop ${beforeTop}→${afterTop}, scrollHeight ${beforeHeight}→${afterHeight}, ` +
+          `links=${profileLinkCount}, idle=${idleTicks}`
         );
 
         if (newCount === 0) idleTicks++;
