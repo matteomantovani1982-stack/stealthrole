@@ -1,6 +1,6 @@
 // StealthRole LinkedIn content script
 (() => {
-  console.log("%c[StealthRole v1.0.12] linkedin.js loaded", "color: #7F8CFF; font-weight: bold");
+  console.log("%c[StealthRole v1.0.13] linkedin.js loaded", "color: #7F8CFF; font-weight: bold");
 
   // API call: background script first, direct fetch fallback
   function srApiCall(path, options, callback) {
@@ -846,16 +846,51 @@
       };
 
       const startedAt = Date.now();
-      const MAX_MS = 600000; // 10 minute hard cap
-      const IDLE_TICKS_LIMIT = 20; // ~60s of idle before giving up
+      const MAX_MS = 1200000; // 20 minute hard cap
+      const IDLE_TICKS_LIMIT = 40; // ~3min of idle before giving up
       let idleTicks = 0;
       let tickNo = 0;
 
+      // Kick LinkedIn to load more using every scroll mechanism we know
+      const pushScroll = () => {
+        const scrollers = findScrollers();
+        for (const s of scrollers) {
+          try { s.scrollTop = s.scrollHeight; } catch {}
+          try { s.dispatchEvent(new Event("scroll", { bubbles: true })); } catch {}
+        }
+        try { window.scrollTo(0, document.body.scrollHeight); } catch {}
+        try { window.dispatchEvent(new Event("scroll", { bubbles: true })); } catch {}
+        // Real wheel event at the bottom of the viewport — some React virtual
+        // list libs only respond to actual wheel events, not scrollTop
+        try {
+          const wheel = new WheelEvent("wheel", {
+            deltaY: 2000,
+            deltaMode: 0,
+            bubbles: true,
+            cancelable: true,
+          });
+          (document.scrollingElement || document.documentElement).dispatchEvent(wheel);
+        } catch {}
+        // Scroll the last profile link into view — forces virtualization to
+        // render the next batch below it
+        try {
+          const links = document.querySelectorAll("a[href*='/in/']");
+          if (links.length > 0) {
+            links[links.length - 1].scrollIntoView({ block: "end", behavior: "instant" });
+          }
+        } catch {}
+        // Page Down key — LinkedIn bound scroll to arrow keys in some builds
+        try {
+          window.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", code: "PageDown", keyCode: 34, bubbles: true }));
+          window.dispatchEvent(new KeyboardEvent("keyup", { key: "PageDown", code: "PageDown", keyCode: 34, bubbles: true }));
+        } catch {}
+      };
+
       while (Date.now() - startedAt < MAX_MS && idleTicks < IDLE_TICKS_LIMIT) {
         tickNo++;
-        const scrollers = findScrollers();
 
         // Telemetry snapshot of the primary scroller (largest scrollHeight)
+        const scrollers = findScrollers();
         let primary = scrollers[0] || document.documentElement;
         for (const s of scrollers) {
           if ((s.scrollHeight || 0) > (primary.scrollHeight || 0)) primary = s;
@@ -863,25 +898,21 @@
         const beforeTop = primary.scrollTop;
         const beforeHeight = primary.scrollHeight;
 
-        for (const s of scrollers) {
-          try { s.scrollTop = s.scrollHeight; } catch {}
-          try { s.dispatchEvent(new Event("scroll", { bubbles: true })); } catch {}
-        }
-        try { window.scrollTo(0, document.body.scrollHeight); } catch {}
-        try { window.dispatchEvent(new Event("scroll", { bubbles: true })); } catch {}
+        pushScroll();
+        clickShowMore();
 
-        // Every 4 idle ticks try tapping the keyboard End key — LinkedIn
-        // sometimes only loads more on keyboard-driven scroll events.
-        if (idleTicks > 0 && idleTicks % 4 === 0) {
+        // When idle for 8+ ticks, try a harder nudge: scroll up 500px then
+        // back to bottom — sometimes breaks virtualization lockup
+        if (idleTicks >= 8 && idleTicks % 4 === 0) {
           try {
-            window.dispatchEvent(new KeyboardEvent("keydown", { key: "End", code: "End", keyCode: 35, bubbles: true }));
-            window.dispatchEvent(new KeyboardEvent("keyup", { key: "End", code: "End", keyCode: 35, bubbles: true }));
+            primary.scrollTop = Math.max(0, primary.scrollTop - 1500);
+            await new Promise((r) => setTimeout(r, 500));
+            primary.scrollTop = primary.scrollHeight;
           } catch {}
         }
 
-        clickShowMore();
-
-        await new Promise((r) => setTimeout(r, 2500));
+        // 4s between scrolls — slower than 2.5s to avoid LinkedIn rate limits
+        await new Promise((r) => setTimeout(r, 4000));
 
         const newCount = collectNow();
         sendProgress(allConnections.length, "scanning");
