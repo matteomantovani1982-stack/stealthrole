@@ -575,78 +575,67 @@
 
   // ── Collect currently-visible connection cards ──
   //
-  // LinkedIn 2026 connections page structure (reverse-engineered from a real
-  // DOM dump on production):
+  // Brute-force approach: iterate every element in the document, check if
+  // its innerText matches the single-card pattern (exactly one "Connected
+  // on", reasonable length). Dedupe by linkedin_id. Slower than a targeted
+  // walk but bulletproof — we can't miss cards by traversal mistakes.
   //
-  //   Card innerText = "Name | Title@Company | headline | ... | Connected on DATE | Me"
-  //
-  //   All obfuscated divs, no li, no role="listitem", no data-view-name.
-  //   "Connected on DATE" is the unique marker found only inside connection cards.
-  //
-  // Strategy: DOWN-walk the document tree from body. Stop at any element
-  // whose innerText matches the single-card pattern (exactly one "Connected
-  // on", length under 800). That element IS the card. Otherwise recurse
-  // into its children. Skip descendants once we've captured a card, because
-  // its children are inside the card we just logged.
-  //
-  // Why down-walk beats up-walk: an up-walk from a profile link can traverse
-  // into a multi-card container and reject the link. Down-walk correctly
-  // isolates each card regardless of how deeply profile links are nested.
-  function collectVisibleConnectionCards(existingSeen) {
+  // LinkedIn 2026 card innerText format:
+  //   "Name | Title@Company | headline | ... | Connected on DATE | Me"
+  function collectVisibleConnectionCards(existingSeen, debug) {
     const seen = existingSeen || new Set();
     const connections = [];
 
-    function visit(el) {
-      if (!el || el.nodeType !== 1) return;
-      // Avoid scripts/styles
+    const stats = { scanned: 0, withText: 0, hasConnected: 0, singleConnected: 0, hasProfileLink: 0, parsed: 0, deduped: 0 };
+
+    const all = document.body.querySelectorAll("*");
+    stats.scanned = all.length;
+
+    for (const el of all) {
       const tag = el.tagName;
-      if (tag === "SCRIPT" || tag === "STYLE" || tag === "SVG") return;
+      if (tag === "SCRIPT" || tag === "STYLE" || tag === "svg" || tag === "SVG" || tag === "PATH") continue;
 
       const text = (el.innerText || "").replace(/\s+/g, " ").trim();
-      if (!text) return;
+      if (!text || text.length < 20 || text.length > 800) continue;
+      stats.withText++;
 
+      // Must contain exactly one " Connected on "
       const matches = text.match(/\|\s*Connected on /gi);
-      const count = matches ? matches.length : 0;
+      if (!matches) continue;
+      stats.hasConnected++;
+      if (matches.length !== 1) continue;
+      stats.singleConnected++;
 
-      if (count === 1 && text.length < 800) {
-        // Single card. Must contain a real profile link.
-        const link = el.querySelector("a[href*='/in/']");
-        if (link) {
-          const href = (link.href || "").split("?")[0];
-          if (/\/in\/[^/]+\/?$/.test(href)) {
-            const linkedinId = href.split("/in/")[1]?.replace(/\/$/, "") || "";
-            if (linkedinId && !seen.has(linkedinId)) {
-              const parsed = parseCardText(text);
-              if (parsed) {
-                seen.add(linkedinId);
-                connections.push({
-                  linkedin_id: linkedinId,
-                  linkedin_url: href,
-                  full_name: parsed.fullName,
-                  headline: parsed.headline,
-                  current_title: parsed.currentTitle,
-                  current_company: parsed.currentCompany,
-                });
-              }
-            }
-          }
-        }
-        return; // captured — no need to recurse into descendants
-      }
+      // Must contain a real /in/ profile link
+      const link = el.querySelector("a[href*='/in/']");
+      if (!link) continue;
+      const href = (link.href || "").split("?")[0];
+      if (!/\/in\/[^/]+\/?$/.test(href)) continue;
+      stats.hasProfileLink++;
 
-      if (count === 0 && text.length > 0) {
-        // No "Connected on" at this level — but a descendant might be a card.
-        // Only recurse if text is "interesting" (nonempty) to avoid wasted
-        // traversal into chrome / ads.
-        for (const child of el.children) visit(child);
-        return;
-      }
+      const linkedinId = href.split("/in/")[1]?.replace(/\/$/, "") || "";
+      if (!linkedinId) continue;
+      if (seen.has(linkedinId)) { stats.deduped++; continue; }
 
-      // count > 1: multi-card container. Recurse into children.
-      for (const child of el.children) visit(child);
+      const parsed = parseCardText(text);
+      if (!parsed) continue;
+      stats.parsed++;
+
+      seen.add(linkedinId);
+      connections.push({
+        linkedin_id: linkedinId,
+        linkedin_url: href,
+        full_name: parsed.fullName,
+        headline: parsed.headline,
+        current_title: parsed.currentTitle,
+        current_company: parsed.currentCompany,
+      });
     }
 
-    visit(document.body);
+    if (debug) {
+      console.log("[StealthRole] collect stats:", JSON.stringify(stats), "returned:", connections.length);
+    }
+
     return connections;
   }
 
@@ -721,8 +710,11 @@
 
     const seen = new Set();
     const allConnections = [];
+    let tickCounter = 0;
     const collectNow = () => {
-      const newOnes = collectVisibleConnectionCards(seen);
+      tickCounter++;
+      // Debug stats on first tick so we can see where records are being dropped
+      const newOnes = collectVisibleConnectionCards(seen, tickCounter === 1);
       for (const c of newOnes) allConnections.push(c);
       return newOnes.length;
     };
