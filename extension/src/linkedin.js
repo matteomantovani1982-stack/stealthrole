@@ -1,6 +1,6 @@
 // StealthRole LinkedIn content script
 (() => {
-  console.log("%c[StealthRole v1.0.14] linkedin.js loaded", "color: #7F8CFF; font-weight: bold");
+  console.log("%c[StealthRole v1.0.15] linkedin.js loaded", "color: #7F8CFF; font-weight: bold");
 
   // API call: background script first, direct fetch fallback
   function srApiCall(path, options, callback) {
@@ -788,34 +788,61 @@
       "x-li-lang": "en_US",
     };
 
-    // Try multiple endpoint variants — LinkedIn has shipped a few over the
-    // years and they rotate the shape. First one that returns a usable
-    // payload wins.
-    const endpointBuilders = [
-      (start, count) =>
-        `https://www.linkedin.com/voyager/api/relationships/dash/connections?count=${count}&q=search&sortType=RECENTLY_ADDED&start=${start}`,
-      (start, count) =>
-        `https://www.linkedin.com/voyager/api/relationships/connections?count=${count}&start=${start}`,
-      (start, count) =>
-        `https://www.linkedin.com/voyager/api/relationships/dash/connections?count=${count}&q=search&start=${start}`,
+    // Try multiple endpoint variants. The critical parameter is decorationId
+    // which tells LinkedIn's API to INCLUDE the profile details inline in
+    // the response rather than returning bare entity URNs.
+    // Decoration IDs change over time — try several known ones.
+    const DECORATIONS = [
+      "com.linkedin.voyager.dash.deco.web.mynetwork.ConnectionListWithProfile-18",
+      "com.linkedin.voyager.dash.deco.web.mynetwork.ConnectionListWithProfile-17",
+      "com.linkedin.voyager.dash.deco.web.mynetwork.ConnectionListWithProfile-16",
+      "com.linkedin.voyager.dash.deco.web.mynetwork.ConnectionListWithProfile-15",
     ];
+    const endpointBuilders = [];
+    for (const deco of DECORATIONS) {
+      endpointBuilders.push((start, count) =>
+        `https://www.linkedin.com/voyager/api/relationships/dash/connections?decorationId=${deco}&count=${count}&q=search&sortType=RECENTLY_ADDED&start=${start}`
+      );
+    }
+    // Fallback without decoration (returns bare refs, but we log the shape anyway)
+    endpointBuilders.push((start, count) =>
+      `https://www.linkedin.com/voyager/api/relationships/dash/connections?count=${count}&q=search&sortType=RECENTLY_ADDED&start=${start}`
+    );
+    // Legacy non-dash endpoint
+    endpointBuilders.push((start, count) =>
+      `https://www.linkedin.com/voyager/api/relationships/connections?count=${count}&start=${start}`
+    );
 
-    for (const build of endpointBuilders) {
+    for (let i = 0; i < endpointBuilders.length; i++) {
+      const build = endpointBuilders[i];
       const testUrl = build(0, 10);
       try {
         const res = await fetch(testUrl, { headers, credentials: "include" });
-        console.log("[StealthRole] voyager probe:", testUrl.slice(0, 80), "→", res.status);
+        console.log(`[StealthRole] voyager probe ${i}:`, testUrl.slice(0, 110), "→", res.status);
         if (!res.ok) continue;
         const data = await res.json();
-        const firstPageElements = data.elements || data.included || [];
-        if (!firstPageElements.length) {
-          console.log("[StealthRole] voyager: endpoint returned empty, trying next");
+
+        // Log the top-level keys and a sample to diagnose shape
+        const topKeys = Object.keys(data || {});
+        console.log(`[StealthRole] voyager probe ${i}: top keys =`, topKeys.join(", "));
+        if (data.paging) console.log(`[StealthRole] voyager probe ${i}: paging =`, JSON.stringify(data.paging));
+        if (data.elements && data.elements.length) {
+          console.log(`[StealthRole] voyager probe ${i}: elements[0] sample =`, JSON.stringify(data.elements[0]).slice(0, 400));
+        }
+        if (data.included && data.included.length) {
+          console.log(`[StealthRole] voyager probe ${i}: included[0] sample =`, JSON.stringify(data.included[0]).slice(0, 400));
+        }
+
+        const extracted = extractVoyagerRecords(data);
+        console.log(`[StealthRole] voyager probe ${i}: extractor returned`, extracted.length, "records");
+        if (extracted.length === 0) {
+          console.log(`[StealthRole] voyager probe ${i}: empty — trying next endpoint`);
           continue;
         }
-        // This endpoint works! Now paginate through it.
+        // This endpoint works! Paginate through it.
         return await paginateVoyager(build, headers, data);
       } catch (e) {
-        console.warn("[StealthRole] voyager probe failed:", e.message);
+        console.warn(`[StealthRole] voyager probe ${i} failed:`, e.message);
       }
     }
     console.warn("[StealthRole] voyager: no endpoint worked");
@@ -862,44 +889,89 @@
   }
 
   // Extract connection records from a voyager API response. The response
-  // structure varies: sometimes `elements` contains the connection rows with
-  // embedded profile data; sometimes `included` is a flat list that needs
-  // joining. Best effort: scan both for profile-shaped objects.
+  // structure varies across LinkedIn API versions. We recursively scan every
+  // object and try several known field patterns:
+  //   - publicIdentifier + firstName/lastName (classic)
+  //   - miniProfile.publicIdentifier (nested under a relationship row)
+  //   - profile.publicIdentifier
+  //   - entityUrn of type "fs_miniProfile:(slug)"
   function extractVoyagerRecords(data) {
     const results = [];
     const seen = new Set();
 
+    const addResult = (slug, first, last, headline) => {
+      if (!slug) return;
+      if (seen.has(slug)) return;
+      seen.add(slug);
+      const fullName = [first, last].filter(Boolean).join(" ").trim();
+      if (!fullName) return;
+      const hl = headline || "";
+      let currentTitle = hl;
+      let currentCompany = "";
+      const m = hl.match(/^(.+?)\s+(?:at|@)\s+(.+)$/i);
+      if (m) { currentTitle = m[1].trim(); currentCompany = m[2].trim(); }
+      results.push({
+        linkedin_id: slug,
+        linkedin_url: `https://www.linkedin.com/in/${slug}/`,
+        full_name: fullName,
+        headline: hl,
+        current_title: currentTitle,
+        current_company: currentCompany,
+      });
+    };
+
     const visit = (obj) => {
       if (!obj || typeof obj !== "object") return;
-      // A profile-shaped object has a public identifier + first/last name
+
+      // Pattern 1: direct profile object
       if (obj.publicIdentifier && (obj.firstName || obj.lastName)) {
-        const slug = obj.publicIdentifier;
-        if (!seen.has(slug)) {
-          seen.add(slug);
-          const fullName = [obj.firstName, obj.lastName].filter(Boolean).join(" ").trim();
-          // Headline + company come from various fields across API versions
-          const headline = obj.headline || obj.occupation || "";
-          // Extract company from headline (same logic as DOM parse)
-          let currentTitle = headline;
-          let currentCompany = "";
-          const m = headline.match(/^(.+?)\s+(?:at|@)\s+(.+)$/i);
-          if (m) { currentTitle = m[1].trim(); currentCompany = m[2].trim(); }
-          results.push({
-            linkedin_id: slug,
-            linkedin_url: `https://www.linkedin.com/in/${slug}/`,
-            full_name: fullName,
-            headline,
-            current_title: currentTitle,
-            current_company: currentCompany,
-          });
+        addResult(obj.publicIdentifier, obj.firstName, obj.lastName, obj.headline || obj.occupation || "");
+      }
+      // Pattern 2: miniProfile nested
+      if (obj.miniProfile && obj.miniProfile.publicIdentifier) {
+        addResult(
+          obj.miniProfile.publicIdentifier,
+          obj.miniProfile.firstName,
+          obj.miniProfile.lastName,
+          obj.miniProfile.occupation || obj.headline || ""
+        );
+      }
+      // Pattern 3: profile nested
+      if (obj.profile && obj.profile.publicIdentifier) {
+        addResult(
+          obj.profile.publicIdentifier,
+          obj.profile.firstName,
+          obj.profile.lastName,
+          obj.profile.headline || obj.profile.occupation || ""
+        );
+      }
+      // Pattern 4: connectedMember nested (dash model)
+      if (obj.connectedMember) {
+        if (obj.connectedMember.publicIdentifier) {
+          addResult(
+            obj.connectedMember.publicIdentifier,
+            obj.connectedMember.firstName,
+            obj.connectedMember.lastName,
+            obj.connectedMember.headline || ""
+          );
         }
       }
+      // Pattern 5: URN extraction — entityUrn like "urn:li:fs_miniProfile:<slug>"
+      // or "urn:li:fsd_profile:<slug>"
+      if (typeof obj.entityUrn === "string") {
+        const m = obj.entityUrn.match(/urn:li:(?:fs_miniProfile|fsd_profile|dash_profile):([^,)]+)/i);
+        if (m && obj.firstName && (obj.lastName || obj.headline)) {
+          // Only capture if we also have name fields — URN alone isn't useful
+          // (it gives us the member ID, not the vanity slug)
+        }
+      }
+
       // Recurse
       if (Array.isArray(obj)) {
         for (const item of obj) visit(item);
       } else {
         for (const key in obj) {
-          if (typeof obj[key] === "object") visit(obj[key]);
+          if (obj[key] && typeof obj[key] === "object") visit(obj[key]);
         }
       }
     };
