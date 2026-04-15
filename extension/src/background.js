@@ -11,6 +11,11 @@ setInterval(() => { chrome.storage.local.get("sr_keepalive"); }, KEEPALIVE_INTER
 // ── Install / update ─────────────────────────────────────────────────────────
 chrome.runtime.onInstalled.addListener(() => {
   console.log("[StealthRole] Extension installed/updated");
+  // Clear any stale sync task from a previous install — otherwise a crashed
+  // prior run could leave sr_sync_task in storage, causing the next visit
+  // to the LinkedIn connections page to auto-re-trigger a scrape that the
+  // user never asked for.
+  try { chrome.storage.local.remove("sr_sync_task"); } catch {}
   // Recurring 6-hour connections sync. The alarm only fires — the sync
   // itself still requires an authenticated token, so first-time installs
   // won't do anything until the user has logged in to stealthrole.com.

@@ -599,6 +599,18 @@
   // Scrolls to the bottom loading all connections, then POSTs them to
   // /linkedin/ingest/connections in chunks of 100, reporting PROGRESS between
   // chunks so the popup and Settings page can show a live count.
+  //
+  // Robustness notes:
+  // - LinkedIn's connections list is VIRTUALIZED: only ~40-60 rows live in
+  //   the DOM at any time; older rows are removed as you scroll past. We
+  //   therefore must call collectNow() between every scroll increment and
+  //   accumulate into a persistent Set so we don't lose early batches.
+  // - The outer page height doesn't always grow — sometimes an inner
+  //   scroller is the one that scrolls. We push both window and any
+  //   scaffold-scroll element. We also click any visible "Show more"
+  //   button which LinkedIn sometimes renders instead of infinite scroll.
+  // - We loop for up to 6 minutes or until 6 consecutive idle ticks
+  //   (no new profiles found) — whichever comes first.
   async function autoScrapeConnections() {
     console.log("[StealthRole] autoScrapeConnections starting");
     const sendProgress = (count, status, error) => {
@@ -608,13 +620,26 @@
     };
     sendProgress(0, "scanning");
 
-    // Incremental scroll + collect so we don't drop early batches if LinkedIn
-    // virtualizes its list and removes off-screen DOM nodes.
     const seen = new Set();
     const allConnections = [];
     const collectNow = () => {
       const newOnes = collectVisibleConnectionCards(seen);
       for (const c of newOnes) allConnections.push(c);
+      return newOnes.length;
+    };
+
+    const clickShowMore = () => {
+      // Look for any visible "Show more" button in the connections container.
+      // LinkedIn rotates between infinite scroll and a Show-more button.
+      const buttons = document.querySelectorAll("button, a[role='button']");
+      for (const b of buttons) {
+        if (!b.offsetParent) continue;
+        const t = (b.textContent || "").trim().toLowerCase();
+        if (/^show (more|\d+ more)/.test(t) || t === "load more") {
+          try { b.click(); return true; } catch {}
+        }
+      }
+      return false;
     };
 
     try {
@@ -622,22 +647,28 @@
       sendProgress(allConnections.length, "scanning");
 
       const startedAt = Date.now();
-      const MAX_MS = 180000; // 3 minutes hard cap
-      let lastHeight = 0;
-      let unchanged = 0;
+      const MAX_MS = 360000; // 6 minute hard cap
+      const IDLE_TICKS_LIMIT = 6;
+      let idleTicks = 0;
 
-      while (Date.now() - startedAt < MAX_MS && unchanged < 4) {
+      while (Date.now() - startedAt < MAX_MS && idleTicks < IDLE_TICKS_LIMIT) {
+        // Scroll the outer window
         window.scrollTo(0, document.body.scrollHeight);
-        const scrollers = document.querySelectorAll("[class*='scaffold-finite-scroll']");
-        scrollers.forEach((s) => { s.scrollTop = s.scrollHeight; });
-        await new Promise((r) => setTimeout(r, 1500));
+        // Scroll any inner virtualized container
+        const scrollers = document.querySelectorAll(
+          "[class*='scaffold-finite-scroll'], [class*='scrollable'], main, [role='main']"
+        );
+        scrollers.forEach((s) => { try { s.scrollTop = s.scrollHeight; } catch {} });
+        // Also try clicking a Show more button (no-op if none visible)
+        clickShowMore();
 
-        collectNow();
+        await new Promise((r) => setTimeout(r, 1800));
+
+        const newCount = collectNow();
         sendProgress(allConnections.length, "scanning");
 
-        const h = document.body.scrollHeight;
-        if (h === lastHeight) unchanged++;
-        else { unchanged = 0; lastHeight = h; }
+        if (newCount === 0) idleTicks++;
+        else idleTicks = 0;
       }
 
       console.log("[StealthRole] autoScrapeConnections collected " + allConnections.length);
