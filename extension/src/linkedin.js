@@ -1,6 +1,6 @@
 // StealthRole LinkedIn content script
 (() => {
-  console.log("%c[StealthRole v1.0.15] linkedin.js loaded", "color: #7F8CFF; font-weight: bold");
+  console.log("%c[StealthRole v1.0.16] linkedin.js loaded", "color: #7F8CFF; font-weight: bold");
 
   // API call: background script first, direct fetch fallback
   function srApiCall(path, options, callback) {
@@ -81,50 +81,15 @@
     }
 
     // ── Auto-sync: if we're on the connections page and background set
-    //    sr_sync_task, start the automated scroll+scrape+batch flow.
+    //    sr_sync_task, start the automated sync (Voyager API → DOM fallback).
     if (pageType === "connections") {
-      // Auto-diagnose the DOM structure after the page stabilizes — tells
-      // us what LinkedIn is actually rendering this week without any user action.
-      setTimeout(() => {
-        try {
-          const links = Array.from(document.querySelectorAll("a[href*='/in/']"))
-            .filter((a) => {
-              const href = a.href || "";
-              return /\/in\/[^\/]+\/?$/.test(href.split("?")[0]);
-            })
-            .slice(0, 5);
-          console.log(`[StealthRole-DIAG] found ${document.querySelectorAll("a[href*='/in/']").length} /in/ links on page`);
-          console.log(`[StealthRole-DIAG] probing first ${links.length} unique profile links:`);
-          links.forEach((link, idx) => {
-            console.log(`[StealthRole-DIAG] === Link ${idx} href=${link.href.split('?')[0]} ===`);
-            let el = link;
-            for (let i = 0; i < 8; i++) {
-              if (!el) break;
-              const tag = el.tagName;
-              const role = el.getAttribute && el.getAttribute("role");
-              const view = el.getAttribute && el.getAttribute("data-view-name");
-              const cls = (el.className || "").toString().slice(0, 50);
-              const kids = el.children ? el.children.length : 0;
-              const txt = (el.innerText || "").replace(/\n+/g, " | ").slice(0, 150);
-              console.log(`[StealthRole-DIAG]   L${i} ${tag}${role ? '[role='+role+']' : ''}${view ? '[dv='+view+']' : ''} cls="${cls}" kids=${kids} txt="${txt}"`);
-              el = el.parentElement;
-            }
-          });
-        } catch (e) {
-          console.warn("[StealthRole-DIAG] probe failed:", e);
-        }
-      }, 3000);
-
       try {
         chrome.storage.local.get("sr_sync_task", (data) => {
           const task = data.sr_sync_task;
-          console.log("[StealthRole] connections page — sr_sync_task =", JSON.stringify(task));
           if (task && task.type === "connections" && task.status !== "done") {
-            console.log("[StealthRole] sr_sync_task detected, starting autoScrapeConnections in 2s");
+            console.log("[StealthRole] sr_sync_task detected, starting auto-sync in 2s");
             chrome.storage.local.set({ sr_sync_task: { ...task, status: "scanning" } });
             setTimeout(() => autoScrapeConnections(), 2000);
-          } else {
-            console.log("[StealthRole] no active sync task — click the blue 🔄 Sync ALL button to start");
           }
         });
       } catch (e) {
