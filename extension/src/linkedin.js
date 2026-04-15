@@ -544,14 +544,31 @@
     else if (type === "search") scrapeConnections();
   }
 
-  // ── Collect currently-visible connection cards via DOM walk-up ──
+  // ── Collect currently-visible connection cards ──
   //
-  // LinkedIn obfuscates and rotates its class names, so instead of relying on
-  // fixed selectors we walk up from every profile link (/in/...) to the card
-  // container and extract name + subtitle from the surrounding DOM. This keeps
-  // working across redesigns of the connections, search, and mutual pages.
-  // Shared helper used by both the manual overlay button (scrapeConnections)
-  // and the auto-sync flow (autoScrapeConnections).
+  // LinkedIn 2026 connections page structure (reverse-engineered from the
+  // DOM diagnostic dump run on a real account):
+  //
+  //   Card container = first div ancestor of a profile link whose innerText
+  //   contains " Connected on ". Card innerText follows this exact pattern:
+  //
+  //     "Name | Headline piece 1 | Headline piece 2 | ... | Connected on DATE | Me"
+  //
+  //   where "| Me" is the Message button label. No li, no role="listitem",
+  //   no data-view-name — all obfuscated divs with generated class names.
+  //
+  // Examples actually observed:
+  //   "Rupert Searle | Adviser to Entrepreneurs | Private Investor | Venture
+  //    Capital | Family Office | Connected on April 9, 2026 | Me"
+  //   "Chiara Manzini | Management Consultant @ Accenture | Aerospace &
+  //    Defence | Ex-Amazon | Connected on April 12, 2026 | Me"
+  //
+  // We parse by:
+  //   1. Splitting innerText on " | "
+  //   2. First part = name
+  //   3. Finding the "Connected on" index and everything between [1, that) = headline pieces
+  //   4. Joining headline pieces with " · "
+  //   5. Extracting "Title @ Company" or "Title at Company" from the first piece
   function collectVisibleConnectionCards(existingSeen) {
     const profileLinks = document.querySelectorAll("a[href*='/in/']");
     const seen = existingSeen || new Set();
@@ -559,72 +576,60 @@
 
     profileLinks.forEach((link) => {
       const href = (link.href || "").split("?")[0];
+      // Must be a real profile link, not /in/me, /in/search, etc.
+      if (!/\/in\/[^/]+\/?$/.test(href)) return;
       const linkedinId = href.split("/in/")[1]?.replace(/\/$/, "") || "";
       if (!linkedinId || seen.has(linkedinId)) return;
 
-      // Walk up to a plausible card container. LinkedIn obfuscates all class
-      // names (generated hashes), so use semantic anchors: li, article, or
-      // elements with role="listitem" or a data-view-name attribute. Fall
-      // back to walking up 4 levels if none of those are present.
-      let card =
-        link.closest("li") ||
-        link.closest("[role='listitem']") ||
-        link.closest("[data-view-name]") ||
-        link.closest("article") ||
-        link.parentElement;
-      for (let i = 0; card && i < 4 && card.tagName && card.children.length < 2; i++) {
-        card = card.parentElement;
-      }
-      if (!card) return;
-
-      // Name: prefer aria-hidden span inside the profile link (LinkedIn's
-      // canonical name marker), fall back to the link's own visible text.
-      let fullName = "";
-      const nameSpan = link.querySelector("span[aria-hidden='true']");
-      if (nameSpan && nameSpan.textContent) fullName = nameSpan.textContent.trim();
-      if (!fullName) {
-        const raw = (link.textContent || "").trim().replace(/\s+/g, " ");
-        fullName = raw.replace(/^view\s+/i, "").replace(/'s profile.*$/i, "").trim();
-      }
-      if (!fullName || fullName.length < 3 || /^(message|connect|follow|view|pending)$/i.test(fullName)) return;
-      if (fullName.length > 80) return;
-
-      // ── Subtitle / headline extraction ─
-      // LinkedIn rotates class names constantly, so don't rely on class
-      // patterns. Instead, collect every leaf text node inside the card and
-      // pick the one that looks like a job headline: not the name, not a
-      // date/timestamp, not a CTA button, not a degree label, not generic
-      // chrome text. Prefer longer strings containing " at " or " · " which
-      // are the canonical separators for "Title at Company" headlines.
-      let headline = "";
-      const REJECT_RE = /^(message|connect|follow|pending|following|view|more|\d+(st|nd|rd|th)\b|connected (on|\d+)|\d+\s*(years?|months?|weeks?|days?|hours?|minutes?)\s*ago|invitation sent|add|remove)/i;
-      const DATE_RE = /^(\d{1,2}[\/\-\.]\d{1,2}|\w+\s+\d{1,2},?\s+\d{4})/i;
-      const candidates = [];
-      const walk = (node) => {
-        if (!node || node.nodeType !== 1) return;
-        if (node.tagName === "A" || node.tagName === "BUTTON") return; // skip links/buttons
-        if (!node.children || node.children.length === 0) {
-          const t = (node.textContent || "").trim().replace(/\s+/g, " ");
-          if (t && t !== fullName && t.length >= 4 && t.length <= 200 && !REJECT_RE.test(t) && !DATE_RE.test(t)) {
-            candidates.push(t);
-          }
-          return;
+      // Walk up from the profile link until we find an ancestor whose
+      // innerText contains "Connected on" — that's our card boundary.
+      // Cap at 600 chars to avoid grabbing the whole list container.
+      let card = null;
+      let cardText = "";
+      let cur = link.parentElement;
+      for (let i = 0; cur && i < 10; i++) {
+        const t = (cur.innerText || "").replace(/\s+/g, " ").trim();
+        if (t && /\|\s*Connected on /i.test(t) && t.length < 700) {
+          card = cur;
+          cardText = t;
+          break;
         }
-        for (const child of node.children) walk(child);
-      };
-      walk(card);
-      // Score candidates: those containing " at " or " · " are strongest,
-      // then longer ones. Pick the best.
-      candidates.sort((a, b) => {
-        const sa = (/ at | · /i.test(a) ? 100 : 0) + Math.min(a.length, 120);
-        const sb = (/ at | · /i.test(b) ? 100 : 0) + Math.min(b.length, 120);
-        return sb - sa;
-      });
-      if (candidates.length) headline = candidates[0];
+        cur = cur.parentElement;
+      }
+      if (!card || !cardText) return;
 
-      let currentTitle = headline, currentCompany = "";
-      const atMatch = headline.match(/^(.+?)\s+(?:at|@)\s+(.+)/i);
-      if (atMatch) { currentTitle = atMatch[1].trim(); currentCompany = atMatch[2].trim(); }
+      // Parse by pipe separator
+      const parts = cardText.split(/\s*\|\s*/).map((s) => s.trim()).filter(Boolean);
+      if (parts.length < 2) return;
+
+      const fullName = parts[0];
+      if (!fullName || fullName.length < 3 || fullName.length > 80) return;
+
+      // Find the "Connected on" index and trailing button labels
+      const connectedIdx = parts.findIndex((p) => /^Connected on /i.test(p));
+      const headlineEnd = connectedIdx === -1 ? parts.length : connectedIdx;
+
+      const headlineParts = parts.slice(1, headlineEnd);
+      const headline = headlineParts.join(" · ");
+
+      // Extract title + company from the first headline piece: "X at Y" or "X @ Y"
+      let currentTitle = headlineParts[0] || "";
+      let currentCompany = "";
+      const firstPiece = headlineParts[0] || "";
+      const atMatch = firstPiece.match(/^(.+?)\s+(?:at|@)\s+(.+)$/i);
+      if (atMatch) {
+        currentTitle = atMatch[1].trim();
+        currentCompany = atMatch[2].trim();
+      } else if (headlineParts.length >= 2) {
+        // Fallback: if first piece has no "at", and there's a second piece,
+        // treat first as title and second as company (common LinkedIn layout:
+        // "Product Manager | Acme Inc"). Only apply if the "company" candidate
+        // looks company-ish (not a buzzword list).
+        const maybeCompany = headlineParts[1];
+        if (maybeCompany && maybeCompany.length < 60 && !/\s·\s/.test(maybeCompany)) {
+          currentCompany = maybeCompany;
+        }
+      }
 
       seen.add(linkedinId);
       connections.push({
@@ -729,6 +734,15 @@
     try {
       collectNow();
       sendProgress(allConnections.length, "scanning");
+
+      // Log the first 3 parsed records so we can verify the extraction is
+      // pulling real names + titles + companies (not just empty strings).
+      if (allConnections.length > 0) {
+        console.log("[StealthRole] first 3 parsed records:");
+        for (const c of allConnections.slice(0, 3)) {
+          console.log(`  ${c.full_name} | title="${c.current_title}" | company="${c.current_company}"`);
+        }
+      }
 
       // Find every element on the page that is actually a scroll container.
       // LinkedIn has moved containers around across redesigns; instead of
