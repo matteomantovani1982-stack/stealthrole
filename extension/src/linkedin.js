@@ -1,5 +1,6 @@
 // StealthRole LinkedIn content script
 (() => {
+  console.log("%c[StealthRole v1.0.11] linkedin.js loaded", "color: #7F8CFF; font-weight: bold");
 
   // API call: background script first, direct fetch fallback
   function srApiCall(path, options, callback) {
@@ -670,25 +671,30 @@
       (res) => { if (res?.ok) showToast("Imported " + (res.data?.created || 0) + " connections"); else showToast(res?.error || "Import failed"); });
   }
 
-  // Bridge via DOM custom events. User dispatches the event from the
-  // DevTools console (which runs in the page's main world). DOM events
-  // on window cross the content-script isolation boundary. CSP-safe.
+  // Cross-world bridge via window.postMessage — the standard Chrome
+  // extension mechanism for page ↔ content-script communication.
+  // DOM events on window don't cross the isolation boundary, postMessage does.
   //
-  // Console commands the user can paste:
-  //   dispatchEvent(new Event('sr-run-sync'))   → full auto-scroll sync
-  //   dispatchEvent(new Event('sr-run-scan'))   → one-off collect + stats
+  // Console commands the user can paste on linkedin.com:
+  //   postMessage({__sr: "scan"}, "*")   → one-off collect + stats
+  //   postMessage({__sr: "sync"}, "*")   → full auto-scroll sync
   try {
-    window.addEventListener("sr-run-sync", () => {
-      console.log("[StealthRole] sr-run-sync received from console — starting");
-      autoScrapeConnections();
-    });
-    window.addEventListener("sr-run-scan", () => {
-      const results = collectVisibleConnectionCards(new Set(), true);
-      console.log("[StealthRole] sr-run-scan found", results.length, "cards");
-      for (const c of results.slice(0, 5)) {
-        console.log(`  ${c.full_name} | title="${c.current_title}" | company="${c.current_company}"`);
+    window.addEventListener("message", (event) => {
+      if (event.source !== window) return;
+      if (!event.data || typeof event.data !== "object") return;
+      if (event.data.__sr === "sync") {
+        console.log("[StealthRole] postMessage __sr=sync received — starting full sync");
+        autoScrapeConnections();
+      } else if (event.data.__sr === "scan") {
+        console.log("[StealthRole] postMessage __sr=scan received");
+        const results = collectVisibleConnectionCards(new Set(), true);
+        console.log("[StealthRole] __sr=scan found", results.length, "cards");
+        for (const c of results.slice(0, 5)) {
+          console.log(`  ${c.full_name} | title="${c.current_title}" | company="${c.current_company}"`);
+        }
       }
     });
+    console.log("[StealthRole] console bridge ready. Paste: postMessage({__sr:'scan'}, '*')");
   } catch (e) {}
 
   // ── Auto scroll helper: scroll to bottom until height stops growing
