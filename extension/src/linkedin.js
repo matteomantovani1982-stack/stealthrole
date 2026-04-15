@@ -544,104 +544,108 @@
     else if (type === "search") scrapeConnections();
   }
 
+  // ── Parse a single card's innerText into structured fields ──
+  function parseCardText(text) {
+    const parts = text.split(/\s*\|\s*/).map((s) => s.trim()).filter(Boolean);
+    if (parts.length < 2) return null;
+    const fullName = parts[0];
+    if (!fullName || fullName.length < 3 || fullName.length > 80) return null;
+
+    const connectedIdx = parts.findIndex((p) => /^Connected on /i.test(p));
+    const headlineEnd = connectedIdx === -1 ? parts.length : connectedIdx;
+    const headlineParts = parts.slice(1, headlineEnd);
+    const headline = headlineParts.join(" · ");
+
+    let currentTitle = headlineParts[0] || "";
+    let currentCompany = "";
+    const firstPiece = headlineParts[0] || "";
+    const atMatch = firstPiece.match(/^(.+?)\s+(?:at|@)\s+(.+)$/i);
+    if (atMatch) {
+      currentTitle = atMatch[1].trim();
+      currentCompany = atMatch[2].trim();
+    } else if (headlineParts.length >= 2) {
+      const maybeCompany = headlineParts[1];
+      if (maybeCompany && maybeCompany.length < 60) {
+        currentCompany = maybeCompany;
+      }
+    }
+    return { fullName, headline, currentTitle, currentCompany };
+  }
+
   // ── Collect currently-visible connection cards ──
   //
-  // LinkedIn 2026 connections page structure (reverse-engineered from the
-  // DOM diagnostic dump run on a real account):
+  // LinkedIn 2026 connections page structure (reverse-engineered from a real
+  // DOM dump on production):
   //
-  //   Card container = first div ancestor of a profile link whose innerText
-  //   contains " Connected on ". Card innerText follows this exact pattern:
+  //   Card innerText = "Name | Title@Company | headline | ... | Connected on DATE | Me"
   //
-  //     "Name | Headline piece 1 | Headline piece 2 | ... | Connected on DATE | Me"
+  //   All obfuscated divs, no li, no role="listitem", no data-view-name.
+  //   "Connected on DATE" is the unique marker found only inside connection cards.
   //
-  //   where "| Me" is the Message button label. No li, no role="listitem",
-  //   no data-view-name — all obfuscated divs with generated class names.
+  // Strategy: DOWN-walk the document tree from body. Stop at any element
+  // whose innerText matches the single-card pattern (exactly one "Connected
+  // on", length under 800). That element IS the card. Otherwise recurse
+  // into its children. Skip descendants once we've captured a card, because
+  // its children are inside the card we just logged.
   //
-  // Examples actually observed:
-  //   "Rupert Searle | Adviser to Entrepreneurs | Private Investor | Venture
-  //    Capital | Family Office | Connected on April 9, 2026 | Me"
-  //   "Chiara Manzini | Management Consultant @ Accenture | Aerospace &
-  //    Defence | Ex-Amazon | Connected on April 12, 2026 | Me"
-  //
-  // We parse by:
-  //   1. Splitting innerText on " | "
-  //   2. First part = name
-  //   3. Finding the "Connected on" index and everything between [1, that) = headline pieces
-  //   4. Joining headline pieces with " · "
-  //   5. Extracting "Title @ Company" or "Title at Company" from the first piece
+  // Why down-walk beats up-walk: an up-walk from a profile link can traverse
+  // into a multi-card container and reject the link. Down-walk correctly
+  // isolates each card regardless of how deeply profile links are nested.
   function collectVisibleConnectionCards(existingSeen) {
-    const profileLinks = document.querySelectorAll("a[href*='/in/']");
     const seen = existingSeen || new Set();
     const connections = [];
 
-    profileLinks.forEach((link) => {
-      const href = (link.href || "").split("?")[0];
-      // Must be a real profile link, not /in/me, /in/search, etc.
-      if (!/\/in\/[^/]+\/?$/.test(href)) return;
-      const linkedinId = href.split("/in/")[1]?.replace(/\/$/, "") || "";
-      if (!linkedinId || seen.has(linkedinId)) return;
+    function visit(el) {
+      if (!el || el.nodeType !== 1) return;
+      // Avoid scripts/styles
+      const tag = el.tagName;
+      if (tag === "SCRIPT" || tag === "STYLE" || tag === "SVG") return;
 
-      // Walk up from the profile link until we find an ancestor whose
-      // innerText contains "Connected on" — that's our card boundary.
-      // Cap at 600 chars to avoid grabbing the whole list container.
-      let card = null;
-      let cardText = "";
-      let cur = link.parentElement;
-      for (let i = 0; cur && i < 10; i++) {
-        const t = (cur.innerText || "").replace(/\s+/g, " ").trim();
-        if (t && /\|\s*Connected on /i.test(t) && t.length < 700) {
-          card = cur;
-          cardText = t;
-          break;
+      const text = (el.innerText || "").replace(/\s+/g, " ").trim();
+      if (!text) return;
+
+      const matches = text.match(/\|\s*Connected on /gi);
+      const count = matches ? matches.length : 0;
+
+      if (count === 1 && text.length < 800) {
+        // Single card. Must contain a real profile link.
+        const link = el.querySelector("a[href*='/in/']");
+        if (link) {
+          const href = (link.href || "").split("?")[0];
+          if (/\/in\/[^/]+\/?$/.test(href)) {
+            const linkedinId = href.split("/in/")[1]?.replace(/\/$/, "") || "";
+            if (linkedinId && !seen.has(linkedinId)) {
+              const parsed = parseCardText(text);
+              if (parsed) {
+                seen.add(linkedinId);
+                connections.push({
+                  linkedin_id: linkedinId,
+                  linkedin_url: href,
+                  full_name: parsed.fullName,
+                  headline: parsed.headline,
+                  current_title: parsed.currentTitle,
+                  current_company: parsed.currentCompany,
+                });
+              }
+            }
+          }
         }
-        cur = cur.parentElement;
-      }
-      if (!card || !cardText) return;
-
-      // Parse by pipe separator
-      const parts = cardText.split(/\s*\|\s*/).map((s) => s.trim()).filter(Boolean);
-      if (parts.length < 2) return;
-
-      const fullName = parts[0];
-      if (!fullName || fullName.length < 3 || fullName.length > 80) return;
-
-      // Find the "Connected on" index and trailing button labels
-      const connectedIdx = parts.findIndex((p) => /^Connected on /i.test(p));
-      const headlineEnd = connectedIdx === -1 ? parts.length : connectedIdx;
-
-      const headlineParts = parts.slice(1, headlineEnd);
-      const headline = headlineParts.join(" · ");
-
-      // Extract title + company from the first headline piece: "X at Y" or "X @ Y"
-      let currentTitle = headlineParts[0] || "";
-      let currentCompany = "";
-      const firstPiece = headlineParts[0] || "";
-      const atMatch = firstPiece.match(/^(.+?)\s+(?:at|@)\s+(.+)$/i);
-      if (atMatch) {
-        currentTitle = atMatch[1].trim();
-        currentCompany = atMatch[2].trim();
-      } else if (headlineParts.length >= 2) {
-        // Fallback: if first piece has no "at", and there's a second piece,
-        // treat first as title and second as company (common LinkedIn layout:
-        // "Product Manager | Acme Inc"). Only apply if the "company" candidate
-        // looks company-ish (not a buzzword list).
-        const maybeCompany = headlineParts[1];
-        if (maybeCompany && maybeCompany.length < 60 && !/\s·\s/.test(maybeCompany)) {
-          currentCompany = maybeCompany;
-        }
+        return; // captured — no need to recurse into descendants
       }
 
-      seen.add(linkedinId);
-      connections.push({
-        linkedin_id: linkedinId,
-        linkedin_url: href,
-        full_name: fullName,
-        headline,
-        current_title: currentTitle,
-        current_company: currentCompany,
-      });
-    });
+      if (count === 0 && text.length > 0) {
+        // No "Connected on" at this level — but a descendant might be a card.
+        // Only recurse if text is "interesting" (nonempty) to avoid wasted
+        // traversal into chrome / ads.
+        for (const child of el.children) visit(child);
+        return;
+      }
 
+      // count > 1: multi-card container. Recurse into children.
+      for (const child of el.children) visit(child);
+    }
+
+    visit(document.body);
     return connections;
   }
 
