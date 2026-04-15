@@ -66,24 +66,37 @@ export default function Sidebar() {
         })}
       </nav>
 
-      {/* User */}
+      {/* User — avatar/name navigates to /profile, small icon button signs out */}
       <div className="px-3 py-4 border-t border-white/[0.06]">
-        <button
-          onClick={logout}
-          className="flex items-center gap-2.5 w-full px-2 py-2 rounded-lg hover:bg-white/[0.04] transition-colors"
-        >
-          <div className="w-8 h-8 rounded-full bg-[#7F8CFF]/15 text-[#7F8CFF] flex items-center justify-center text-xs font-semibold">
-            {user?.full_name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || "?"}
-          </div>
-          <div className="text-left min-w-0">
-            <div className="text-[12px] font-medium text-white/80 truncate">
-              {user?.full_name || user?.email?.split("@")[0] || "User"}
+        <div className="flex items-center gap-1.5">
+          <Link
+            href="/profile"
+            className="flex items-center gap-2.5 flex-1 min-w-0 px-2 py-2 rounded-lg hover:bg-white/[0.04] transition-colors"
+          >
+            <div className="w-8 h-8 rounded-full bg-[#7F8CFF]/15 text-[#7F8CFF] flex items-center justify-center text-xs font-semibold flex-shrink-0">
+              {user?.full_name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || "?"}
             </div>
-            <div className="text-[11px] text-[#555C7A] truncate">
-              {user?.email || ""}
+            <div className="text-left min-w-0">
+              <div className="text-[12px] font-medium text-white/80 truncate">
+                {user?.full_name || user?.email?.split("@")[0] || "User"}
+              </div>
+              <div className="text-[11px] text-[#555C7A] truncate">
+                {user?.email || ""}
+              </div>
             </div>
-          </div>
-        </button>
+          </Link>
+          <button
+            onClick={logout}
+            title="Sign out"
+            aria-label="Sign out"
+            className="flex-shrink-0 p-2 rounded-lg text-[#555C7A] hover:bg-white/[0.04] hover:text-white/80 transition-colors"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <path d="M6 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M10 11l3-3-3-3M13 8H6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
+        </div>
       </div>
     </aside>
   );
