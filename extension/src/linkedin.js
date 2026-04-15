@@ -576,74 +576,108 @@
 
   // ── Collect currently-visible connection cards ──
   //
-  // TreeWalker approach: find every text node in the document containing
-  // "Connected on". For each, walk up from its parent until we find an
-  // ancestor whose innerText has exactly one "Connected on" occurrence —
-  // that's the single-card boundary. Extract from there.
+  // NEW strategy: iterate every real /in/ profile link. For each, pull:
+  //   - linkedin_id from href
+  //   - name from nearest <img alt="..."> (LinkedIn sets alt="Full Name" on
+  //     every connection avatar) OR from the link's aria-label
+  //   - headline/title/company best-effort from surrounding innerText
   //
-  // Why TreeWalker: can't miss a card if its text node exists. Works
-  // regardless of DOM nesting, class names, or layout quirks.
+  // Rationale: previous attempts (text-node TreeWalker, innerText brute
+  // force) kept finding 0-1 cards because LinkedIn splits "Connected on"
+  // across multiple text nodes. The avatar <img alt> is ALWAYS present
+  // and always has the full name. Profile link href is ALWAYS the real
+  // linkedin_id. Those two alone give us a complete name+URL record,
+  // which is the minimum viable data for the Way-In feature.
   function collectVisibleConnectionCards(existingSeen, debug) {
     const seen = existingSeen || new Set();
     const connections = [];
-    const capturedCardEls = new WeakSet();
 
-    const stats = {
-      textNodesFound: 0,
-      walkedUp: 0,
-      singleMatchCards: 0,
-      hasProfileLink: 0,
-      parsed: 0,
-      deduped: 0,
-    };
+    const stats = { links: 0, validHref: 0, hasName: 0, hasHeadline: 0, parsed: 0, deduped: 0, skipped: 0 };
 
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
-    let node;
-    while ((node = walker.nextNode())) {
-      const v = node.nodeValue;
-      if (!v || v.indexOf("Connected on") === -1) continue;
-      stats.textNodesFound++;
+    const profileLinks = document.querySelectorAll("a[href*='/in/']");
+    stats.links = profileLinks.length;
 
-      // Walk up from the text node's parent until we find the card boundary:
-      // the smallest ancestor whose innerText has exactly 1 "Connected on".
-      let el = node.parentElement;
-      for (let i = 0; el && i < 12; i++) {
-        stats.walkedUp++;
-        const text = (el.innerText || "").replace(/\s+/g, " ").trim();
-        if (!text || text.length > 1500) { el = el.parentElement; continue; }
-        const matches = text.match(/Connected on /gi);
-        if (!matches) { el = el.parentElement; continue; }
-        if (matches.length > 1) break; // went too far up — abort
-        // matches.length === 1 — this is the card
-        if (capturedCardEls.has(el)) break;
-        capturedCardEls.add(el);
-        stats.singleMatchCards++;
+    for (const link of profileLinks) {
+      const href = (link.href || "").split("?")[0];
+      if (!/\/in\/[^/]+\/?$/.test(href)) { stats.skipped++; continue; }
+      stats.validHref++;
 
-        const link = el.querySelector("a[href*='/in/']");
-        if (!link) break;
-        const href = (link.href || "").split("?")[0];
-        if (!/\/in\/[^/]+\/?$/.test(href)) break;
-        stats.hasProfileLink++;
+      const linkedinId = href.split("/in/")[1]?.replace(/\/$/, "") || "";
+      if (!linkedinId) { stats.skipped++; continue; }
+      if (seen.has(linkedinId)) { stats.deduped++; continue; }
 
-        const linkedinId = href.split("/in/")[1]?.replace(/\/$/, "") || "";
-        if (!linkedinId) break;
-        if (seen.has(linkedinId)) { stats.deduped++; break; }
-
-        const parsed = parseCardText(text);
-        if (!parsed) break;
-        stats.parsed++;
-
-        seen.add(linkedinId);
-        connections.push({
-          linkedin_id: linkedinId,
-          linkedin_url: href,
-          full_name: parsed.fullName,
-          headline: parsed.headline,
-          current_title: parsed.currentTitle,
-          current_company: parsed.currentCompany,
-        });
-        break;
+      // Name: try aria-label, img alt, then link text
+      let fullName = "";
+      const aria = link.getAttribute("aria-label") || "";
+      if (aria) fullName = aria;
+      if (!fullName) {
+        const img = link.querySelector("img[alt]");
+        if (img) fullName = img.alt || "";
       }
+      if (!fullName) {
+        // Look for an image sibling (avatar might not be inside the <a>)
+        const parent = link.parentElement;
+        if (parent) {
+          const img = parent.querySelector("img[alt]");
+          if (img) fullName = img.alt || "";
+        }
+      }
+      if (!fullName) {
+        const t = (link.textContent || "").trim().replace(/\s+/g, " ");
+        fullName = t;
+      }
+
+      // Clean common aria-label prefixes LinkedIn uses:
+      //   "View Rupert Searle's profile"
+      //   "Rupert Searle's profile"
+      //   "Rupert Searle"
+      fullName = fullName
+        .replace(/^View\s+/i, "")
+        .replace(/[''']s\s*profile.*$/i, "")
+        .replace(/[''']s$/i, "")
+        .trim();
+
+      if (!fullName || fullName.length < 3 || fullName.length > 100) { stats.skipped++; continue; }
+      // Reject generic CTA text that sometimes slips through
+      if (/^(message|connect|follow|view|pending|share|like)$/i.test(fullName)) { stats.skipped++; continue; }
+      stats.hasName++;
+
+      // Headline: walk up to find an ancestor with innerText containing
+      // "Connected on" (best-effort — not required)
+      let headline = "";
+      let currentTitle = "";
+      let currentCompany = "";
+      let cur = link.parentElement;
+      for (let i = 0; cur && i < 8; i++) {
+        const t = (cur.innerText || "").replace(/\s+/g, " ").trim();
+        if (t && t.length > 30 && t.length < 1500 && /Connected on/i.test(t)) {
+          // Got the card text
+          headline = t;
+          stats.hasHeadline++;
+          const parsed = parseCardText(t);
+          if (parsed) {
+            stats.parsed++;
+            if (parsed.fullName && parsed.fullName !== fullName && parsed.fullName.length > 2) {
+              fullName = parsed.fullName; // prefer parsed name if available
+            }
+            currentTitle = parsed.currentTitle;
+            currentCompany = parsed.currentCompany;
+            headline = parsed.headline || headline;
+          }
+          break;
+        }
+        cur = cur.parentElement;
+      }
+
+      seen.add(linkedinId);
+      connections.push({
+        linkedin_id: linkedinId,
+        linkedin_url: href,
+        full_name: fullName,
+        headline,
+        current_title: currentTitle,
+        current_company: currentCompany,
+      });
     }
 
     if (debug) {
