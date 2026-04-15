@@ -1,6 +1,6 @@
 // StealthRole LinkedIn content script
 (() => {
-  console.log("%c[StealthRole v1.0.11] linkedin.js loaded", "color: #7F8CFF; font-weight: bold");
+  console.log("%c[StealthRole v1.0.12] linkedin.js loaded", "color: #7F8CFF; font-weight: bold");
 
   // API call: background script first, direct fetch fallback
   function srApiCall(path, options, callback) {
