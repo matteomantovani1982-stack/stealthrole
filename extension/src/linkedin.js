@@ -84,11 +84,13 @@
       try {
         chrome.storage.local.get("sr_sync_task", (data) => {
           const task = data.sr_sync_task;
+          console.log("[StealthRole] connections page — sr_sync_task =", JSON.stringify(task));
           if (task && task.type === "connections" && task.status !== "done") {
-            console.log("[StealthRole] sr_sync_task detected, starting autoScrapeConnections");
-            // Mark as scanning so a second tab doesn't double-run
+            console.log("[StealthRole] sr_sync_task detected, starting autoScrapeConnections in 2s");
             chrome.storage.local.set({ sr_sync_task: { ...task, status: "scanning" } });
             setTimeout(() => autoScrapeConnections(), 2000);
+          } else {
+            console.log("[StealthRole] no active sync task — click the blue 🔄 Sync ALL button to start");
           }
         });
       } catch (e) {
@@ -445,8 +447,10 @@
   };
 
   function injectOverlayButton(type) {
-    const existing = document.getElementById("sr-overlay-btn");
-    if (existing) existing.remove();
+    // Clean up any existing overlay elements first
+    document.getElementById("sr-overlay-btn")?.remove();
+    document.getElementById("sr-overlay-btn-secondary")?.remove();
+
     const labels = {
       connections: "Import Connections",
       profile: "Save Profile",
@@ -459,6 +463,33 @@
     btn.innerHTML = '<span class="sr-icon">&#9889;</span> ' + (labels[type] || "StealthRole");
     btn.addEventListener("click", () => handleOverlayClick(type));
     document.body.appendChild(btn);
+
+    // On the connections page, also inject a SECOND button that runs the full
+    // auto-scroll sync directly — no need to round-trip through stealthrole.com
+    // Settings. This is the preferred way to import all connections.
+    if (type === "connections") {
+      const syncBtn = document.createElement("button");
+      syncBtn.id = "sr-overlay-btn-secondary";
+      syncBtn.className = "sr-overlay-btn";
+      syncBtn.style.bottom = "70px"; // stack above the Import button
+      syncBtn.style.background = "linear-gradient(135deg, #5B6CFF 0%, #7F8CFF 100%)";
+      syncBtn.innerHTML = '<span class="sr-icon">&#128260;</span> Sync ALL (auto-scroll)';
+      syncBtn.addEventListener("click", async () => {
+        syncBtn.disabled = true;
+        syncBtn.innerHTML = '<span class="sr-icon">&#9203;</span> Scanning…';
+        showToast("Starting full sync — keep this tab open");
+        // Mark a synthetic sync task so finishConnectionsSync still fires on completion
+        try {
+          chrome.storage.local.set({
+            sr_sync_task: { type: "connections", status: "scanning", started_at: Date.now(), count: 0 }
+          });
+        } catch {}
+        await autoScrapeConnections();
+        syncBtn.disabled = false;
+        syncBtn.innerHTML = '<span class="sr-icon">&#9989;</span> Done — sync again';
+      });
+      document.body.appendChild(syncBtn);
+    }
   }
 
   function showToast(message) {
