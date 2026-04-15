@@ -646,30 +646,57 @@
       collectNow();
       sendProgress(allConnections.length, "scanning");
 
+      // Find every element on the page that is actually a scroll container.
+      // LinkedIn has moved containers around across redesigns; instead of
+      // pinning a class name, detect ALL scrollable elements at runtime and
+      // push every one of them. This catches the real virtual list wherever
+      // LinkedIn puts it this week.
+      const findScrollers = () => {
+        const result = [document.scrollingElement || document.documentElement, document.body];
+        const all = document.querySelectorAll("div, main, section, [role='main']");
+        for (const el of all) {
+          if (!el || !el.clientHeight) continue;
+          const style = getComputedStyle(el);
+          if ((style.overflowY === "auto" || style.overflowY === "scroll") && el.scrollHeight > el.clientHeight + 50) {
+            result.push(el);
+          }
+        }
+        return result;
+      };
+
       const startedAt = Date.now();
-      const MAX_MS = 360000; // 6 minute hard cap
-      const IDLE_TICKS_LIMIT = 6;
+      const MAX_MS = 420000; // 7 minute hard cap
+      const IDLE_TICKS_LIMIT = 10;
       let idleTicks = 0;
+      let tickNo = 0;
 
       while (Date.now() - startedAt < MAX_MS && idleTicks < IDLE_TICKS_LIMIT) {
-        // Scroll the outer window
-        window.scrollTo(0, document.body.scrollHeight);
-        // Scroll any inner virtualized container
-        const scrollers = document.querySelectorAll(
-          "[class*='scaffold-finite-scroll'], [class*='scrollable'], main, [role='main']"
-        );
-        scrollers.forEach((s) => { try { s.scrollTop = s.scrollHeight; } catch {} });
-        // Also try clicking a Show more button (no-op if none visible)
+        tickNo++;
+        const scrollers = findScrollers();
+        for (const s of scrollers) {
+          try { s.scrollTop = s.scrollHeight; } catch {}
+          try { s.dispatchEvent(new Event("scroll", { bubbles: true })); } catch {}
+        }
+        // Also push the window itself and dispatch a scroll event
+        try { window.scrollTo(0, document.body.scrollHeight); } catch {}
+        try { window.dispatchEvent(new Event("scroll", { bubbles: true })); } catch {}
+
         clickShowMore();
 
-        await new Promise((r) => setTimeout(r, 1800));
+        await new Promise((r) => setTimeout(r, 2200));
 
         const newCount = collectNow();
         sendProgress(allConnections.length, "scanning");
 
+        console.log(
+          `[StealthRole] tick ${tickNo}: +${newCount} new (total ${allConnections.length}), ` +
+          `scrollers=${scrollers.length}, idleTicks=${idleTicks}`
+        );
+
         if (newCount === 0) idleTicks++;
         else idleTicks = 0;
       }
+      console.log(`[StealthRole] scroll loop finished after ${tickNo} ticks, ${allConnections.length} total`);
 
       console.log("[StealthRole] autoScrapeConnections collected " + allConnections.length);
       if (allConnections.length === 0) {
