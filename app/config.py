@@ -79,6 +79,12 @@ class Settings(BaseSettings):
     claude_model: str = "claude-sonnet-4-6"
     claude_max_tokens: int = 16000
 
+    # ── Feature flags ──────────────────────────────────────
+    # When false, linkedin_messages rows are stored but not classified.
+    # Keeps LLM spend at zero during Feature 2 development. Enable once
+    # Feature 3 (/inbox) is ready to display classified drafts.
+    enable_linkedin_msg_classify: bool = False
+
     # ── Retrieval ──────────────────────────────────────────
     serper_api_key: str | None = None
     adzuna_app_id: str | None = None

@@ -41,6 +41,8 @@ from app.schemas.linkedin import (
     IngestConversationsRequest,
     LinkedInStatsResponse,
     LinkThreadRequest,
+    MessagesSyncRequest,
+    MessagesSyncResponse,
 )
 from app.services.linkedin.linkedin_service import LinkedInService
 
@@ -752,3 +754,155 @@ RULES:
             "recommendations": ["Try again later"],
             "warm_intro_potential": ""
         }
+
+
+# ── Feature 2: Messages sync (conversation-centric) ─────────────────────────
+
+@router.post(
+    "/messages/sync",
+    response_model=MessagesSyncResponse,
+    summary="Bulk push LinkedIn conversation threads from extension",
+)
+async def sync_linkedin_messages(
+    payload: MessagesSyncRequest,
+    db: DB,
+    user_id: CurrentUserId,
+) -> MessagesSyncResponse:
+    """
+    Upsert full conversation threads scraped by the extension (Feature 2).
+
+    Each conversation = one row in linkedin_messages with messages embedded
+    as JSONB. Dedupe key is (user_id, conversation_urn). Classification via
+    Haiku is feature-flagged off by default — we store rows now, classify
+    later when Feature 3 (/inbox) ships.
+    """
+    from datetime import datetime, timezone
+    from sqlalchemy import select as sa_select
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.config import settings
+    from app.models.linkedin_connection import LinkedInConnection
+    from app.models.linkedin_message import LinkedInMessage
+    from app.services.linkedin.message_classifier import (
+        heuristic_is_job_related,
+        classify_and_draft,
+    )
+
+    # Pre-fetch known recruiters for this user so heuristic_is_job_related
+    # can flag them even without AI classification.
+    recruiter_ids = set(
+        (await db.execute(
+            sa_select(LinkedInConnection.linkedin_id).where(
+                LinkedInConnection.user_id == user_id,
+                LinkedInConnection.is_recruiter == True,  # noqa: E712
+            )
+        )).scalars().all()
+    )
+
+    def _parse_dt(s: str | None) -> datetime | None:
+        if not s:
+            return None
+        try:
+            # Accept ISO-8601 with or without tz, plus Unix ms
+            if s.isdigit():
+                return datetime.fromtimestamp(int(s) / 1000, tz=timezone.utc)
+            return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        except Exception:
+            return None
+
+    created = 0
+    updated = 0
+    total_messages = 0
+
+    for conv in payload.conversations:
+        msg_dicts = [m.model_dump() for m in conv.messages]
+        total_messages += len(msg_dicts)
+
+        # Cheap heuristic for is_job_related (works even with flag off)
+        known = bool(conv.contact_linkedin_id and conv.contact_linkedin_id in recruiter_ids)
+        is_job_related = heuristic_is_job_related(
+            contact_title=conv.contact_title,
+            contact_company=conv.contact_company,
+            messages=msg_dicts,
+            known_recruiter=known,
+        )
+
+        # Optional AI classification (feature-flagged, returns None when off)
+        ai = await classify_and_draft(
+            contact_name=conv.contact_name,
+            contact_title=conv.contact_title,
+            contact_company=conv.contact_company,
+            messages=msg_dicts,
+        )
+
+        # Days since last inbound message we haven't replied to
+        last_at = _parse_dt(conv.last_message_at)
+        days_since_reply: int | None = None
+        if conv.last_sender == "them" and last_at:
+            days_since_reply = (datetime.now(timezone.utc) - last_at).days
+
+        # Upsert by (user_id, conversation_urn)
+        values = {
+            "user_id": user_id,
+            "conversation_urn": conv.conversation_urn,
+            "contact_name": conv.contact_name,
+            "contact_linkedin_id": conv.contact_linkedin_id,
+            "contact_linkedin_url": conv.contact_linkedin_url,
+            "contact_title": conv.contact_title,
+            "contact_company": conv.contact_company,
+            "messages": msg_dicts,
+            "message_count": len(msg_dicts),
+            "last_message_at": last_at,
+            "last_sender": conv.last_sender,
+            "is_unread": conv.is_unread,
+            "days_since_reply": days_since_reply,
+            "is_job_related": is_job_related,
+        }
+        if ai:
+            values["classification"] = ai.get("classification")
+            values["stage"] = ai.get("stage")
+            values["ai_draft_reply"] = ai.get("ai_draft_reply")
+            values["classification_confidence"] = ai.get("confidence")
+            values["classified_at"] = datetime.now(timezone.utc)
+
+        stmt = pg_insert(LinkedInMessage).values(**values)
+        update_cols = {
+            k: stmt.excluded[k]
+            for k in values.keys()
+            if k not in ("user_id", "conversation_urn")
+        }
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["user_id", "conversation_urn"],
+            set_=update_cols,
+        )
+        result = await db.execute(stmt)
+        # Fallback: we can't easily tell created-vs-updated from on_conflict
+        # without a returning clause. Check if row already existed.
+        existing = (await db.execute(
+            sa_select(LinkedInMessage.id).where(
+                LinkedInMessage.user_id == user_id,
+                LinkedInMessage.conversation_urn == conv.conversation_urn,
+            )
+        )).scalar_one_or_none()
+        if existing:
+            updated += 1
+        else:
+            created += 1
+
+    await db.commit()
+
+    logger.info(
+        "linkedin_messages_sync_complete",
+        user_id=user_id,
+        conversations=len(payload.conversations),
+        total_messages=total_messages,
+        classify_enabled=settings.enable_linkedin_msg_classify,
+    )
+
+    return MessagesSyncResponse(
+        created=created,
+        updated=updated,
+        total_processed=len(payload.conversations),
+        total_messages=total_messages,
+        classification_enabled=settings.enable_linkedin_msg_classify,
+    )

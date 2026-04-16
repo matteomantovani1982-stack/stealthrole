@@ -22,6 +22,7 @@ from app.models.application_timeline import ApplicationTimeline
 from app.models.calendar_event import CalendarEvent
 from app.models.linkedin_connection import LinkedInConnection
 from app.models.linkedin_conversation import LinkedInConversation
+from app.models.linkedin_message import LinkedInMessage
 from app.models.warm_intro import WarmIntro, IntroStatus
 from app.models.auto_apply import AutoApplyProfile, AutoApplySubmission
 from app.models.interview import InterviewRound, CompensationBenchmark
@@ -56,6 +57,7 @@ __all__ = [
     "CalendarEvent",
     "LinkedInConnection",
     "LinkedInConversation",
+    "LinkedInMessage",
     "WarmIntro",
     "IntroStatus",
     "AutoApplyProfile",

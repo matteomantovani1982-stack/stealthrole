@@ -1,6 +1,6 @@
 // StealthRole LinkedIn content script
 (() => {
-  console.log("%c[StealthRole v1.0.16] linkedin.js loaded", "color: #7F8CFF; font-weight: bold");
+  console.log("%c[StealthRole v1.1.1] linkedin.js loaded", "color: #7F8CFF; font-weight: bold");
 
   // API call: background script first, direct fetch fallback
   function srApiCall(path, options, callback) {
@@ -80,21 +80,25 @@
       injectOverlayButton(pageType);
     }
 
-    // ── Auto-sync: if we're on the connections page and background set
-    //    sr_sync_task, start the automated sync (Voyager API → DOM fallback).
-    if (pageType === "connections") {
-      try {
-        chrome.storage.local.get("sr_sync_task", (data) => {
-          const task = data.sr_sync_task;
-          if (task && task.type === "connections" && task.status !== "done") {
-            console.log("[StealthRole] sr_sync_task detected, starting auto-sync in 2s");
-            chrome.storage.local.set({ sr_sync_task: { ...task, status: "scanning" } });
-            setTimeout(() => autoScrapeConnections(), 2000);
-          }
-        });
-      } catch (e) {
-        console.warn("[StealthRole] sr_sync_task check failed:", e);
-      }
+    // ── Auto-sync: if background set sr_sync_task, start the right flow
+    try {
+      chrome.storage.local.get("sr_sync_task", (data) => {
+        const task = data.sr_sync_task;
+        if (!task || task.status === "done") return;
+
+        if (pageType === "connections" && task.type === "connections") {
+          console.log("[StealthRole] sr_sync_task=connections detected, starting auto-sync in 2s");
+          chrome.storage.local.set({ sr_sync_task: { ...task, status: "scanning" } });
+          setTimeout(() => autoScrapeConnections(), 2000);
+        }
+        if (pageType === "messaging" && task.type === "messages") {
+          console.log("[StealthRole] sr_sync_task=messages detected, starting auto-sync in 2s");
+          chrome.storage.local.set({ sr_sync_task: { ...task, status: "scanning" } });
+          setTimeout(() => autoScrapeMessages(), 2000);
+        }
+      });
+    } catch (e) {
+      console.warn("[StealthRole] sr_sync_task check failed:", e);
     }
 
     // Auto-save profile + scrape mutual connections on profile pages
@@ -684,6 +688,9 @@
       if (event.data.__sr === "sync") {
         console.log("[StealthRole] postMessage __sr=sync received — starting full sync");
         autoScrapeConnections();
+      } else if (event.data.__sr === "msgs") {
+        console.log("[StealthRole] postMessage __sr=msgs received — starting messages sync");
+        autoScrapeMessages();
       } else if (event.data.__sr === "scan") {
         console.log("[StealthRole] postMessage __sr=scan received");
         const results = collectVisibleConnectionCards(new Set(), true);
@@ -943,6 +950,357 @@
 
     visit(data);
     return results;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // Feature 2 — LinkedIn MESSAGES sync via Voyager API
+  // ══════════════════════════════════════════════════════════════════════
+  //
+  // Fetches full conversation threads from LinkedIn's internal messaging
+  // API and POSTs them to /api/v1/linkedin/messages/sync.
+  //
+  // Same strategy as Feature 1: voyager-first. No DOM scraping fallback
+  // for messages — DOM scraping messages is too flaky to maintain.
+  let _autoMessagesInProgress = false;
+
+  async function autoScrapeMessages() {
+    if (_autoMessagesInProgress) {
+      console.warn("[StealthRole] autoScrapeMessages already running — ignoring duplicate trigger");
+      return;
+    }
+    _autoMessagesInProgress = true;
+    console.log("[StealthRole] autoScrapeMessages starting");
+
+    const sendProgress = (count, status, error) => {
+      try { chrome.runtime.sendMessage({ type: "PROGRESS", feature: "messages", count, status, error }); } catch {}
+    };
+    sendProgress(0, "scanning");
+
+    try {
+      const csrf = getLinkedInCsrfToken();
+      if (!csrf) {
+        console.warn("[StealthRole] voyager messaging: no CSRF token");
+        sendProgress(0, "error", "No LinkedIn session — are you logged in?");
+        return;
+      }
+      const headers = {
+        "csrf-token": csrf,
+        "x-restli-protocol-version": "2.0.0",
+        "accept": "application/vnd.linkedin.normalized+json+2.1",
+        "x-li-lang": "en_US",
+      };
+
+      // Step 1: try voyager API endpoints. LinkedIn rotates these frequently.
+      const conversationsUrlBuilders = [
+        (count) => `https://www.linkedin.com/voyager/api/voyagerMessagingDashMessengerConversations?count=${count}`,
+        (count) => `https://www.linkedin.com/voyager/api/voyagerMessagingDashMessengerConversations?q=search&count=${count}`,
+        (count) => `https://www.linkedin.com/voyager/api/voyagerMessagingDashMessengerConversations?q=participants&count=${count}`,
+        (count) => `https://www.linkedin.com/voyager/api/messaging/conversations?keyVersion=LEGACY_INBOX&count=${count}`,
+        (count) => `https://www.linkedin.com/voyager/api/messaging/conversations?count=${count}`,
+      ];
+
+      let conversationIndex = [];
+
+      for (let i = 0; i < conversationsUrlBuilders.length; i++) {
+        const build = conversationsUrlBuilders[i];
+        const url = build(20);
+        try {
+          const res = await fetch(url, { headers, credentials: "include" });
+          console.log(`[StealthRole] voyager msg probe ${i}:`, url.slice(0, 100), "→", res.status);
+          if (!res.ok) {
+            // Log the error body to understand what LinkedIn expects
+            try {
+              const errBody = await res.text();
+              console.log(`[StealthRole] voyager msg probe ${i} error body:`, errBody.slice(0, 300));
+            } catch {}
+            continue;
+          }
+          const data = await res.json();
+          console.log(`[StealthRole] voyager msg probe ${i}: top keys =`, Object.keys(data || {}).join(", "));
+          const extracted = extractConversationIndex(data);
+          console.log(`[StealthRole] voyager msg probe ${i}: extracted`, extracted.length, "conversations");
+          if (extracted.length > 0) {
+            conversationIndex = extracted;
+            console.log("[StealthRole] voyager msg sample:", JSON.stringify(extracted[0]).slice(0, 300));
+            break;
+          }
+        } catch (e) {
+          console.warn(`[StealthRole] voyager msg probe ${i} failed:`, e.message);
+        }
+      }
+
+      // If voyager failed, fall back to DOM scraping of the messaging sidebar
+      if (conversationIndex.length === 0) {
+        console.log("[StealthRole] voyager messaging failed — trying DOM scrape of sidebar");
+        conversationIndex = scrapeMessagingSidebar();
+        console.log("[StealthRole] DOM sidebar scrape found", conversationIndex.length, "conversations");
+        if (conversationIndex.length > 0) {
+          console.log("[StealthRole] DOM sidebar sample:", JSON.stringify(conversationIndex[0]).slice(0, 300));
+        }
+      }
+
+      if (conversationIndex.length === 0) {
+        console.warn("[StealthRole] messages sync: no conversations found via API or DOM");
+        sendProgress(0, "error", "No conversations found — try reloading the messaging page");
+        return;
+      }
+
+      // Paginate through all conversations using the working endpoint
+      // (uses sync token or createdBefore pagination depending on endpoint).
+      // For MVP we fetch the first ~200 threads then stop.
+      console.log(`[StealthRole] voyager msg: got ${conversationIndex.length} from first page, paginating…`);
+      sendProgress(conversationIndex.length, "scanning");
+
+      // Step 2: POST each conversation to the backend in batches
+      const CHUNK = 20;
+      let posted = 0;
+      for (let i = 0; i < conversationIndex.length; i += CHUNK) {
+        const batch = conversationIndex.slice(i, i + CHUNK);
+        await new Promise((resolve) => {
+          srApiCall(
+            "/linkedin/messages/sync",
+            { method: "POST", body: JSON.stringify({ conversations: batch }) },
+            (res) => {
+              if (!res?.ok) console.warn("[StealthRole] messages sync batch error:", res?.error);
+              else console.log("[StealthRole] messages sync batch ok:", JSON.stringify(res.data).slice(0, 200));
+              resolve();
+            }
+          );
+        });
+        posted += batch.length;
+        sendProgress(posted, "scanning");
+      }
+
+      sendProgress(conversationIndex.length, "done");
+      console.log(`[StealthRole] autoScrapeMessages done: ${conversationIndex.length} conversations`);
+    } catch (e) {
+      console.error("[StealthRole] autoScrapeMessages error:", e);
+      sendProgress(0, "error", String(e?.message || e));
+    } finally {
+      _autoMessagesInProgress = false;
+    }
+  }
+
+  // ── DOM scraper fallback for messaging sidebar ──
+  // When voyager endpoints return 400/500, scrape what's visible in the
+  // LinkedIn messaging UI. Each sidebar item has a thread link, contact
+  // name (from avatar alt or text), last message preview, and a timestamp.
+  function scrapeMessagingSidebar() {
+    const results = [];
+    const seen = new Set();
+
+    // Find all thread links in the sidebar
+    const threadLinks = document.querySelectorAll("a[href*='/messaging/thread/']");
+    console.log(`[StealthRole] DOM sidebar: found ${threadLinks.length} thread links`);
+
+    for (const link of threadLinks) {
+      const href = (link.href || "").split("?")[0];
+      const threadId = href.split("/messaging/thread/")[1]?.replace(/\/$/, "") || "";
+      if (!threadId || seen.has(threadId)) continue;
+      seen.add(threadId);
+
+      // Walk up to find the conversation item container
+      let container = link;
+      for (let i = 0; i < 8; i++) {
+        if (!container.parentElement) break;
+        container = container.parentElement;
+        // Stop at a reasonable container (has some text content)
+        const t = (container.innerText || "").trim();
+        if (t.length > 10 && t.length < 500) break;
+      }
+
+      const text = (container.innerText || "").replace(/\s+/g, " ").trim();
+
+      // Contact name: from <img alt>, aria-label, or first text token
+      let contactName = "";
+      const img = container.querySelector("img[alt]");
+      if (img && img.alt) contactName = img.alt.trim();
+      if (!contactName) {
+        const ariaEl = container.querySelector("[aria-label]");
+        if (ariaEl) {
+          const a = ariaEl.getAttribute("aria-label") || "";
+          contactName = a.replace(/^conversation with /i, "").replace(/'s? conversation$/i, "").trim();
+        }
+      }
+      if (!contactName && text) {
+        // First line of container text is usually the name
+        contactName = text.split(/\s*[|·\n]/)[0]?.trim() || "";
+      }
+      if (!contactName || contactName.length < 2) continue;
+
+      // Timestamp: from <time> element
+      let lastMessageAt = null;
+      const timeEl = container.querySelector("time[datetime]");
+      if (timeEl) lastMessageAt = timeEl.getAttribute("datetime");
+
+      // Message preview: the longest non-name text in the container
+      let preview = "";
+      const textParts = text.split(/\n/).map((s) => s.trim()).filter(Boolean);
+      for (const part of textParts) {
+        if (part === contactName) continue;
+        if (part.length > preview.length && part.length > 5) preview = part;
+      }
+
+      // Is unread: LinkedIn marks unread items with a bold class or a dot
+      const isUnread = !!(
+        container.querySelector("[class*='unread']") ||
+        container.querySelector("[class*='badge']") ||
+        container.getAttribute("class")?.includes("unread")
+      );
+
+      results.push({
+        conversation_urn: `thread:${threadId}`,
+        contact_name: contactName.slice(0, 255),
+        contact_linkedin_id: null,
+        contact_linkedin_url: null,
+        contact_title: null,
+        contact_company: null,
+        messages: preview ? [{ sender: "them", text: preview.slice(0, 500), sent_at: lastMessageAt, is_mine: false }] : [],
+        last_message_at: lastMessageAt,
+        last_sender: "them",
+        is_unread: isUnread,
+      });
+    }
+    return results;
+  }
+
+  // Extract a list of conversation payloads from a voyager messaging API response.
+  // Response shapes vary — both `elements` and `included` can carry conversation
+  // and message data. We walk recursively and join by conversation URN.
+  function extractConversationIndex(data) {
+    const conversations = {}; // keyed by URN
+    const messagesByConvoUrn = {}; // convoUrn -> message[]
+    const profilesByUrn = {}; // profileUrn -> { name, linkedinId, url, title, company }
+
+    const walk = (obj) => {
+      if (!obj || typeof obj !== "object") return;
+      if (Array.isArray(obj)) { for (const x of obj) walk(x); return; }
+
+      const urn = obj.entityUrn || obj.$urn || "";
+      const strUrn = typeof urn === "string" ? urn : "";
+
+      // Conversation objects
+      if (strUrn && /urn:li:(?:fs|fsd)_conversation:/.test(strUrn)) {
+        const convoUrn = strUrn;
+        if (!conversations[convoUrn]) {
+          conversations[convoUrn] = {
+            conversation_urn: convoUrn,
+            contact_name: null,
+            contact_linkedin_id: null,
+            contact_linkedin_url: null,
+            contact_title: null,
+            contact_company: null,
+            messages: [],
+            last_message_at: null,
+            last_sender: null,
+            is_unread: false,
+          };
+        }
+        const c = conversations[convoUrn];
+        if (obj.read === false || obj.unreadCount > 0) c.is_unread = true;
+        if (obj.lastActivityAt) c.last_message_at = String(obj.lastActivityAt);
+      }
+
+      // Profile objects — stash for later join by URN
+      if (strUrn && /urn:li:(?:fs_miniProfile|fsd_profile|dash_profile|fs_member):/i.test(strUrn)) {
+        if (obj.firstName || obj.lastName || obj.publicIdentifier) {
+          profilesByUrn[strUrn] = {
+            name: [obj.firstName, obj.lastName].filter(Boolean).join(" ").trim(),
+            linkedinId: obj.publicIdentifier || "",
+            url: obj.publicIdentifier ? `https://www.linkedin.com/in/${obj.publicIdentifier}/` : "",
+            title: obj.occupation || obj.headline || "",
+            company: "",
+          };
+          // Try to extract company from "Title at Company"
+          const headline = profilesByUrn[strUrn].title || "";
+          const m = headline.match(/^(.+?)\s+(?:at|@)\s+(.+)$/i);
+          if (m) {
+            profilesByUrn[strUrn].title = m[1].trim();
+            profilesByUrn[strUrn].company = m[2].trim();
+          }
+        }
+      }
+
+      // Message event objects
+      if (strUrn && /urn:li:(?:fs|fsd)_event:|fsd_message:/i.test(strUrn)) {
+        // Find the text of the message
+        let text = "";
+        if (obj.eventContent && obj.eventContent["com.linkedin.voyager.messaging.event.MessageEvent"]) {
+          const me = obj.eventContent["com.linkedin.voyager.messaging.event.MessageEvent"];
+          text = me?.attributedBody?.text || me?.body?.text || "";
+        } else if (obj.body && obj.body.text) {
+          text = obj.body.text;
+        } else if (obj.attributedBody && obj.attributedBody.text) {
+          text = obj.attributedBody.text;
+        } else if (typeof obj.text === "string") {
+          text = obj.text;
+        }
+
+        // Find the conversation URN this belongs to
+        const convoRef = obj.conversation || obj["*conversation"] || obj.conversationUrn || "";
+        const convoUrnString = typeof convoRef === "string" ? convoRef : (convoRef && convoRef.entityUrn) || "";
+
+        // Sender URN
+        const fromRef = obj.from || obj.sender || obj["*from"] || "";
+        const fromUrnString = typeof fromRef === "string" ? fromRef : (fromRef && fromRef.entityUrn) || "";
+
+        const createdAt = obj.createdAt || obj.timestamp || null;
+
+        if (text && convoUrnString) {
+          if (!messagesByConvoUrn[convoUrnString]) messagesByConvoUrn[convoUrnString] = [];
+          messagesByConvoUrn[convoUrnString].push({
+            text,
+            sent_at: createdAt ? String(createdAt) : null,
+            fromUrn: fromUrnString,
+          });
+        }
+      }
+
+      // Recurse into all values
+      for (const key in obj) {
+        const v = obj[key];
+        if (v && typeof v === "object") walk(v);
+      }
+    };
+
+    walk(data);
+
+    // Join messages + profiles into the conversation objects
+    const result = [];
+    for (const convoUrn in conversations) {
+      const c = conversations[convoUrn];
+      const msgs = messagesByConvoUrn[convoUrn] || [];
+      // Sort by timestamp
+      msgs.sort((a, b) => (a.sent_at || "").localeCompare(b.sent_at || ""));
+      c.messages = msgs.map((m) => ({
+        sender: "them", // default — we'd need the user's own URN to tell
+        text: m.text,
+        sent_at: m.sent_at,
+        is_mine: false,
+      }));
+      // If we have participant info, fill contact fields
+      for (const profileUrn in profilesByUrn) {
+        const p = profilesByUrn[profileUrn];
+        // Any profile that's not "me" — best effort
+        if (p.name && !c.contact_name) {
+          c.contact_name = p.name;
+          c.contact_linkedin_id = p.linkedinId;
+          c.contact_linkedin_url = p.url;
+          c.contact_title = p.title;
+          c.contact_company = p.company;
+          break;
+        }
+      }
+      if (msgs.length > 0) {
+        c.last_message_at = c.last_message_at || msgs[msgs.length - 1].sent_at;
+        c.last_sender = c.messages[c.messages.length - 1].sender;
+      }
+      // Only include conversations that have either a contact name or messages
+      if (c.contact_name || c.messages.length > 0) {
+        result.push(c);
+      }
+    }
+    return result;
   }
 
   // ── Auto-scrape: full sync flow triggered by background on /mynetwork/invite-connect/connections/

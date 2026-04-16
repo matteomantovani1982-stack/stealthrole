@@ -53,6 +53,43 @@ class IngestConversationsRequest(BaseModel):
     messages: list[LinkedInMessageInput] = Field(..., max_length=200)
 
 
+# ── Feature 2: Messages sync (conversation-centric) ───────────────────────────
+
+class MessageEntry(BaseModel):
+    """One message inside a conversation thread."""
+    sender: Literal["me", "them"]
+    text: str = Field(..., max_length=10000)
+    sent_at: str | None = None
+    is_mine: bool = False
+
+
+class ConversationPayload(BaseModel):
+    """Full conversation thread from the extension's Voyager API call."""
+    conversation_urn: str = Field(..., max_length=255)
+    contact_name: str | None = Field(default=None, max_length=255)
+    contact_linkedin_id: str | None = Field(default=None, max_length=255)
+    contact_linkedin_url: str | None = Field(default=None, max_length=500)
+    contact_title: str | None = Field(default=None, max_length=255)
+    contact_company: str | None = Field(default=None, max_length=255)
+    messages: list[MessageEntry] = Field(..., max_length=2000)
+    last_message_at: str | None = None
+    last_sender: Literal["me", "them"] | None = None
+    is_unread: bool = False
+
+
+class MessagesSyncRequest(BaseModel):
+    """Extension pushes a batch of full conversation threads at once."""
+    conversations: list[ConversationPayload] = Field(..., max_length=100)
+
+
+class MessagesSyncResponse(BaseModel):
+    created: int
+    updated: int
+    total_processed: int
+    total_messages: int
+    classification_enabled: bool
+
+
 # ── Response schemas ──────────────────────────────────────────────────────────
 
 class ConnectionResponse(BaseModel):

@@ -9,6 +9,7 @@ const loginBtn = document.getElementById("login-btn");
 const logoutBtn = document.getElementById("btn-logout");
 
 const syncBtn = document.getElementById("btn-sync-connections");
+const syncMsgBtn = document.getElementById("btn-sync-messages");
 const saveJobBtn = document.getElementById("btn-save-job");
 const autofillBtn = document.getElementById("btn-autofill");
 
@@ -58,14 +59,25 @@ logoutBtn.addEventListener("click", () => {
 
 // ── Sync connections ─────────────────────────────────────────────────────────
 syncBtn.addEventListener("click", () => {
-  setProgress({ status: "scanning", count: 0, indet: true });
+  setProgress({ status: "scanning", count: 0, indet: true, feature: "connections" });
   syncBtn.disabled = true;
   chrome.runtime.sendMessage({ type: "START_CONNECTIONS_SYNC" }, (res) => {
     if (!res || !res.ok) {
       setProgress({ status: "error", count: 0, error: (res && res.error) || "Failed to start" });
       syncBtn.disabled = false;
     }
-    // Success: tab opened. PROGRESS messages will stream in from the content script.
+  });
+});
+
+// ── Sync messages ───────────────────────────────────────────────────────────
+syncMsgBtn.addEventListener("click", () => {
+  setProgress({ status: "scanning", count: 0, indet: true, feature: "messages" });
+  syncMsgBtn.disabled = true;
+  chrome.runtime.sendMessage({ type: "START_MESSAGES_SYNC" }, (res) => {
+    if (!res || !res.ok) {
+      setProgress({ status: "error", count: 0, error: (res && res.error) || "Failed to start" });
+      syncMsgBtn.disabled = false;
+    }
   });
 });
 
@@ -80,25 +92,27 @@ function restoreSyncStatus() {
   });
 }
 
-// Listen for PROGRESS broadcasts from background
+// Listen for PROGRESS broadcasts from background (connections OR messages)
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg?.type !== "PROGRESS" || msg.feature !== "connections") return;
+  if (msg?.type !== "PROGRESS") return;
+  if (msg.feature !== "connections" && msg.feature !== "messages") return;
   setProgress(msg);
   if (msg.status === "done" || msg.status === "error") {
     syncBtn.disabled = false;
+    syncMsgBtn.disabled = false;
     loadStats();
   }
 });
 
-function setProgress({ status, count, error, indet }) {
+function setProgress({ status, count, error, indet, feature }) {
   if (!status) { progressWrap.classList.remove("active"); return; }
   progressWrap.classList.add("active");
   progressWrap.classList.toggle("progress-indet", !!indet);
 
+  const label = feature === "messages" ? "Scanning messages…" : "Scanning connections…";
   if (status === "scanning") {
-    progressLabel.textContent = "Scanning connections…";
+    progressLabel.textContent = label;
     progressCount.textContent = String(count || 0);
-    // Indeterminate bar while scrolling; once counts exceed target estimate, show %
     progressFill.style.width = indet ? "40%" : Math.min(100, ((count || 0) / 50)) + "%";
   } else if (status === "done") {
     progressLabel.textContent = "✓ Done";

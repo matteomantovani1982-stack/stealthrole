@@ -41,11 +41,12 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 // popup and clean up the tab on completion.
 
 const CONNECTIONS_URL = "https://www.linkedin.com/mynetwork/invite-connect/connections/?sortType=RECENTLY_ADDED";
+const MESSAGING_URL = "https://www.linkedin.com/messaging/";
 
 async function startConnectionsSync({ silent = false } = {}) {
   const existing = await chrome.storage.local.get("sr_sync_task");
   if (existing.sr_sync_task && existing.sr_sync_task.status === "scanning") {
-    console.log("[StealthRole] Connections sync already running, ignoring");
+    console.log("[StealthRole] sync already running, ignoring");
     return { ok: false, error: "Already running" };
   }
   const task = {
@@ -61,13 +62,32 @@ async function startConnectionsSync({ silent = false } = {}) {
   return { ok: true, tab_id: tab.id };
 }
 
-async function finishConnectionsSync({ count, error } = {}) {
+async function startMessagesSync({ silent = false } = {}) {
+  const existing = await chrome.storage.local.get("sr_sync_task");
+  if (existing.sr_sync_task && existing.sr_sync_task.status === "scanning") {
+    console.log("[StealthRole] sync already running, ignoring");
+    return { ok: false, error: "Already running" };
+  }
+  const task = {
+    type: "messages",
+    status: "opening",
+    started_at: Date.now(),
+    count: 0,
+    silent,
+  };
+  await chrome.storage.local.set({ sr_sync_task: task });
+  const tab = await chrome.tabs.create({ url: MESSAGING_URL, active: !silent });
+  await chrome.storage.local.set({ sr_sync_task: { ...task, tab_id: tab.id } });
+  return { ok: true, tab_id: tab.id };
+}
+
+async function finishConnectionsSync({ count, error, feature = "connections" } = {}) {
   const { sr_sync_task } = await chrome.storage.local.get("sr_sync_task");
   if (!sr_sync_task) return;
   const tabId = sr_sync_task.tab_id;
   await chrome.storage.local.remove("sr_sync_task");
   // Fan out final PROGRESS so popup / Settings page updates
-  broadcast({ type: "PROGRESS", feature: "connections", count: count ?? 0, status: error ? "error" : "done", error });
+  broadcast({ type: "PROGRESS", feature, count: count ?? 0, status: error ? "error" : "done", error });
   // Close the tab (silent mode: always; visible: only if no error so user can see what happened)
   if (tabId) {
     try { await chrome.tabs.remove(tabId); } catch {}
@@ -141,6 +161,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === "START_MESSAGES_SYNC") {
+    startMessagesSync({ silent: !!msg.silent })
+      .then((r) => sendResponse(r))
+      .catch((e) => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+
   if (msg.type === "GET_SYNC_STATUS") {
     chrome.storage.local.get("sr_sync_task").then(({ sr_sync_task }) => {
       sendResponse({ task: sr_sync_task || null });
@@ -160,7 +187,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     });
     broadcast(msg);
     if (msg.status === "done" || msg.status === "error") {
-      finishConnectionsSync({ count: msg.count, error: msg.error });
+      finishConnectionsSync({ count: msg.count, error: msg.error, feature: msg.feature });
     }
     // No sendResponse — fire and forget
     return false;
