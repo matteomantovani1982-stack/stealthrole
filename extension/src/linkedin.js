@@ -1,6 +1,6 @@
 // StealthRole LinkedIn content script
 (() => {
-  console.log("%c[StealthRole v1.1.1] linkedin.js loaded", "color: #7F8CFF; font-weight: bold");
+  console.log("%c[StealthRole v1.1.2] linkedin.js loaded", "color: #7F8CFF; font-weight: bold");
 
   // API call: background script first, direct fetch fallback
   function srApiCall(path, options, callback) {
@@ -99,6 +99,26 @@
       });
     } catch (e) {
       console.warn("[StealthRole] sr_sync_task check failed:", e);
+    }
+
+    // ── Network spy for messaging pages ──
+    // Captures all LinkedIn API URLs the page's own JS calls so we can
+    // discover the current messaging endpoint without guessing.
+    if (pageType === "messaging") {
+      try {
+        const observer = new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) {
+            const url = entry.name || "";
+            if (url.includes("voyager") && (url.includes("essag") || url.includes("onvers") || url.includes("inbox") || url.includes("thread"))) {
+              console.log("[StealthRole-NET] " + url.slice(0, 200));
+            }
+          }
+        });
+        observer.observe({ type: "resource", buffered: true });
+        console.log("[StealthRole-NET] observer installed — will log LinkedIn messaging API calls");
+      } catch (e) {
+        console.warn("[StealthRole-NET] observer failed:", e);
+      }
     }
 
     // Auto-save profile + scrape mutual connections on profile pages
