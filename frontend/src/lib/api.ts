@@ -636,3 +636,53 @@ export async function generateOutreach(data: {
 }): Promise<{ linkedin_note: string; cold_email: string; follow_up: string }> {
   return request("/outreach/generate", { method: "POST", body: JSON.stringify(data) });
 }
+
+// ── LinkedIn Inbox ──────────────────────────────────────────────────────────
+
+export interface InboxMessage {
+  sender: "me" | "them";
+  text: string;
+  sent_at: string | null;
+  is_mine: boolean;
+}
+
+export interface InboxConversation {
+  id: string;
+  conversation_urn: string;
+  contact_name: string | null;
+  contact_linkedin_id: string | null;
+  contact_linkedin_url: string | null;
+  contact_title: string | null;
+  contact_company: string | null;
+  messages: InboxMessage[];
+  message_count: number;
+  last_message_at: string | null;
+  last_sender: "me" | "them" | null;
+  is_unread: boolean;
+  days_since_reply: number | null;
+  is_job_related: boolean | null;
+  classification: string | null;
+  stage: string | null;
+  ai_draft_reply: string | null;
+  created_at: string | null;
+}
+
+export interface InboxResponse {
+  conversations: InboxConversation[];
+  total: number;
+}
+
+export async function getInbox(params?: {
+  filter?: string;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<InboxResponse> {
+  const qs = new URLSearchParams();
+  if (params?.filter) qs.set("filter", params.filter);
+  if (params?.search) qs.set("search", params.search);
+  if (params?.limit) qs.set("limit", String(params.limit));
+  if (params?.offset) qs.set("offset", String(params.offset));
+  const query = qs.toString();
+  return request(`/linkedin/inbox${query ? `?${query}` : ""}`);
+}

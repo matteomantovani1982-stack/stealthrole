@@ -1,4 +1,6 @@
-/* StealthRole floating overlay styles */
+/* StealthRole v2.0 — overlay styles */
+
+/* ── Floating action button ── */
 .sr-overlay-btn {
   position: fixed;
   bottom: 20px;
@@ -24,15 +26,21 @@
   transform: translateY(-1px);
   box-shadow: 0 6px 16px rgba(79, 70, 229, 0.4);
 }
-.sr-overlay-btn .sr-icon {
-  width: 16px;
-  height: 16px;
+.sr-sync-btn {
+  bottom: 72px;
+  background: #374151;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
 }
+.sr-sync-btn:hover {
+  background: #4B5563;
+}
+
+/* ── Toast notification ── */
 .sr-toast {
   position: fixed;
   bottom: 80px;
   right: 20px;
-  z-index: 99999;
+  z-index: 100000;
   background: #111827;
   color: #fff;
   border-radius: 10px;
@@ -43,20 +51,241 @@
   opacity: 0;
   transform: translateY(10px);
   transition: all 0.3s;
+  max-width: 320px;
 }
-.sr-toast.show {
+.sr-toast-visible {
   opacity: 1;
   transform: translateY(0);
 }
-.sr-badge {
-  display: inline-flex;
+
+/* ── Intelligence side panel ── */
+.sr-intel-panel {
+  position: fixed;
+  top: 64px;
+  right: 12px;
+  width: 340px;
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  z-index: 99998;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.15), 0 2px 8px rgba(0,0,0,0.08);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  border: 1px solid #e5e7eb;
+}
+.sr-intel-header {
+  display: flex;
   align-items: center;
-  gap: 4px;
-  background: rgba(79, 70, 229, 0.1);
-  color: #4F46E5;
+  gap: 8px;
+  padding: 14px 16px;
+  border-bottom: 1px solid #f3f4f6;
+  background: linear-gradient(135deg, #4F46E5 0%, #6366F1 100%);
+  border-radius: 12px 12px 0 0;
+  color: #fff;
+}
+.sr-intel-logo { font-size: 16px; }
+.sr-intel-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sr-intel-close {
+  background: rgba(255,255,255,0.2);
+  border: none;
+  color: #fff;
+  width: 24px;
+  height: 24px;
   border-radius: 6px;
-  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sr-intel-close:hover { background: rgba(255,255,255,0.3); }
+
+.sr-intel-section {
+  padding: 12px 16px;
+  border-bottom: 1px solid #f3f4f6;
+}
+.sr-intel-section:last-child { border-bottom: none; }
+.sr-intel-heading {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sr-intel-badge {
+  display: inline-flex;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  margin-left: 6px;
+}
+.sr-intel-badge--success { background: #D1FAE5; color: #065F46; }
+.sr-intel-badge--highlight { background: #FEF3C7; color: #92400E; }
+.sr-intel-badge--info { background: #DBEAFE; color: #1E40AF; }
+.sr-intel-badge--danger { background: #FEE2E2; color: #991B1B; }
+
+.sr-intel-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.sr-intel-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 12px;
+  color: #1f2937;
+  line-height: 1.4;
+}
+.sr-intel-icon {
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+  font-size: 12px;
+}
+.sr-intel-text { flex: 1; font-weight: 500; }
+.sr-intel-sub {
+  display: block;
+  font-size: 11px;
+  color: #6b7280;
+  font-weight: 400;
+  margin-top: 1px;
+}
+.sr-intel-empty {
+  font-size: 12px;
+  color: #9ca3af;
+  font-style: italic;
+  padding: 4px 0;
+}
+.sr-intel-action {
+  flex-shrink: 0;
+  background: #EEF2FF;
+  color: #4F46E5;
+  border: none;
+  border-radius: 6px;
+  padding: 3px 8px;
   font-size: 11px;
   font-weight: 600;
+  cursor: pointer;
+}
+.sr-intel-action:hover { background: #E0E7FF; }
+
+.sr-intel-actions {
+  display: flex;
+  gap: 8px;
+  padding: 4px 0;
+  flex-wrap: wrap;
+}
+.sr-intel-btn {
+  flex: 1;
+  min-width: 120px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s;
+}
+.sr-intel-btn:hover { background: #f9fafb; border-color: #d1d5db; }
+.sr-intel-btn--primary {
+  background: #4F46E5;
+  color: #fff;
+  border-color: #4F46E5;
+}
+.sr-intel-btn--primary:hover { background: #4338CA; }
+
+/* ── AI Reply draft panel ── */
+.sr-draft-panel {
+  position: fixed;
+  bottom: 120px;
+  right: 20px;
+  width: 380px;
+  z-index: 100001;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+  border: 1px solid #e5e7eb;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  overflow: hidden;
+}
+.sr-draft-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #4F46E5, #7C3AED);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+.sr-draft-close {
+  background: rgba(255,255,255,0.2);
+  border: none;
+  color: #fff;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.sr-draft-analysis {
+  padding: 10px 16px;
+  background: #F5F3FF;
+  font-size: 11px;
+  color: #5B21B6;
+  line-height: 1.5;
+  border-bottom: 1px solid #EDE9FE;
+}
+.sr-draft-body {
+  padding: 14px 16px;
+  font-size: 13px;
+  color: #1f2937;
+  line-height: 1.6;
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+.sr-draft-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 16px 14px;
+  border-top: 1px solid #f3f4f6;
+}
+.sr-draft-trigger {
+  bottom: auto !important;
+  right: auto !important;
+  position: relative !important;
+  box-shadow: none !important;
+  background: #6366F1 !important;
+}
+.sr-draft-trigger:hover { background: #4F46E5 !important; }
+
+/* ── Message classification badges ── */
+.sr-msg-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  z-index: 10;
+  pointer-events: none;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }

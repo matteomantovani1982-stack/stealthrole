@@ -39,6 +39,12 @@ from app.schemas.linkedin import (
     IngestConnectionsRequest,
     IngestConnectionsResponse,
     IngestConversationsRequest,
+    IngestCompanyRequest,
+    IngestCompanyResponse,
+    IngestJobRequest,
+    IngestJobResponse,
+    IngestJobsBulkRequest,
+    IngestJobsBulkResponse,
     LinkedInStatsResponse,
     LinkThreadRequest,
     MessagesSyncRequest,
@@ -758,6 +764,115 @@ RULES:
 
 # ── Feature 2: Messages sync (conversation-centric) ─────────────────────────
 
+
+# ── Feature 3: Inbox (read conversations) ────────────────────────────────────
+
+class InboxConversation(BaseModel):
+    """One conversation thread returned to the frontend."""
+    id: str
+    conversation_urn: str
+    contact_name: str | None = None
+    contact_linkedin_id: str | None = None
+    contact_linkedin_url: str | None = None
+    contact_title: str | None = None
+    contact_company: str | None = None
+    messages: list[dict] = []
+    message_count: int = 0
+    last_message_at: str | None = None
+    last_sender: str | None = None
+    is_unread: bool = False
+    days_since_reply: int | None = None
+    is_job_related: bool | None = None
+    classification: str | None = None
+    stage: str | None = None
+    ai_draft_reply: str | None = None
+    created_at: str | None = None
+
+
+class InboxResponse(BaseModel):
+    conversations: list[InboxConversation]
+    total: int
+
+
+@router.get(
+    "/inbox",
+    response_model=InboxResponse,
+    summary="List LinkedIn conversation threads for the Inbox page",
+)
+async def get_inbox(
+    db: DB,
+    user_id: CurrentUserId,
+    filter: str | None = Query(default=None, description="all|job_related|unread|recruiter|needs_reply"),
+    search: str | None = Query(default=None, description="Search contact name, title, or company"),
+    limit: int = Query(default=50, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> InboxResponse:
+    """
+    Return conversation threads from linkedin_messages table,
+    ordered by last_message_at descending. Supports filtering and search.
+    """
+    from sqlalchemy import func as sa_func, select as sa_select, or_
+
+    from app.models.linkedin_message import LinkedInMessage
+
+    q = sa_select(LinkedInMessage).where(LinkedInMessage.user_id == user_id)
+
+    # Filters
+    if filter == "job_related":
+        q = q.where(LinkedInMessage.is_job_related == True)  # noqa: E712
+    elif filter == "unread":
+        q = q.where(LinkedInMessage.is_unread == True)  # noqa: E712
+    elif filter == "recruiter":
+        q = q.where(LinkedInMessage.classification == "recruiter")
+    elif filter == "needs_reply":
+        q = q.where(
+            LinkedInMessage.last_sender == "them",
+            LinkedInMessage.days_since_reply != None,  # noqa: E711
+        )
+
+    # Text search
+    if search:
+        pattern = f"%{search.strip().lower()}%"
+        q = q.where(or_(
+            sa_func.lower(LinkedInMessage.contact_name).like(pattern),
+            sa_func.lower(LinkedInMessage.contact_title).like(pattern),
+            sa_func.lower(LinkedInMessage.contact_company).like(pattern),
+        ))
+
+    # Count total matching
+    count_q = sa_select(sa_func.count()).select_from(q.subquery())
+    total = (await db.execute(count_q)).scalar_one()
+
+    # Fetch page
+    q = q.order_by(LinkedInMessage.last_message_at.desc().nullslast())
+    q = q.offset(offset).limit(limit)
+    rows = (await db.execute(q)).scalars().all()
+
+    conversations = []
+    for r in rows:
+        conversations.append(InboxConversation(
+            id=str(r.id),
+            conversation_urn=r.conversation_urn,
+            contact_name=r.contact_name,
+            contact_linkedin_id=r.contact_linkedin_id,
+            contact_linkedin_url=r.contact_linkedin_url,
+            contact_title=r.contact_title,
+            contact_company=r.contact_company,
+            messages=r.messages if isinstance(r.messages, list) else [],
+            message_count=r.message_count,
+            last_message_at=r.last_message_at.isoformat() if r.last_message_at else None,
+            last_sender=r.last_sender,
+            is_unread=r.is_unread,
+            days_since_reply=r.days_since_reply,
+            is_job_related=r.is_job_related,
+            classification=r.classification,
+            stage=r.stage,
+            ai_draft_reply=r.ai_draft_reply,
+            created_at=r.created_at.isoformat() if r.created_at else None,
+        ))
+
+    return InboxResponse(conversations=conversations, total=total)
+
 @router.post(
     "/messages/sync",
     response_model=MessagesSyncResponse,
@@ -906,3 +1021,224 @@ async def sync_linkedin_messages(
         total_messages=total_messages,
         classification_enabled=settings.enable_linkedin_msg_classify,
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Extension v2: Job + Company ingest
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@router.post(
+    "/ingest/job",
+    response_model=IngestJobResponse,
+    summary="Save a job posting scraped from a LinkedIn job detail page",
+)
+async def ingest_job(
+    payload: IngestJobRequest,
+    db: DB,
+    user_id: CurrentUserId,
+) -> IngestJobResponse:
+    """
+    Upserts a job into saved_jobs. Dedupe by (user_id, source, external_id).
+    The extension auto-captures job data when the user views a LinkedIn job page.
+    """
+    from sqlalchemy import select as sa_select
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.models.saved_job import SavedJob
+
+    job = payload.job
+    external_id = job.linkedin_job_id or job.linkedin_url or job.title
+
+    # Check for existing
+    existing = (await db.execute(
+        sa_select(SavedJob.id).where(
+            SavedJob.user_id == user_id,
+            SavedJob.source == "linkedin",
+            SavedJob.external_id == external_id,
+        )
+    )).scalar_one_or_none()
+
+    if existing:
+        logger.info("job_already_saved", user_id=user_id, job_id=external_id)
+        return IngestJobResponse(saved=True, job_id=str(existing), already_existed=True)
+
+    # Parse salary range if available
+    salary_min, salary_max = _parse_salary(job.salary)
+
+    values = {
+        "user_id": user_id,
+        "source": "linkedin",
+        "external_id": external_id,
+        "title": job.title,
+        "company": job.company,
+        "location": job.location,
+        "salary_min": salary_min,
+        "salary_max": salary_max,
+        "url": job.linkedin_url or payload.source_url,
+        "metadata_": {
+            "description": job.description[:5000] if job.description else "",
+            "employment_type": job.employment_type,
+            "seniority_level": job.seniority_level,
+            "industry": job.industry,
+            "job_function": job.job_function,
+            "posted_at": job.posted_at,
+            "applicant_count": job.applicant_count,
+            "company_linkedin_url": job.company_linkedin_url,
+            "salary_raw": job.salary,
+        },
+    }
+
+    stmt = pg_insert(SavedJob).values(**values)
+    stmt = stmt.on_conflict_do_nothing(
+        constraint="uq_saved_job_user_source_ext",
+    )
+    await db.execute(stmt)
+    await db.commit()
+
+    # Retrieve the ID
+    row = (await db.execute(
+        sa_select(SavedJob.id).where(
+            SavedJob.user_id == user_id,
+            SavedJob.source == "linkedin",
+            SavedJob.external_id == external_id,
+        )
+    )).scalar_one_or_none()
+
+    logger.info("job_ingested", user_id=user_id, title=job.title, company=job.company)
+    return IngestJobResponse(saved=True, job_id=str(row) if row else None, already_existed=False)
+
+
+@router.post(
+    "/ingest/jobs-bulk",
+    response_model=IngestJobsBulkResponse,
+    summary="Bulk save jobs from a LinkedIn search results page",
+)
+async def ingest_jobs_bulk(
+    payload: IngestJobsBulkRequest,
+    db: DB,
+    user_id: CurrentUserId,
+) -> IngestJobsBulkResponse:
+    """
+    Batch upsert jobs from a job search page. Skips duplicates.
+    """
+    from sqlalchemy import select as sa_select
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.models.saved_job import SavedJob
+
+    saved = 0
+    skipped = 0
+
+    for job in payload.jobs:
+        external_id = job.linkedin_job_id or job.linkedin_url or job.title
+
+        values = {
+            "user_id": user_id,
+            "source": "linkedin",
+            "external_id": external_id,
+            "title": job.title,
+            "company": job.company,
+            "location": job.location,
+            "url": job.linkedin_url,
+            "metadata_": {
+                "seniority_level": job.seniority_level,
+                "employment_type": job.employment_type,
+            },
+        }
+
+        stmt = pg_insert(SavedJob).values(**values)
+        stmt = stmt.on_conflict_do_nothing(constraint="uq_saved_job_user_source_ext")
+        result = await db.execute(stmt)
+
+        if result.rowcount > 0:
+            saved += 1
+        else:
+            skipped += 1
+
+    await db.commit()
+    logger.info("jobs_bulk_ingested", user_id=user_id, saved=saved, skipped=skipped)
+    return IngestJobsBulkResponse(saved=saved, skipped=skipped)
+
+
+@router.post(
+    "/ingest/company",
+    response_model=IngestCompanyResponse,
+    summary="Store company intel from a LinkedIn company page",
+)
+async def ingest_company(
+    payload: IngestCompanyRequest,
+    db: DB,
+    user_id: CurrentUserId,
+) -> IngestCompanyResponse:
+    """
+    Stores company data scraped from LinkedIn company pages.
+    Cross-references with existing connections and hidden market signals.
+    Returns how many connections the user has at this company and any signals.
+    """
+    from sqlalchemy import func as sa_func, select as sa_select
+
+    from app.models.linkedin_connection import LinkedInConnection
+    from app.models.hidden_signal import HiddenSignal
+
+    company = payload.company
+
+    # Count connections at this company (fuzzy match on company name)
+    company_lower = company.name.strip().lower()
+    conn_count = (await db.execute(
+        sa_select(sa_func.count()).where(
+            LinkedInConnection.user_id == user_id,
+            sa_func.lower(LinkedInConnection.current_company).contains(company_lower),
+        )
+    )).scalar_one() or 0
+
+    # Count hidden market signals for this company
+    signal_count = 0
+    try:
+        signal_count = (await db.execute(
+            sa_select(sa_func.count()).where(
+                HiddenSignal.user_id == user_id,
+                sa_func.lower(HiddenSignal.company).contains(company_lower),
+            )
+        )).scalar_one() or 0
+    except Exception:
+        pass  # HiddenSignal table might not have a company column
+
+    logger.info(
+        "company_intel_ingested",
+        user_id=user_id,
+        company=company.name,
+        connections=conn_count,
+        signals=signal_count,
+    )
+
+    return IngestCompanyResponse(
+        saved=True,
+        company_name=company.name,
+        connections_here=conn_count,
+        signals_count=signal_count,
+    )
+
+
+def _parse_salary(salary_str: str) -> tuple[int | None, int | None]:
+    """Best-effort parse salary range from strings like '$120K - $150K/yr'."""
+    import re
+    if not salary_str:
+        return None, None
+    # Find all numbers (possibly with K/k suffix)
+    nums = re.findall(r'[\$£€]?\s*([\d,]+)\s*[kK]?', salary_str)
+    parsed = []
+    for n in nums:
+        try:
+            val = int(n.replace(",", ""))
+            # If the number is small and the string has K, multiply
+            if val < 1000 and ("k" in salary_str.lower()):
+                val *= 1000
+            parsed.append(val)
+        except ValueError:
+            continue
+    if len(parsed) >= 2:
+        return min(parsed), max(parsed)
+    elif len(parsed) == 1:
+        return parsed[0], parsed[0]
+    return None, None

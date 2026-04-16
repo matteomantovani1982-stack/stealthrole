@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { href: "/", label: "Home", icon: HomeIcon },
   { href: "/scout", label: "Job Scout", icon: SearchIcon },
   { href: "/applications", label: "Applications", icon: KanbanIcon },
+  { href: "/messages", label: "Messages", icon: MessageIcon },
   { href: "/profile", label: "Profile", icon: UserIcon },
   { href: "/billing", label: "Billing", icon: CreditIcon },
   { href: "/settings", label: "Settings", icon: GearIcon },
@@ -146,6 +147,15 @@ function CreditIcon({ active }: { active: boolean }) {
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className={active ? "text-[#7F8CFF]" : "text-[#555C7A]"}>
       <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5"/>
       <path d="M9.5 5.5C9.5 5.5 9 4.5 8 4.5C6.5 4.5 5.5 5.5 5.5 6.5C5.5 7.5 6.5 8 8 8C9.5 8 10.5 8.5 10.5 9.5C10.5 10.5 9.5 11.5 8 11.5C7 11.5 6.5 10.5 6.5 10.5M8 3.5V4.5M8 11.5V12.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+    </svg>
+  );
+}
+
+function MessageIcon({ active }: { active: boolean }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className={active ? "text-[#7F8CFF]" : "text-[#555C7A]"}>
+      <path d="M2 3.5C2 2.67 2.67 2 3.5 2H12.5C13.33 2 14 2.67 14 3.5V10.5C14 11.33 13.33 12 12.5 12H5L2 14.5V3.5Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+      <path d="M5 6H11M5 8.5H9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
     </svg>
   );
 }

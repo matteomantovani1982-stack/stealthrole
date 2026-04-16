@@ -139,3 +139,71 @@ class LinkedInStatsResponse(BaseModel):
     total_connections: int
     recruiters: int
     unique_companies: int
+
+
+# ── Extension v2: Job + Company ingest ───────────────────────────────────────
+
+class JobCaptureInput(BaseModel):
+    """Structured job data scraped from a LinkedIn job detail page."""
+    title: str = Field(..., max_length=500)
+    company: str = Field(default="", max_length=255)
+    company_linkedin_url: str | None = Field(default=None, max_length=500)
+    location: str = Field(default="", max_length=255)
+    description: str = Field(default="", max_length=10000)
+    salary: str = Field(default="", max_length=255)
+    employment_type: str = Field(default="", max_length=100)
+    seniority_level: str = Field(default="", max_length=100)
+    industry: str = Field(default="", max_length=255)
+    job_function: str = Field(default="", max_length=255)
+    posted_at: str = Field(default="", max_length=100)
+    applicant_count: str = Field(default="", max_length=100)
+    linkedin_job_id: str = Field(default="", max_length=50)
+    linkedin_url: str = Field(default="", max_length=2000)
+
+
+class IngestJobRequest(BaseModel):
+    job: JobCaptureInput
+    source_url: str = Field(default="", max_length=2000)
+
+
+class IngestJobResponse(BaseModel):
+    saved: bool
+    job_id: str | None = None
+    already_existed: bool = False
+
+
+class IngestJobsBulkRequest(BaseModel):
+    """Batch of job summaries from a search results page."""
+    jobs: list[JobCaptureInput] = Field(..., max_length=100)
+
+
+class IngestJobsBulkResponse(BaseModel):
+    saved: int
+    skipped: int
+
+
+class CompanyCaptureInput(BaseModel):
+    """Structured company data from a LinkedIn company page."""
+    name: str = Field(..., max_length=255)
+    linkedin_url: str = Field(default="", max_length=500)
+    tagline: str = Field(default="", max_length=500)
+    industry: str = Field(default="", max_length=255)
+    headcount: str = Field(default="", max_length=100)
+    specialties: str = Field(default="", max_length=1000)
+    website: str = Field(default="", max_length=500)
+    headquarters: str = Field(default="", max_length=255)
+    founded: str = Field(default="", max_length=50)
+    type: str = Field(default="", max_length=100)
+    about: str = Field(default="", max_length=3000)
+
+
+class IngestCompanyRequest(BaseModel):
+    company: CompanyCaptureInput
+    source_url: str = Field(default="", max_length=2000)
+
+
+class IngestCompanyResponse(BaseModel):
+    saved: bool
+    company_name: str
+    connections_here: int = 0
+    signals_count: int = 0
