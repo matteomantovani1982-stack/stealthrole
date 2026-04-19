@@ -34,6 +34,8 @@
     return builders;
   }
 
+  const BATCH = 40; // moved to module scope so probe and paginator share it
+
   async function fetchAllConnectionsViaVoyager() {
     const headers = SR.voyagerHeaders();
     if (!headers) {
@@ -45,7 +47,10 @@
     const builders = connectionEndpointBuilders();
     for (let i = 0; i < builders.length; i++) {
       const build = builders[i];
-      const testUrl = build(0, 10);
+      // CRITICAL: probe with full BATCH size so firstPageData has all records
+      // for page 0. Previously probed with 10 and started pagination at 40,
+      // silently skipping records 10–39 (30 connections lost every sync).
+      const testUrl = build(0, BATCH);
       try {
         const res = await SR.fetchWithTimeout(testUrl, { headers, credentials: "include" }, 15000);
         console.log(`[SR] conn probe ${i}:`, testUrl.slice(0, 110), "→", res.status);
@@ -58,7 +63,7 @@
         if (data.included?.[0]) console.log(`[SR] conn probe ${i}: included[0] =`, JSON.stringify(data.included[0]).slice(0, 400));
 
         const extracted = extractVoyagerRecords(data);
-        console.log(`[SR] conn probe ${i}: extracted`, extracted.length, "records");
+        console.log(`[SR] conn probe ${i}: extracted ${extracted.length} records from ${(data.elements||[]).length} elements + ${(data.included||[]).length} included`);
         if (extracted.length === 0) continue;
         return await paginateVoyager(build, headers, data);
       } catch (e) {
@@ -94,24 +99,35 @@
 
   async function paginateVoyager(build, headers, firstPageData) {
     const all = [];
-    const BATCH = 40;
     const MAX_TOTAL = 15000;
     const seenIds = new Set();
 
-    // Extract total from paging metadata so we know when we're truly done
-    const pagingTotal = firstPageData?.paging?.total
-      || firstPageData?.paging?.count
+    // Extract total from paging metadata so we know when we're truly done.
+    // IMPORTANT: paging.count is USUALLY the page size (~40), not total.
+    // But some endpoints put the total in paging.count when paging.total is absent.
+    let pagingTotal = firstPageData?.paging?.total
       || firstPageData?.metadata?.totalResultCount
       || 0;
-    console.log(`[SR] voyager conn: paging.total = ${pagingTotal}`);
+    // Heuristic: if paging.count > 100 and there's no paging.total, it's likely the real total
+    const pagingCount = firstPageData?.paging?.count || 0;
+    if (!pagingTotal && pagingCount > 100) {
+      console.log(`[SR] voyager conn: paging.count=${pagingCount} looks like total (no paging.total found) — using it`);
+      pagingTotal = pagingCount;
+    }
+    console.log(`[SR] voyager conn: paging.total = ${pagingTotal}, paging.count = ${pagingCount || "?"}, paging.start = ${firstPageData?.paging?.start || "?"}`);
 
     let extracted = extractVoyagerRecords(firstPageData);
     for (const c of extracted) {
       if (!seenIds.has(c.linkedin_id)) { seenIds.add(c.linkedin_id); all.push(c); }
     }
-    console.log(`[SR] voyager conn: page 0 → ${extracted.length} records`);
+    console.log(`[SR] voyager conn: page 0 → ${extracted.length} records (${all.length} unique)`);
 
-    let start = BATCH;
+    // Start from where the first page left off, NOT from a fixed BATCH offset.
+    // Use elements.length (actual items returned) rather than paging.count (which
+    // might be the total, see heuristic above).
+    const firstPageElements = firstPageData?.elements?.length || 0;
+    const firstPageCount = firstPageElements || extracted.length || BATCH;
+    let start = Math.max(firstPageCount, extracted.length);
     let rateLimitRetries = 0;
     let consecutiveEmpty = 0;
     const MAX_EMPTY = 5; // allow up to 5 empty pages before giving up (LinkedIn skips sometimes)
@@ -194,6 +210,26 @@
       return "";
     };
 
+    // Try every available source for a profile slug/ID.
+    // Priority: publicIdentifier → profileUrl slug → entityUrn member ID
+    const extractSlug = (obj) => {
+      if (!obj || typeof obj !== "object") return "";
+      // 1. publicIdentifier (most common)
+      const pubId = str(obj.publicIdentifier);
+      if (pubId) return pubId;
+      // 2. profileUrl slug (e.g. "https://www.linkedin.com/in/john-doe")
+      const urlSlug = str(obj.profileUrl).match(/\/in\/([A-Za-z0-9_-]+)/);
+      if (urlSlug) return urlSlug[1];
+      // 3. entityUrn — extract member ID from URNs like:
+      //    urn:li:fsd_profile:ACoAAEOBz6gB...
+      //    urn:li:fs_miniProfile:ACoAAEOBz6gB...
+      //    urn:li:member:123456789
+      const urn = str(obj.entityUrn) || str(obj["*connectedMember"]) || str(obj.$id) || "";
+      const urnMatch = urn.match(/urn:li:(?:fsd_profile|fs_miniProfile|member):([A-Za-z0-9_-]+)/);
+      if (urnMatch) return `member_${urnMatch[1]}`; // prefix to distinguish from vanity slugs
+      return "";
+    };
+
     const addResult = (slug, first, last, headline) => {
       const cleanSlug = str(slug);
       if (!cleanSlug || seen.has(cleanSlug)) return;
@@ -205,9 +241,11 @@
       let currentCompany = "";
       const m = hl.match(/^(.+?)\s+(?:at|@)\s+(.+)$/i);
       if (m) { currentTitle = m[1].trim(); currentCompany = m[2].trim(); }
+      // For entityUrn-based IDs, we can't build a profile URL
+      const isVanitySlug = !cleanSlug.startsWith("member_");
       results.push({
         linkedin_id: cleanSlug,
-        linkedin_url: `https://www.linkedin.com/in/${cleanSlug}/`,
+        linkedin_url: isVanitySlug ? `https://www.linkedin.com/in/${cleanSlug}/` : "",
         full_name: fullName,
         headline: hl,
         current_title: currentTitle,
@@ -215,43 +253,38 @@
       });
     };
 
+    // Try to extract a connection from a profile-like object using all slug sources
+    const tryExtractProfile = (obj, fallbackHeadline) => {
+      if (!obj || typeof obj !== "object") return;
+      const slug = extractSlug(obj);
+      if (slug && (obj.firstName || obj.lastName)) {
+        addResult(slug, obj.firstName, obj.lastName, obj.headline || obj.occupation || fallbackHeadline || "");
+      }
+    };
+
     const visit = (obj) => {
       if (!obj || typeof obj !== "object") return;
 
-      // Extract publicIdentifier — may be on the object itself or nested
-      const pubId = str(obj.publicIdentifier);
+      // Direct profile — object itself has name fields
+      tryExtractProfile(obj, "");
 
-      // Direct profile (handles both string and {text:""} wrapped values)
-      if (pubId && (obj.firstName || obj.lastName)) {
-        addResult(pubId, obj.firstName, obj.lastName, obj.headline || obj.occupation || "");
-      }
       // miniProfile nested
-      if (obj.miniProfile?.publicIdentifier) {
-        const mp = obj.miniProfile;
-        addResult(mp.publicIdentifier, mp.firstName, mp.lastName, mp.occupation || mp.headline || obj.headline || "");
+      if (obj.miniProfile && typeof obj.miniProfile === "object") {
+        tryExtractProfile(obj.miniProfile, obj.headline || obj.occupation || "");
       }
       // profile nested
-      if (obj.profile?.publicIdentifier) {
-        const p = obj.profile;
-        addResult(p.publicIdentifier, p.firstName, p.lastName, p.headline || p.occupation || "");
+      if (obj.profile && typeof obj.profile === "object") {
+        tryExtractProfile(obj.profile, "");
       }
       // connectedMember (dash model)
-      if (obj.connectedMember?.publicIdentifier) {
-        const cm = obj.connectedMember;
-        addResult(cm.publicIdentifier, cm.firstName, cm.lastName, cm.headline || cm.occupation || "");
+      if (obj.connectedMember && typeof obj.connectedMember === "object") {
+        tryExtractProfile(obj.connectedMember, "");
       }
       // connectedMemberResolutionResult (newer dash model)
-      if (obj.connectedMemberResolutionResult?.publicIdentifier) {
-        const cr = obj.connectedMemberResolutionResult;
-        addResult(cr.publicIdentifier, cr.firstName, cr.lastName, cr.headline || cr.occupation || "");
+      if (obj.connectedMemberResolutionResult && typeof obj.connectedMemberResolutionResult === "object") {
+        tryExtractProfile(obj.connectedMemberResolutionResult, "");
       }
-      // Extract from profileUrl slug (fallback when publicIdentifier is missing)
-      if (!pubId && obj.profileUrl && (obj.firstName || obj.lastName)) {
-        const slugMatch = str(obj.profileUrl).match(/\/in\/([A-Za-z0-9_-]+)/);
-        if (slugMatch) {
-          addResult(slugMatch[1], obj.firstName, obj.lastName, obj.headline || obj.occupation || "");
-        }
-      }
+
       // Recurse
       if (Array.isArray(obj)) { for (const item of obj) visit(item); }
       else { for (const key in obj) { if (obj[key] && typeof obj[key] === "object") visit(obj[key]); } }
