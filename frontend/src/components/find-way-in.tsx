@@ -254,14 +254,30 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
                     <div className="flex items-center gap-1.5 flex-wrap mb-2">
                       <span className="text-[10px] px-2 py-0.5 rounded bg-[#4d8ef5]/20 text-[#4d8ef5] font-medium">You</span>
                       <span className="text-[#555C7A] text-[10px]">→</span>
-                      <span className="text-[10px] px-2 py-0.5 rounded bg-white/[0.08] text-[#c4c9e0] font-medium">{p.connector?.name}</span>
+                      {p.connector?.linkedin_url ? (
+                        <a href={p.connector.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-[10px] px-2 py-0.5 rounded bg-white/[0.08] text-[#7F8CFF] font-medium underline decoration-[#7F8CFF]/40 hover:text-white transition-colors">{p.connector?.name}</a>
+                      ) : (
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-white/[0.08] text-[#c4c9e0] font-medium">{p.connector?.name}</span>
+                      )}
                       <span className="text-[#555C7A] text-[10px]">→</span>
-                      <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-medium">{p.target?.name}</span>
+                      {p.target?.linkedin_url ? (
+                        <a href={p.target.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/15 text-[#7F8CFF] font-medium underline decoration-[#7F8CFF]/40 hover:text-white transition-colors">{p.target?.name}</a>
+                      ) : (
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-medium">{p.target?.name}</span>
+                      )}
                     </div>
                     {/* Connector details */}
                     {p.connector && (
                       <div className="text-[11px] text-[#8B92B0] mb-1">
-                        Ask <span className="text-white font-medium">{p.connector.name}</span> ({p.connector.title}{p.connector.company ? ` at ${p.connector.company}` : ""}) to introduce you to <span className="text-emerald-400">{p.target?.name}</span>{p.target?.title ? ` (${p.target.title})` : ""}.
+                        Ask {p.connector.linkedin_url ? (
+                          <a href={p.connector.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-[#7F8CFF] font-medium underline decoration-[#7F8CFF]/40 hover:text-white transition-colors">{p.connector.name}</a>
+                        ) : (
+                          <span className="text-white font-medium">{p.connector.name}</span>
+                        )} ({p.connector.title}{p.connector.company ? ` at ${p.connector.company}` : ""}) to introduce you to {p.target?.linkedin_url ? (
+                          <a href={p.target.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-[#7F8CFF] underline decoration-[#7F8CFF]/40 hover:text-white transition-colors">{p.target?.name}</a>
+                        ) : (
+                          <span className="text-emerald-400">{p.target?.name}</span>
+                        )}{p.target?.title ? ` (${p.target.title})` : ""}.
                       </div>
                     )}
                     {/* AI-generated intro message */}
@@ -402,7 +418,7 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
                       {person.name?.[0]?.toUpperCase() || "?"}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-[12px] font-medium text-white">{person.name}</div>
+                      <div className="text-[12px] font-semibold text-[#7F8CFF] underline decoration-[#7F8CFF]/40">{person.name}</div>
                       {person.title && <div className="text-[11px] text-[#6B7194]">{person.title}</div>}
                     </div>
                     <span className="text-[10px] text-violet-400 font-medium shrink-0">Visit profile →</span>

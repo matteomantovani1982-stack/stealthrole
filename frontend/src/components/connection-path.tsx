@@ -522,7 +522,7 @@ export default function ConnectionPathPanel({ company, role }: ConnectionPathPro
                   {/* No connections yet */}
                   {person.connections.length === 0 && (
                     <div className="rounded-xl p-6 text-center" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
-                      <div className="text-[12px] text-[#555C7A]">No connection paths mapped yet for {person.name}</div>
+                      <div className="text-[12px] text-[#555C7A]">No connection paths mapped yet for {person.linkedinUrl ? <a href={person.linkedinUrl} target="_blank" rel="noopener noreferrer" className="text-[#7F8CFF] underline decoration-[#7F8CFF]/40 hover:text-white transition-colors">{person.name}</a> : person.name}</div>
                       <a href={person.linkedinUrl} target="_blank" rel="noopener"
                         className="text-[11px] text-[#4d8ef5] font-medium mt-1.5 inline-block hover:underline">
                         Visit their LinkedIn profile →
