@@ -5,7 +5,7 @@
  * Auth token stored in localStorage.
  */
 
-const API_BASE = "/api/v1";
+export const API_BASE = "/api/v1";
 
 // Keys that hold per-user data and MUST be cleared on logout/login switch
 const USER_DATA_LOCAL_KEYS = [
@@ -20,7 +20,7 @@ const USER_DATA_SESSION_KEYS = [
   "sr_profile_cache",
 ];
 
-function getToken(): string | null {
+export function getToken(): string | null {
   if (typeof window === "undefined") return null;
   return localStorage.getItem("sr_token");
 }
@@ -602,6 +602,62 @@ export async function uploadAndPopulateProfile(
   };
 }
 
+// ── Pack generation (shared between home + scout) ───────────────────────────
+
+/**
+ * Create an application + intelligence pack in one shot.
+ * Previously duplicated as `createAppAndPack` in page.tsx and
+ * `addAndGeneratePack` in scout/page.tsx.
+ */
+export async function createAppAndPack(
+  company: string,
+  role: string,
+  jdUrl?: string | null,
+  description?: string,
+): Promise<{ id: string }> {
+  // Get latest parsed CV
+  const cvs = await listCVs();
+  const cv = cvs.find((c) => c.status === "parsed");
+  if (!cv) {
+    throw new Error("Upload a CV on the Profile page before generating a pack.");
+  }
+
+  // Build JD text
+  const desc = description || "";
+  const jdText = `Role: ${role}\nCompany: ${company}${desc ? `\n\n${desc}` : ""}${jdUrl ? `\n\nSource: ${jdUrl}` : ""}`;
+
+  // Start job run
+  const job = await createJobRun({
+    cv_id: cv.id,
+    jd_text: jdText,
+    preferences: { tone: "executive", region: "UAE" },
+  });
+
+  // Create application linked to job run
+  const app = await createApplication({
+    company,
+    role,
+    date_applied: new Date().toISOString(),
+    source_channel: "job_board",
+    stage: "watching",
+    url: jdUrl || undefined,
+    job_run_id: job.id,
+  } as any);
+
+  return app;
+}
+
+// ── LinkedIn stats ──────────────────────────────────────────────────────────
+
+export async function getLinkedInStats(): Promise<{
+  total_connections: number;
+  recruiters: number;
+  total_conversations?: number;
+  unread_conversations?: number;
+}> {
+  return request("/linkedin/stats");
+}
+
 // ── Email Integration ────────────────────────────────────────────────────────
 
 export async function connectEmail(provider: "gmail" | "outlook"): Promise<{ auth_url: string }> {
@@ -681,8 +737,8 @@ export async function getInbox(params?: {
   const qs = new URLSearchParams();
   if (params?.filter) qs.set("filter", params.filter);
   if (params?.search) qs.set("search", params.search);
-  if (params?.limit) qs.set("limit", String(params.limit));
-  if (params?.offset) qs.set("offset", String(params.offset));
+  if (params?.limit != null) qs.set("limit", String(params.limit));
+  if (params?.offset != null) qs.set("offset", String(params.offset));
   const query = qs.toString();
   return request(`/linkedin/inbox${query ? `?${query}` : ""}`);
 }

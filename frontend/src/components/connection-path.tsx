@@ -2,6 +2,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { initials, avatarColor, getAuthHeaders } from "@/lib/utils";
 
 /* ── Types ─────────────────────────────────────────────────────────── */
 
@@ -58,13 +59,8 @@ const SOURCE: Record<string, { bg: string; border: string; text: string }> = {
   mutual:          { bg: "rgba(77,142,245,0.12)",  border: "rgba(77,142,245,0.25)",  text: "#4d8ef5" },
 };
 
-function color(name: string) {
-  const k = ["blue", "teal", "amber", "purple", "coral"] as const;
-  return k[(name.charCodeAt(0) || 0) % 5];
-}
-function initials(name: string) {
-  return name.split(" ").map(w => w[0]).join("").toUpperCase().substring(0, 2);
-}
+// color() and initials() imported from @/lib/utils (avatarColor, initials)
+const color = avatarColor;
 
 
 /* ── Data fetching ─────────────────────────────────────────────────── */
@@ -98,11 +94,11 @@ function useConnectionPath(company: string, role: string) {
   async function load() {
     setLoading(true);
     setError(null);
-    const token = localStorage.getItem("sr_token");
+    const headers = getAuthHeaders();
     try {
       const res = await fetch("/api/v1/relationships/find-way-in", {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        headers,
         body: JSON.stringify({ company, role }),
       });
       if (!res.ok) throw new Error(`API ${res.status}`);
@@ -417,16 +413,26 @@ export default function ConnectionPathPanel({ company, role }: ConnectionPathPro
                         <div className="text-[12px] text-[#ccc] leading-relaxed">"{person.connections[0].suggestedMessage}"</div>
                       </div>
                       <div className="flex gap-2.5 mt-3">
+                        <button
+                          onClick={() => {
+                            window.postMessage({
+                              type: "SR_SEND_LINKEDIN_MESSAGE",
+                              linkedinUrl: person.linkedinUrl,
+                              draftText: person.connections[0].suggestedMessage,
+                            }, window.location.origin);
+                          }}
+                          className="text-[12px] font-semibold px-4 py-2 rounded-lg inline-flex items-center gap-1.5"
+                          style={{ background: "rgba(127,140,255,0.15)", border: "1px solid rgba(127,140,255,0.25)", color: "#7F8CFF" }}>
+                          <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                            <path d="M14 2L7 9M14 2L9.5 14L7 9M14 2L2 6.5L7 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                          Send on LinkedIn
+                        </button>
                         <button onClick={() => copy(person.connections[0].suggestedMessage, person.connections[0].id)}
                           className="text-[12px] font-semibold px-4 py-2 rounded-lg"
-                          style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "#ccc" }}>
-                          {copiedId === person.connections[0].id ? "Copied!" : "Copy message"}
+                          style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "#888" }}>
+                          {copiedId === person.connections[0].id ? "Copied!" : "Copy"}
                         </button>
-                        <a href={person.linkedinUrl} target="_blank" rel="noopener"
-                          className="text-[12px] font-semibold px-4 py-2 rounded-lg inline-flex items-center"
-                          style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "#ccc" }}>
-                          View on LinkedIn
-                        </a>
                       </div>
                     </div>
                   )}
@@ -472,16 +478,26 @@ export default function ConnectionPathPanel({ company, role }: ConnectionPathPro
 
                             {/* Buttons */}
                             <div className="flex gap-2.5 mt-3">
+                              <button
+                                onClick={() => {
+                                  window.postMessage({
+                                    type: "SR_SEND_LINKEDIN_MESSAGE",
+                                    linkedinUrl: conn.linkedinUrl,
+                                    draftText: conn.suggestedMessage,
+                                  }, window.location.origin);
+                                }}
+                                className="text-[12px] font-semibold px-4 py-2 rounded-lg inline-flex items-center gap-1.5 transition-colors"
+                                style={{ background: "rgba(127,140,255,0.15)", border: "1px solid rgba(127,140,255,0.25)", color: "#7F8CFF" }}>
+                                <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                                  <path d="M14 2L7 9M14 2L9.5 14L7 9M14 2L2 6.5L7 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                                </svg>
+                                Send on LinkedIn
+                              </button>
                               <button onClick={() => copy(conn.suggestedMessage, conn.id)}
                                 className="text-[12px] font-semibold px-4 py-2 rounded-lg transition-colors"
-                                style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "#ccc" }}>
-                                {copiedId === conn.id ? "Copied!" : "Copy message"}
+                                style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "#888" }}>
+                                {copiedId === conn.id ? "Copied!" : "Copy"}
                               </button>
-                              <a href={conn.linkedinUrl} target="_blank" rel="noopener"
-                                className="text-[12px] font-semibold px-4 py-2 rounded-lg inline-flex items-center transition-colors"
-                                style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "#ccc" }}>
-                                View on LinkedIn
-                              </a>
                             </div>
                           </div>
                         );

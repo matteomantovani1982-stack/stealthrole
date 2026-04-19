@@ -36,7 +36,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 
 // ── Sync orchestration ───────────────────────────────────────────────────────
 // Opens LinkedIn connections page in a new tab and seeds chrome.storage with
-// sr_sync_task so the content script (linkedin.js) knows to auto-scrape on load.
+// sr_sync_task so the content scripts know to auto-scrape on load.
 // The content script reports PROGRESS back to this worker, we fan out to the
 // popup and clean up the tab on completion.
 
@@ -81,24 +81,25 @@ async function startMessagesSync({ silent = false } = {}) {
   return { ok: true, tab_id: tab.id };
 }
 
-async function finishConnectionsSync({ count, error, feature = "connections" } = {}) {
+async function finishSync({ count, error, feature = "connections" } = {}) {
   const { sr_sync_task } = await chrome.storage.local.get("sr_sync_task");
   if (!sr_sync_task) return;
   const tabId = sr_sync_task.tab_id;
   await chrome.storage.local.remove("sr_sync_task");
   // Fan out final PROGRESS so popup / Settings page updates
   broadcast({ type: "PROGRESS", feature, count: count ?? 0, status: error ? "error" : "done", error });
-  // Close the tab (silent mode: always; visible: only if no error so user can see what happened)
+  // Close the tab we opened for syncing
   if (tabId) {
     try { await chrome.tabs.remove(tabId); } catch {}
   }
   // User-facing notification
+  const featureLabel = feature === "messages" ? "conversations" : "connections";
   if (error) {
     try {
       chrome.notifications.create({
         type: "basic",
         iconUrl: "icons/icon128.png",
-        title: "StealthRole sync failed",
+        title: `StealthRole ${feature} sync failed`,
         message: String(error).slice(0, 200),
       });
     } catch {}
@@ -108,14 +109,14 @@ async function finishConnectionsSync({ count, error, feature = "connections" } =
         type: "basic",
         iconUrl: "icons/icon128.png",
         title: "StealthRole",
-        message: `Synced ${count ?? 0} LinkedIn connections`,
+        message: `Synced ${count ?? 0} LinkedIn ${featureLabel}`,
       });
     } catch {}
   }
 }
 
 // Broadcast to all extension contexts (popup). Content scripts reach the page
-// directly via window.postMessage from linkedin.js / token-sync.js.
+// directly via window.postMessage from token-sync.js.
 function broadcast(msg) {
   try { chrome.runtime.sendMessage(msg, () => void chrome.runtime.lastError); } catch {}
 }
@@ -168,6 +169,35 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // ── Send message via LinkedIn ──
+  // Forward to the LinkedIn content script tab
+  if (msg.type === "SEND_LINKEDIN_MESSAGE") {
+    (async () => {
+      try {
+        // Find an open LinkedIn tab
+        const tabs = await chrome.tabs.query({ url: "https://www.linkedin.com/*" });
+        if (tabs.length === 0) {
+          // Open a new LinkedIn tab
+          const tab = await chrome.tabs.create({ url: "https://www.linkedin.com/messaging/" });
+          // Wait for it to load
+          await new Promise(r => setTimeout(r, 3000));
+          chrome.tabs.sendMessage(tab.id, msg, (res) => {
+            sendResponse(res || { ok: false, error: "No response from content script" });
+          });
+        } else {
+          // Use existing LinkedIn tab
+          await chrome.tabs.update(tabs[0].id, { active: true });
+          chrome.tabs.sendMessage(tabs[0].id, msg, (res) => {
+            sendResponse(res || { ok: false, error: "No response from content script" });
+          });
+        }
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message });
+      }
+    })();
+    return true;
+  }
+
   if (msg.type === "GET_SYNC_STATUS") {
     chrome.storage.local.get("sr_sync_task").then(({ sr_sync_task }) => {
       sendResponse({ task: sr_sync_task || null });
@@ -187,7 +217,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     });
     broadcast(msg);
     if (msg.status === "done" || msg.status === "error") {
-      finishConnectionsSync({ count: msg.count, error: msg.error, feature: msg.feature });
+      finishSync({ count: msg.count, error: msg.error, feature: msg.feature });
     }
     // No sendResponse — fire and forget
     return false;

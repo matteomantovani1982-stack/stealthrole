@@ -69,15 +69,20 @@ function formatTimestamp(iso: string | null): string {
 
 // ── Component ────────────────────────────────────────────────────────────────
 
+const PAGE_SIZE = 2000;
+
 export default function MessagesPage() {
   const [conversations, setConversations] = useState<InboxConversation[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<InboxConversation | null>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
 
+  // Fetch first page (resets list)
   const fetchInbox = useCallback(
     async (f: FilterKey, s: string) => {
       setLoading(true);
@@ -85,7 +90,8 @@ export default function MessagesPage() {
         const res = await getInbox({
           filter: f === "all" ? undefined : f,
           search: s || undefined,
-          limit: 50,
+          limit: PAGE_SIZE,
+          offset: 0,
         });
         setConversations(res.conversations);
         setTotal(res.total);
@@ -98,9 +104,38 @@ export default function MessagesPage() {
     [],
   );
 
+  // Fetch next page (appends to list)
+  const fetchMore = useCallback(async () => {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await getInbox({
+        filter: filter === "all" ? undefined : filter,
+        search: search || undefined,
+        limit: PAGE_SIZE,
+        offset: conversations.length,
+      });
+      setConversations((prev) => [...prev, ...res.conversations]);
+      setTotal(res.total);
+    } catch (e) {
+      console.error("Failed to load more", e);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [filter, search, conversations.length, loadingMore]);
+
   useEffect(() => {
     fetchInbox(filter, search);
   }, [filter, fetchInbox]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Infinite scroll: load more when near bottom of conversation list
+  const handleListScroll = useCallback(() => {
+    const el = listRef.current;
+    if (!el || loadingMore || loading) return;
+    if (conversations.length >= total) return; // all loaded
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 300;
+    if (nearBottom) fetchMore();
+  }, [loadingMore, loading, conversations.length, total, fetchMore]);
 
   const handleSearch = (val: string) => {
     setSearch(val);
@@ -165,7 +200,7 @@ export default function MessagesPage() {
         </div>
 
         {/* Conversation list */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto" ref={listRef} onScroll={handleListScroll}>
           {loading ? (
             <div className="px-5 py-12 text-center text-[#555C7A] text-sm">Loading…</div>
           ) : conversations.length === 0 ? (
@@ -260,6 +295,21 @@ export default function MessagesPage() {
                   </button>
                 );
               })}
+              {/* Load more indicator */}
+              {conversations.length < total && (
+                <div className="px-5 py-4 text-center">
+                  {loadingMore ? (
+                    <div className="text-[12px] text-[#555C7A]">Loading more…</div>
+                  ) : (
+                    <button
+                      onClick={fetchMore}
+                      className="text-[12px] text-[#7F8CFF] hover:text-[#9BA6FF] transition-colors"
+                    >
+                      Load more ({total - conversations.length} remaining)
+                    </button>
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>
@@ -405,10 +455,28 @@ function ThreadDetail({ conversation }: { conversation: InboxConversation }) {
       {/* AI Draft banner (if available) */}
       {conversation.ai_draft_reply && (
         <div className="mx-6 mb-4 px-4 py-3 rounded-xl bg-[#7F8CFF]/8 border border-[#7F8CFF]/15">
-          <div className="flex items-center gap-2 mb-2">
+          <div className="flex items-center justify-between mb-2">
             <span className="text-[11px] font-semibold text-[#7F8CFF] uppercase tracking-wider">
               AI Suggested Reply
             </span>
+            <button
+              onClick={() => {
+                window.postMessage(
+                  {
+                    type: "SR_SEND_LINKEDIN_MESSAGE",
+                    conversationUrn: conversation.conversation_urn,
+                    draftText: conversation.ai_draft_reply,
+                  },
+                  window.location.origin,
+                );
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#7F8CFF]/20 hover:bg-[#7F8CFF]/30 text-[#7F8CFF] text-[11px] font-semibold transition-colors"
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                <path d="M14 2L7 9M14 2L9.5 14L7 9M14 2L2 6.5L7 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              Send on LinkedIn
+            </button>
           </div>
           <div className="text-[13px] text-white/70 leading-relaxed whitespace-pre-wrap">
             {conversation.ai_draft_reply}

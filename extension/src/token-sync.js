@@ -8,7 +8,7 @@
   // Set data-version so the web app can detect old extension versions.
   const marker = document.createElement("div");
   marker.id = "sr-extension-marker";
-  marker.dataset.version = "1.0.0";
+  marker.dataset.version = "2.0.0";
   marker.style.display = "none";
   document.body.appendChild(marker);
 
@@ -22,7 +22,7 @@
     const msg = event.data;
 
     // Trigger an on-demand network scan: open a connector's connections list
-    // in a new tab and ask the linkedin.js content script to scrape it.
+    // in a new tab and ask the content scripts to scrape it.
     if (msg.type === "SR_SCAN_NETWORK") {
       const payload = {
         connector_url: msg.connectorUrl || "",
@@ -56,6 +56,26 @@
       try {
         chrome.storage.local.remove("sr_scan_target");
       } catch {}
+    }
+
+    // Send a message via LinkedIn — pre-fill draft in LinkedIn's composer
+    if (msg.type === "SR_SEND_LINKEDIN_MESSAGE") {
+      try {
+        chrome.runtime.sendMessage({
+          type: "SEND_LINKEDIN_MESSAGE",
+          conversationUrn: msg.conversationUrn || null,
+          linkedinUrl: msg.linkedinUrl || null,
+          draftText: msg.draftText,
+        }, (res) => {
+          window.postMessage({
+            type: "SR_SEND_LINKEDIN_MESSAGE_RESULT",
+            ok: !!(res && res.ok),
+            error: res && res.error,
+          }, "*");
+        });
+      } catch (e) {
+        window.postMessage({ type: "SR_SEND_LINKEDIN_MESSAGE_RESULT", ok: false, error: String(e) }, "*");
+      }
     }
 
     // Trigger the automated connections sync (opens a LinkedIn tab, scrolls,

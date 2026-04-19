@@ -61,6 +61,40 @@ window.SR = window.SR || {};
     });
   };
 
+  // ── Fetch with timeout — prevents hung requests ──
+
+  SR.fetchWithTimeout = function (url, options = {}, timeoutMs = 30000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    return fetch(url, { ...options, signal: controller.signal })
+      .finally(() => clearTimeout(timer));
+  };
+
+  // ── Retry wrapper for transient network failures ──
+
+  SR.fetchWithRetry = async function (url, options = {}, { retries = 2, timeoutMs = 30000, backoffMs = 1000 } = {}) {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const res = await SR.fetchWithTimeout(url, options, timeoutMs);
+        // Don't retry on client errors (4xx) — except 429 (rate limit). Retry server errors.
+        if (res.ok || (res.status >= 400 && res.status < 500 && res.status !== 429)) return res;
+        if (attempt < retries) {
+          console.warn(`[SR] Fetch ${res.status}, retry ${attempt + 1}/${retries}:`, url.slice(0, 100));
+          await new Promise((r) => setTimeout(r, backoffMs * (attempt + 1)));
+          continue;
+        }
+        return res;
+      } catch (e) {
+        if (attempt < retries && (e.name === "AbortError" || e.message?.includes("network") || e.message?.includes("fetch"))) {
+          console.warn(`[SR] Fetch error, retry ${attempt + 1}/${retries}:`, e.message);
+          await new Promise((r) => setTimeout(r, backoffMs * (attempt + 1)));
+          continue;
+        }
+        throw e;
+      }
+    }
+  };
+
   // ── Page detection ──
 
   SR.getPageType = function () {
@@ -103,10 +137,10 @@ window.SR = window.SR || {};
     const headers = SR.voyagerHeaders();
     if (!headers) return null;
     try {
-      const res = await fetch("https://www.linkedin.com/voyager/api/me", {
+      const res = await SR.fetchWithTimeout("https://www.linkedin.com/voyager/api/me", {
         headers,
         credentials: "include",
-      });
+      }, 15000);
       if (!res.ok) return null;
       const data = await res.json();
       const walk = (obj) => {
@@ -240,10 +274,15 @@ window.SR = window.SR || {};
 
   // ── Page init routing ──
 
+  SR._initTimeout = null;
+
   SR.initForPage = function () {
     SR._mutualScrapeInProgress = false;
     const pageType = SR.getPageType();
     console.log("[SR] Page init:", pageType, window.location.pathname);
+
+    // Prevent duplicate overlay buttons from prior init
+    if (document.getElementById("sr-overlay-btn")) return;
 
     if (["connections", "profile", "messaging", "search", "job", "job-search", "company"].includes(pageType)) {
       SR.injectOverlayButton(pageType);
@@ -305,25 +344,27 @@ window.SR = window.SR || {};
   };
 
   // ── SPA navigation detection ──
+  // Debounced to prevent rapid-fire re-inits during LinkedIn's SPA transitions.
 
-  const urlObserver = new MutationObserver(() => {
-    if (window.location.href !== SR._lastUrl) {
-      SR._lastUrl = window.location.href;
-      document.getElementById("sr-overlay-btn")?.remove();
-      document.getElementById("sr-sync-btn")?.remove();
-      setTimeout(() => SR.initForPage(), 1500);
-    }
-  });
+  let _navDebounceTimer = null;
+
+  function onUrlChange() {
+    if (window.location.href === SR._lastUrl) return;
+    SR._lastUrl = window.location.href;
+    // Clean up injected UI from previous page
+    document.getElementById("sr-overlay-btn")?.remove();
+    document.getElementById("sr-sync-btn")?.remove();
+    document.getElementById("sr-intel-panel")?.remove();
+    document.getElementById("sr-draft-panel")?.remove();
+    document.getElementById("sr-draft-btn")?.remove();
+    // Debounce: LinkedIn may fire multiple mutations during a single navigation
+    clearTimeout(_navDebounceTimer);
+    _navDebounceTimer = setTimeout(() => SR.initForPage(), 1500);
+  }
+
+  const urlObserver = new MutationObserver(onUrlChange);
   urlObserver.observe(document.body, { childList: true, subtree: true });
-
-  window.addEventListener("popstate", () => {
-    setTimeout(() => {
-      if (window.location.href !== SR._lastUrl) {
-        SR._lastUrl = window.location.href;
-        setTimeout(() => SR.initForPage(), 1500);
-      }
-    }, 500);
-  });
+  window.addEventListener("popstate", () => setTimeout(onUrlChange, 300));
 
   // ── Message listener from popup / background ──
 
@@ -342,6 +383,89 @@ window.SR = window.SR || {};
       SR.scrapeMutualConnections?.();
       setTimeout(() => sendResponse({ ok: true }), 2000);
       return true;
+    }
+
+    // ── Send message via LinkedIn ──
+    // Opens the conversation in LinkedIn messaging and pre-fills the draft.
+    // The user reviews and clicks Send themselves.
+    if (msg.type === "SEND_LINKEDIN_MESSAGE") {
+      (async () => {
+        try {
+          const { conversationUrn, linkedinUrl, draftText } = msg;
+          if (!draftText) {
+            sendResponse({ ok: false, error: "Missing draftText" });
+            return;
+          }
+
+          if (linkedinUrl) {
+            // ── Profile URL mode: open their profile and click the Message button ──
+            // Extract the public ID from the LinkedIn URL
+            // e.g. "https://www.linkedin.com/in/johndoe/" → "johndoe"
+            const pubIdMatch = linkedinUrl.match(/linkedin\.com\/in\/([^/?]+)/);
+            if (!pubIdMatch) {
+              // Fallback: just open the URL
+              window.open(linkedinUrl, "_blank");
+              sendResponse({ ok: true, fallback: true });
+              return;
+            }
+
+            // Navigate to messaging overlay for this person
+            // LinkedIn supports direct messaging URL: /messaging/compose/?recipient=PUBLIC_ID
+            // But more reliably, we navigate to their profile and click Message
+            console.log(`[SR] opening messaging for profile: ${pubIdMatch[1]}`);
+
+            // Use LinkedIn's messaging compose URL with the profile URL
+            const composeUrl = `https://www.linkedin.com/messaging/compose/?recipient=${pubIdMatch[1]}`;
+            window.location.href = composeUrl;
+
+          } else if (conversationUrn) {
+            // ── Conversation URN mode: open existing thread ──
+            let threadId = conversationUrn;
+            threadId = threadId.replace(/^urn:li:(?:fs|fsd|msg)_conversation:/, "");
+            threadId = threadId.replace(/^thread:/, "");
+
+            const msgUrl = `https://www.linkedin.com/messaging/thread/${encodeURIComponent(threadId)}/`;
+            console.log(`[SR] opening LinkedIn conversation: ${msgUrl}`);
+            window.location.href = msgUrl;
+
+          } else {
+            sendResponse({ ok: false, error: "Need either conversationUrn or linkedinUrl" });
+            return;
+          }
+
+          // Wait for the message input to appear
+          let input = null;
+          for (let attempt = 0; attempt < 30; attempt++) {
+            await new Promise(r => setTimeout(r, 500));
+            // LinkedIn uses a contenteditable div for the message composer
+            input = document.querySelector(
+              'div.msg-form__contenteditable[contenteditable="true"], ' +
+              'div[role="textbox"][contenteditable="true"], ' +
+              'div.msg-form__msg-content-container--scrollable div[contenteditable="true"]'
+            );
+            if (input) break;
+          }
+
+          if (!input) {
+            console.warn("[SR] could not find LinkedIn message input after 15s");
+            sendResponse({ ok: false, error: "Could not find message input — page may not have loaded" });
+            return;
+          }
+
+          // Focus and paste the draft text
+          input.focus();
+          input.innerHTML = "";
+          document.execCommand("insertText", false, draftText);
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+
+          console.log(`[SR] draft pre-filled (${draftText.length} chars). User can review and send.`);
+          sendResponse({ ok: true });
+        } catch (e) {
+          console.error("[SR] send message error:", e);
+          sendResponse({ ok: false, error: e.message });
+        }
+      })();
+      return true; // async response
     }
   });
 
@@ -390,6 +514,24 @@ window.SR = window.SR || {};
   SR.hideIntelPanel = function () {
     const panel = document.getElementById("sr-intel-panel");
     if (panel) panel.style.display = "none";
+  };
+
+  // ── Shared pagination helper ──
+  // Used by profile.js and search.js for paginating search results.
+
+  SR.findNextPageButton = function () {
+    for (const btn of document.querySelectorAll("button")) {
+      const text = (btn.innerText || btn.textContent || "").trim().toLowerCase();
+      const ariaLabel = (btn.getAttribute("aria-label") || "").toLowerCase();
+      if ((text === "next" || ariaLabel.includes("next")) && !btn.disabled && btn.getAttribute("aria-disabled") !== "true") {
+        return btn;
+      }
+    }
+    const paginationBtns = document.querySelectorAll(".artdeco-pagination__button--next, [aria-label='Next']");
+    for (const btn of paginationBtns) {
+      if (!btn.disabled && btn.getAttribute("aria-disabled") !== "true") return btn;
+    }
+    return null;
   };
 
   // ── Boot ──

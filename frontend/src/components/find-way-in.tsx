@@ -200,16 +200,34 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
                           </div>
                           <div className="text-[11px] text-[#6B7194]">{c.title}{c.company ? ` · ${c.company}` : ""}</div>
                         </div>
-                        <a href={linkUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] text-emerald-400 hover:text-white font-medium shrink-0 px-2 py-1 rounded bg-emerald-500/10 hover:bg-emerald-500/20">
-                          Open LinkedIn ↗
-                        </a>
+                        {c.message ? (
+                          <button
+                            onClick={() => {
+                              window.postMessage({
+                                type: "SR_SEND_LINKEDIN_MESSAGE",
+                                linkedinUrl: linkUrl,
+                                draftText: c.message,
+                              }, window.location.origin);
+                            }}
+                            className="text-[11px] text-[#7F8CFF] hover:text-white font-medium shrink-0 px-2 py-1 rounded bg-[#7F8CFF]/10 hover:bg-[#7F8CFF]/20 inline-flex items-center gap-1"
+                          >
+                            <svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M14 2L7 9M14 2L9.5 14L7 9M14 2L2 6.5L7 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                            Send on LinkedIn
+                          </button>
+                        ) : (
+                          <a href={linkUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] text-emerald-400 hover:text-white font-medium shrink-0 px-2 py-1 rounded bg-emerald-500/10 hover:bg-emerald-500/20">
+                            Open LinkedIn ↗
+                          </a>
+                        )}
                       </div>
                       {c.message && (
                         <div className="pl-[42px]">
                           <div className="text-[11px] text-[#8B92B0] p-2 rounded bg-white/[0.03] border border-white/[0.05] leading-relaxed whitespace-pre-wrap">{c.message}</div>
-                          <button onClick={() => copyMessage(c.message, i)} className="mt-1.5 text-[10px] font-medium text-emerald-400 hover:text-white transition-colors">
-                            {copiedIdx === i ? "Copied!" : "Copy message"}
-                          </button>
+                          <div className="flex items-center gap-2 mt-1.5">
+                            <button onClick={() => copyMessage(c.message, i)} className="text-[10px] font-medium text-[#888] hover:text-white transition-colors">
+                              {copiedIdx === i ? "Copied!" : "Copy"}
+                            </button>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -248,19 +266,25 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
                         <div className="text-[11px] text-[#8B92B0] p-2 rounded bg-white/[0.03] border border-white/[0.05] leading-relaxed whitespace-pre-wrap">{p.intro_message}</div>
                         <div className="flex items-center gap-2 mt-1.5">
                           <button
-                            onClick={() => copyMessage(p.intro_message, 200 + i)}
-                            className="text-[10px] font-medium text-[#4d8ef5] hover:text-white transition-colors"
+                            onClick={() => {
+                              const connUrl = linkedInUrlFor({ name: p.connector?.name, company: p.connector?.company, linkedin_url: p.connector?.linkedin_url });
+                              window.postMessage({
+                                type: "SR_SEND_LINKEDIN_MESSAGE",
+                                linkedinUrl: connUrl,
+                                draftText: p.intro_message,
+                              }, window.location.origin);
+                            }}
+                            className="text-[10px] font-medium text-[#7F8CFF] hover:text-white inline-flex items-center gap-1"
                           >
-                            {copiedIdx === 200 + i ? "Copied!" : "Copy message"}
+                            <svg width="9" height="9" viewBox="0 0 16 16" fill="none"><path d="M14 2L7 9M14 2L9.5 14L7 9M14 2L2 6.5L7 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                            Send to {p.connector?.name?.split(" ")[0]} on LinkedIn
                           </button>
-                          <a
-                            href={linkedInUrlFor({ name: p.connector?.name, company: p.connector?.company, linkedin_url: p.connector?.linkedin_url })}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-[10px] font-medium text-[#7F8CFF] hover:text-white"
+                          <button
+                            onClick={() => copyMessage(p.intro_message, 200 + i)}
+                            className="text-[10px] font-medium text-[#888] hover:text-white transition-colors"
                           >
-                            Open {p.connector?.name?.split(" ")[0]} on LinkedIn ↗
-                          </a>
+                            {copiedIdx === 200 + i ? "Copied!" : "Copy"}
+                          </button>
                         </div>
                       </div>
                     )}
