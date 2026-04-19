@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { connectEmail, listEmailAccounts, getCreditBalance, getCreditPricing, getActiveProfile, importLinkedIn, applyImportToProfile } from "@/lib/api";
+import { getAuthHeaders } from "@/lib/utils";
 
 interface EmailAccount {
   id: string;
@@ -45,7 +46,7 @@ export default function SettingsPage() {
   const [extensionInstalled, setExtensionInstalled] = useState(false);
 
   useEffect(() => {
-    const headers = { Authorization: `Bearer ${localStorage.getItem("sr_token")}` };
+    const headers = getAuthHeaders(false);
     Promise.allSettled([
       getCreditBalance().then(setCredits),
       getCreditPricing().then(setPricing),
@@ -72,7 +73,7 @@ export default function SettingsPage() {
         setExtensionSync({ status: p.status, count: p.count || 0, error: p.error });
         // On done, refresh the imported count
         if (p.status === "done") {
-          const headers = { Authorization: `Bearer ${localStorage.getItem("sr_token")}` };
+          const headers = getAuthHeaders(false);
           fetch("/api/v1/linkedin/stats", { headers }).then((r) => r.ok ? r.json() : null).then(setLinkedinStats);
         }
       }
@@ -213,11 +214,10 @@ export default function SettingsPage() {
                       <button id={`sync-btn-${acc.id}`} onClick={async () => {
                         const btn = document.getElementById(`sync-btn-${acc.id}`) as HTMLButtonElement;
                         if (btn) { btn.textContent = "Syncing your emails..."; btn.disabled = true; btn.style.opacity = "0.5"; btn.style.cursor = "not-allowed"; }
-                        const token = localStorage.getItem("sr_token");
                         try {
                           await fetch(`/api/v1/email-integration/accounts/${acc.id}/sync`, {
                             method: "POST",
-                            headers: token ? { Authorization: `Bearer ${token}` } : {},
+                            headers: getAuthHeaders(false),
                           });
                           setMessage("Email sync started! Results will appear shortly.");
                           if (btn) { btn.textContent = "Sync Now"; btn.disabled = false; btn.style.opacity = "1"; btn.style.cursor = "pointer"; }
@@ -228,11 +228,10 @@ export default function SettingsPage() {
                       }} className="text-[11px] px-2 py-0.5 rounded bg-[rgba(77,142,245,0.08)] text-[#4d8ef5] hover:bg-[rgba(77,142,245,0.15)] font-medium disabled:opacity-50 disabled:cursor-not-allowed">Sync Now</button>
                     )}
                     <button onClick={async () => {
-                      const token = localStorage.getItem("sr_token");
                       try {
                         await fetch(`/api/v1/email-integration/accounts/${acc.id}`, {
                           method: "DELETE",
-                          headers: token ? { Authorization: `Bearer ${token}` } : {},
+                          headers: getAuthHeaders(false),
                         });
                         setEmailAccounts((prev) => prev.filter((a) => a.id !== acc.id));
                         setMessage("Account removed.");
@@ -361,20 +360,19 @@ export default function SettingsPage() {
                 const file = e.target.files?.[0];
                 if (!file) { setMessage("No file selected"); return; }
                 setMessage(`Importing ${file.name}...`);
-                const token = localStorage.getItem("sr_token");
                 const form = new FormData();
                 form.append("file", file);
                 try {
                   const res = await fetch("/api/v1/linkedin/import-csv", {
                     method: "POST",
-                    headers: token ? { Authorization: `Bearer ${token}` } : {},
+                    headers: getAuthHeaders(false),
                     body: form,
                   });
                   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Import failed");
                   const data = await res.json();
                   setMessage(`Imported ${data.created} new connections (${data.recruiters_detected} recruiters detected, ${data.applications_matched} matched to applications)`);
                   // Refresh stats
-                  const headers2 = { Authorization: `Bearer ${token}` };
+                  const headers2 = getAuthHeaders(false);
                   fetch("/api/v1/linkedin/stats", { headers: headers2 }).then((r) => r.ok ? r.json() : null).then(setLinkedinStats);
                 } catch (err) {
                   setMessage(err instanceof Error ? err.message : "CSV import failed");
@@ -397,11 +395,10 @@ export default function SettingsPage() {
               const text = (document.getElementById("convo-text") as HTMLTextAreaElement)?.value;
               if (!text?.trim()) return;
               setMessage("Analyzing conversation...");
-              const token = localStorage.getItem("sr_token");
               try {
                 const res = await fetch("/api/v1/linkedin/analyze-conversation", {
                   method: "POST",
-                  headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+                  headers: getAuthHeaders(),
                   body: JSON.stringify({ messages: text, tone: "professional" }),
                 });
                 if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Analysis failed");
@@ -474,12 +471,11 @@ export default function SettingsPage() {
                 <button onClick={async () => {
                   const number = (document.getElementById("wa-number") as HTMLInputElement)?.value;
                   if (!number?.trim()) return;
-                  const token = localStorage.getItem("sr_token");
                   setMessage("Sending verification code to WhatsApp...");
                   try {
                     const res = await fetch("/api/v1/whatsapp/verify", {
                       method: "POST",
-                      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+                      headers: getAuthHeaders(),
                       body: JSON.stringify({ whatsapp_number: number.replace(/\s/g, "").trim() }),
                     });
                     if (res.ok) {
@@ -509,12 +505,11 @@ export default function SettingsPage() {
                   const code = (document.getElementById("wa-code") as HTMLInputElement)?.value;
                   const number = (document.getElementById("wa-number") as HTMLInputElement)?.value;
                   if (!code?.trim() || !number?.trim()) { setMessage("Enter both number and code"); return; }
-                  const token = localStorage.getItem("sr_token");
                   setMessage("Verifying...");
                   try {
                     const res = await fetch("/api/v1/whatsapp/confirm", {
                       method: "POST",
-                      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+                      headers: getAuthHeaders(),
                       body: JSON.stringify({ whatsapp_number: number.replace(/\s/g, "").trim(), code: code.trim() }),
                     });
                     if (res.ok) {
@@ -535,12 +530,11 @@ export default function SettingsPage() {
             {/* Send test message button — only if verified */}
             {(user as any)?.whatsapp_verified && (
               <button onClick={async () => {
-                const token = localStorage.getItem("sr_token");
                 setMessage("Sending test message...");
                 try {
                   const res = await fetch("/api/v1/whatsapp/send-test", {
                     method: "POST",
-                    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+                    headers: getAuthHeaders(),
                   });
                   if (res.ok) {
                     setMessage("Test message sent! Check your WhatsApp.");

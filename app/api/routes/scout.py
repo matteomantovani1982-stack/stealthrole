@@ -35,17 +35,18 @@ CACHE_TTL_MINUTES = 30
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-async def _get_profile_and_prefs(db: DB, user_id: str) -> tuple[dict, dict]:
-    """Load user profile + preferences."""
+def _extract_prefs(profile_data: dict) -> dict:
+    """
+    Extract preferences from a profile object or dict.
+
+    Handles:
+      - profile_data["preferences"]: JSONB field (dict or JSON string)
+      - profile_data["global_context"]: fallback for legacy storage
+    """
     import json
-    from app.services.profile.profile_service import ProfileService
-    svc = ProfileService(db)
-    profile = await svc.get_active_profile(user_id)
-    if not profile:
-        return {}, {}
 
     # Preferences are stored on the profile.preferences JSONB field
-    prefs = profile.preferences or {}
+    prefs = profile_data.get("preferences") or {}
     if isinstance(prefs, str):
         try:
             prefs = json.loads(prefs)
@@ -55,10 +56,34 @@ async def _get_profile_and_prefs(db: DB, user_id: str) -> tuple[dict, dict]:
     # Fallback: check global_context for legacy preference storage
     if not prefs:
         try:
-            ctx = json.loads(profile.global_context or "{}")
+            ctx = json.loads(profile_data.get("global_context") or "{}")
             prefs = ctx.get("preferences", ctx.get("__preferences", {}))
         except Exception:
             pass
+
+    return prefs
+
+
+async def _get_profile_and_prefs(db: DB, user_id: str) -> tuple[dict, dict]:
+    """
+    Load user profile + preferences.
+
+    Returns:
+      (profile_dict, prefs) where:
+        - profile_dict: dict with headline and global_context
+        - prefs: dict with user preferences (from profile.preferences or global_context fallback)
+    """
+    from app.services.profile.profile_service import ProfileService
+    svc = ProfileService(db)
+    profile = await svc.get_active_profile(user_id)
+    if not profile:
+        return {}, {}
+
+    # Extract preferences using shared helper
+    prefs = _extract_prefs({
+        "preferences": profile.preferences,
+        "global_context": profile.global_context,
+    })
 
     profile_dict = {
         "headline": profile.headline or "",

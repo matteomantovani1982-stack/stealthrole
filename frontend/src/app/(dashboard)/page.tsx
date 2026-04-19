@@ -10,92 +10,21 @@ import {
   getBoard,
   getRadar,
   getHiddenMarket,
+  createAppAndPack,
+  formatApiError,
   type DashboardSummary,
   type ApplicationAnalytics,
   type BoardResponse,
   type Opportunity,
   type HiddenSignal,
 } from "@/lib/api";
-
-function greeting(): string {
-  const h = new Date().getHours();
-  if (h < 12) return "Good morning,";
-  if (h < 18) return "Good afternoon,";
-  return "Good evening,";
-}
-
-function timeAgo(dateStr: string): string {
-  const now = Date.now();
-  const then = new Date(dateStr).getTime();
-  const diffMs = now - then;
-  const mins = Math.floor(diffMs / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-const TIER_COLORS: Record<string, string> = {
-  high: "#4d8ef5",
-  medium: "#a78bfa",
-  low: "#22c55e",
-};
-
-const STAGE_COLORS: Record<string, string> = {
-  watching: "#4d8ef5",
-  applied: "#a78bfa",
-  interview: "#22c55e",
-  offer: "#fbbf24",
-  closed: "rgba(255,255,255,0.3)",
-};
+import { greeting, timeAgo, initials } from "@/lib/utils";
+import { TIER_COLORS, STAGE_COLORS } from "@/lib/constants";
 
 const HOME_CACHE_KEY = "sr_home_cache";
 const HOME_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-async function createAppAndPack(company: string, role: string, jdUrl: string | null = null): Promise<{ id: string } | null> {
-  const tk = typeof window !== "undefined" ? localStorage.getItem("sr_token") : null;
-  const hdrs = { "Content-Type": "application/json", ...(tk ? { Authorization: `Bearer ${tk}` } : {}) };
-
-  // Get latest parsed CV
-  const cvsRes = await fetch("/api/v1/cvs", { headers: hdrs });
-  const cvs = cvsRes.ok ? await cvsRes.json() : [];
-  const cv = Array.isArray(cvs) ? cvs.find((c: any) => c.status === "parsed") : null;
-  if (!cv) {
-    throw new Error("Upload a CV on the Profile page before generating a pack.");
-  }
-
-  // Start job run
-  const jdText = `Role: ${role}\nCompany: ${company}${jdUrl ? `\n\nSource: ${jdUrl}` : ""}`;
-  const jobRes = await fetch("/api/v1/jobs", {
-    method: "POST",
-    headers: hdrs,
-    body: JSON.stringify({ cv_id: cv.id, jd_text: jdText, preferences: { tone: "executive", region: "UAE" } }),
-  });
-  if (!jobRes.ok) {
-    const body = await jobRes.json().catch(() => ({}));
-    const { formatApiError } = await import("@/lib/api");
-    throw new Error(formatApiError(body.detail) || `Failed to start pack generation (HTTP ${jobRes.status})`);
-  }
-  const job = await jobRes.json();
-
-  // Create application linked to job run
-  const appRes = await fetch("/api/v1/applications", {
-    method: "POST",
-    headers: hdrs,
-    body: JSON.stringify({
-      company, role,
-      date_applied: new Date().toISOString(),
-      source_channel: "job_board",
-      stage: "watching",
-      url: jdUrl || undefined,
-      job_run_id: job.id,
-    }),
-  });
-  if (!appRes.ok) throw new Error("Failed to create application");
-  return await appRes.json();
-}
+// createAppAndPack is now imported from @/lib/api
 
 export default function HomePage() {
   const router = useRouter();
@@ -228,7 +157,7 @@ export default function HomePage() {
     const appliedCol = board.columns.find(c => c.stage === "applied");
     if (appliedCol) {
       for (const app of (appliedCol.applications || []).filter(a => (Date.now() - new Date(a.date_applied).getTime()) / 86400000 > 3).slice(0, 2)) {
-        const days = Math.floor((Date.now() - new Date(a.date_applied).getTime()) / 86400000);
+        const days = Math.floor((Date.now() - new Date(app.date_applied).getTime()) / 86400000);
         actionItems.push({
           color: "#fbbf24",
           title: `Follow up — ${app.company}`,
@@ -511,10 +440,10 @@ export default function HomePage() {
               <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.6, color: "rgba(255,255,255,0.2)", marginBottom: 13 }}>Pipeline</div>
               {pipelineItems.length > 0 ? pipelineItems.slice(0, 4).map((p, i) => {
                 const stageColor = STAGE_COLORS[p.stage] || "#4d8ef5";
-                const initials = p.company.split(/\s+/).map(w => w[0]).join("").slice(0, 2).toUpperCase();
+                const compInitials = initials(p.company);
                 return (
                   <div key={i} style={{ display: "flex", alignItems: "center", gap: 9, padding: "7px 0", borderBottom: i < Math.min(pipelineItems.length, 4) - 1 ? "0.5px solid rgba(255,255,255,0.04)" : "none" }}>
-                    <div style={{ width: 28, height: 28, borderRadius: 8, background: `${stageColor}18`, color: stageColor, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700, flexShrink: 0 }}>{initials}</div>
+                    <div style={{ width: 28, height: 28, borderRadius: 8, background: `${stageColor}18`, color: stageColor, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700, flexShrink: 0 }}>{compInitials}</div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)" }}>{p.company}</div>
                       <div style={{ fontSize: 10, color: "rgba(255,255,255,0.2)" }}>{p.role}</div>

@@ -26,6 +26,10 @@ logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/v1/billing", tags=["Billing"])
 
 
+def _svc(db: DB) -> BillingService:
+    return BillingService(db=db)
+
+
 # ── Request / response models ─────────────────────────────────────────────────
 
 class CheckoutRequest(BaseModel):
@@ -94,7 +98,7 @@ async def list_plans() -> list[PlanResponse]:
     summary="Get current subscription and usage",
 )
 async def get_billing_status(db: DB, current_user: CurrentUser) -> dict:
-    svc = BillingService(db=db)
+    svc = _svc(db)
     return await svc.get_subscription_status(current_user.id)
 
 
@@ -113,7 +117,7 @@ async def create_checkout(
     db: DB,
     current_user: CurrentUser,
 ) -> CheckoutResponse:
-    svc = BillingService(db=db)
+    svc = _svc(db)
     try:
         from app.services.billing.stripe_client import StripeError
         url = await svc.create_checkout_session(
@@ -145,7 +149,7 @@ async def create_portal(
     db: DB,
     current_user: CurrentUser,
 ) -> PortalResponse:
-    svc = BillingService(db=db)
+    svc = _svc(db)
     try:
         from app.services.billing.stripe_client import StripeError
         url = await svc.create_portal_session(
@@ -191,7 +195,7 @@ async def stripe_webhook(
         logger.warning("webhook_signature_failed", extra={"error": e.message})
         raise HTTPException(status_code=400, detail=e.message)
 
-    svc = BillingService(db=db)
+    svc = _svc(db)
     try:
         result = await svc.handle_webhook_event(event)
         await db.commit()

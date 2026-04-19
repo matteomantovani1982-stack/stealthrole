@@ -151,18 +151,8 @@
     scrapePage();
   };
 
-  function findNextPageButton() {
-    for (const btn of document.querySelectorAll("button")) {
-      const text = (btn.innerText || btn.textContent || "").trim().toLowerCase();
-      const ariaLabel = (btn.getAttribute("aria-label") || "").toLowerCase();
-      if ((text === "next" || ariaLabel.includes("next")) && !btn.disabled && btn.getAttribute("aria-disabled") !== "true") return btn;
-    }
-    const paginationBtns = document.querySelectorAll(".artdeco-pagination__button--next, [aria-label='Next']");
-    for (const btn of paginationBtns) {
-      if (!btn.disabled && btn.getAttribute("aria-disabled") !== "true") return btn;
-    }
-    return null;
-  }
+  // Use shared SR.findNextPageButton from linkedin-core.js
+  const findNextPageButton = () => SR.findNextPageButton();
 
   function finishScan(scanTarget, matches, totalScraped) {
     const payload = {

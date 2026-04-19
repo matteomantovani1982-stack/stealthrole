@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { getAuthHeaders } from "@/lib/utils";
 import {
   getApplication,
   getJobRun,
@@ -140,10 +141,9 @@ export default function PackagePage() {
 
         // 2. Fetch LinkedIn contacts (best-effort, non-blocking)
         try {
-          const token = localStorage.getItem("sr_token");
           const res = await fetch(
             `/api/v1/relationships/company/${encodeURIComponent(found.company)}`,
-            { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+            { headers: getAuthHeaders(false) }
           );
           if (res.ok) {
             const data = await res.json();

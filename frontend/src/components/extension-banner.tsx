@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { getAuthHeaders } from "@/lib/utils";
 
 // Chrome Web Store URL — update when extension is published
 const CHROME_STORE_URL = "https://chrome.google.com/webstore/detail/stealthrole";
@@ -39,7 +40,8 @@ export default function ExtensionBanner() {
   // Sync token to extension whenever it changes
   useEffect(() => {
     function syncToken() {
-      const token = localStorage.getItem("sr_token");
+      const headers = getAuthHeaders(false);
+      const token = headers["Authorization"]?.replace("Bearer ", "");
       if (token) {
         // Dispatch a custom event that the extension content script can listen for
         window.dispatchEvent(new CustomEvent("sr-token-sync", { detail: { token } }));

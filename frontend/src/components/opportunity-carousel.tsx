@@ -2,27 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Opportunity } from "@/lib/api";
+import { initials as initialsFrom, freshnessTag } from "@/lib/utils";
 
 const CYCLE_MS = 20_000; // 20 seconds per card
-
-function initialsFrom(name: string): string {
-  return name
-    .split(/[\s&]+/)
-    .slice(0, 2)
-    .map((w) => w[0]?.toUpperCase() || "")
-    .join("");
-}
-
-function freshnessTag(firstSeen: string | null): string {
-  if (!firstSeen) return "New";
-  const days = Math.floor(
-    (Date.now() - new Date(firstSeen).getTime()) / 86_400_000
-  );
-  if (days === 0) return "Today";
-  if (days === 1) return "Yesterday";
-  if (days <= 7) return `${days}d ago`;
-  return `${Math.floor(days / 7)}w ago`;
-}
 
 function matchColor(score: number): string {
   if (score >= 75) return "text-green-600 bg-green-50";

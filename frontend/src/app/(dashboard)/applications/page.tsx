@@ -19,6 +19,7 @@ import {
   type ApplicationAnalytics,
   type JobRun,
 } from "@/lib/api";
+import { getAuthHeaders } from "@/lib/utils";
 import KanbanColumn from "@/components/kanban-column";
 import Modal from "@/components/modal";
 import StatCard from "@/components/stat-card";
@@ -103,9 +104,8 @@ export default function ApplicationsPage() {
 
     // Fetch LinkedIn connections at this company
     try {
-      const token = localStorage.getItem("sr_token");
       const res = await fetch(`/api/v1/relationships/company/${encodeURIComponent(app.company)}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: getAuthHeaders(false),
       });
       if (res.ok) {
         const data = await res.json();

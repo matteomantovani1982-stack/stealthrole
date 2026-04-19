@@ -15,18 +15,27 @@ POST /api/v1/profiles/{profile_id}/apply-import
   — Applies the extracted data to the profile (upserts experiences, sets headline etc.)
 """
 
+import anthropic
+import asyncio
+import io
 import json
+import logging
 import re
 import uuid
 from functools import partial
 
+import boto3
 import httpx
 import structlog
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import delete, select
 
 from app.config import settings
 from app.dependencies import CurrentUserId, DB
+from app.models.candidate_profile import CandidateProfile, ExperienceEntry, ProfileStatus
+from app.models.cv import CV
+from app.models.user import User
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["Profile Import"])
@@ -133,16 +142,80 @@ def _cv_to_text(parsed_content: dict) -> str:
 
     result = "\n".join(lines)
     # Log how much text we got
-    import logging
     logging.getLogger(__name__).info(f"cv_to_text extracted {len(result)} chars from {len(sections)} sections")
     return result
 
 
+def _call_claude_for_profile(
+    prompt: str, max_tokens: int = 5000, timeout: float = 120.0
+) -> ImportedProfile | None:
+    """
+    Shared helper: call Claude API for profile extraction, parse JSON, return ImportedProfile.
+
+    Args:
+        prompt: The full Claude prompt (instructions + JSON schema + content)
+        max_tokens: Max tokens for Claude response (default 5000)
+        timeout: Timeout for API call in seconds (default 120.0)
+
+    Returns:
+        ImportedProfile on success, None on error (errors logged and HTTPException raised)
+    """
+    if not settings.anthropic_api_key or settings.anthropic_api_key == "PASTE_YOUR_ANTHROPIC_KEY_HERE":
+        raise HTTPException(
+            status_code=501,
+            detail="Anthropic API key not configured. Set ANTHROPIC_API_KEY in environment.",
+        )
+
+    try:
+        client = anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=timeout)
+        logger.info("claude_call_start", max_tokens=max_tokens)
+
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        logger.info("claude_call_done")
+
+        # Strip markdown fences
+        raw = resp.content[0].text.strip()
+        raw = re.sub(r'^```json\s*', '', raw)
+        raw = re.sub(r'\s*```$', '', raw)
+
+        # Parse JSON
+        data = json.loads(raw)
+
+        # Build ImportedProfile from parsed data
+        experiences = [ImportedExperience(**e) for e in data.get("experiences", [])]
+        return ImportedProfile(
+            full_name=data.get("full_name", ""),
+            headline=data.get("headline", ""),
+            location=data.get("location", ""),
+            email=data.get("email", ""),
+            phone=data.get("phone", ""),
+            nationality=data.get("nationality", ""),
+            linkedin_url=data.get("linkedin_url", ""),
+            summary=data.get("summary", ""),
+            skills=data.get("skills", []),
+            languages=data.get("languages", []),
+            education=data.get("education", []),
+            experiences=experiences,
+            raw_source="",  # Caller will set this
+        )
+    except json.JSONDecodeError as e:
+        logger.error("profile_parse_json_error", error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to parse Claude response as JSON")
+    except TimeoutError:
+        logger.error("profile_parse_timeout")
+        raise HTTPException(status_code=504, detail="Profile extraction timed out — try again or use shorter input")
+    except Exception as e:
+        import traceback
+        logger.error("profile_parse_error", error=str(e), tb=traceback.format_exc()[-500:])
+        raise HTTPException(status_code=500, detail=f"Profile extraction failed: {str(e)}")
+
+
 def _extract_profile_with_claude(cv_text: str) -> ImportedProfile:
     """Send CV text to Claude, get back structured profile JSON."""
-    if not settings.anthropic_api_key:
-        raise HTTPException(status_code=503, detail="Claude API key not configured")
-
     prompt = f"""You are an expert CV parser and career analyst. Your job is to extract EVERYTHING from this CV — leave nothing out.
 
 CV TEXT (full document — extract EVERYTHING, do not skip any section):
@@ -194,58 +267,12 @@ CRITICAL RULES:
 - DO NOT merge or skip any experiences — if the CV lists 8 jobs, return 8 experiences
 - DO NOT truncate education — if there are 3 degrees, return all 3"""
 
-    # Check API key before calling Claude
-    if not settings.anthropic_api_key or settings.anthropic_api_key == "PASTE_YOUR_ANTHROPIC_KEY_HERE":
-        raise HTTPException(
-            status_code=501,
-            detail="Anthropic API key not configured. Set ANTHROPIC_API_KEY in environment.",
-        )
-
-    try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=120.0)
-        logger.info("claude_cv_call_start", key_len=len(settings.anthropic_api_key or ""))
-        # Cost optimization: Haiku is sufficient for structured CV extraction,
-        # and 5000 tokens is enough for any realistic CV (was 8000 on Sonnet)
-        resp = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=5000,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        logger.info("claude_cv_call_done")
-        raw = resp.content[0].text.strip()
-        raw = re.sub(r'^```json\s*', '', raw)
-        raw = re.sub(r'\s*```$', '', raw)
-        data = json.loads(raw)
-
-        experiences = [ImportedExperience(**e) for e in data.get("experiences", [])]
-        return ImportedProfile(
-            full_name=data.get("full_name", ""),
-            headline=data.get("headline", ""),
-            location=data.get("location", ""),
-            email=data.get("email", ""),
-            phone=data.get("phone", ""),
-            nationality=data.get("nationality", ""),
-            linkedin_url=data.get("linkedin_url", ""),
-            summary=data.get("summary", ""),
-            skills=data.get("skills", []),
-            languages=data.get("languages", []),
-            education=data.get("education", []),
-            experiences=experiences,
-            raw_source="cv",
-        )
-    except json.JSONDecodeError as e:
-        logger.error("cv_parse_json_error", error=str(e))
-        raise HTTPException(status_code=500, detail="Failed to parse Claude response as JSON")
-    except HTTPException:
-        raise
-    except TimeoutError:
-        logger.error("cv_parse_timeout")
-        raise HTTPException(status_code=504, detail="CV extraction timed out — try again or use a shorter CV")
-    except Exception as e:
-        import traceback as _tb
-        logger.error("cv_parse_error", error=str(e), tb=_tb.format_exc()[-500:])
-        raise HTTPException(status_code=500, detail=f"CV extraction failed: {str(e)}")
+    # Call shared helper
+    profile = _call_claude_for_profile(prompt, max_tokens=5000, timeout=120.0)
+    if profile:
+        profile.raw_source = "cv"
+        logger.info("extract_cv_done", experiences=len(profile.experiences))
+    return profile
 
 
 # ── LinkedIn scraping ─────────────────────────────────────────────────────────
@@ -270,14 +297,13 @@ def _scrape_linkedin_via_serper(linkedin_url: str) -> str:
         }
         r = httpx.get(linkedin_url, headers=headers, timeout=8.0, follow_redirects=True)
         if r.status_code == 200 and len(r.text) > 500:
-            import re as _re
             html = r.text
             # Strip scripts/styles
-            html = _re.sub(r"<(script|style)[^>]*>.*?</\1>", "", html, flags=_re.DOTALL|_re.IGNORECASE)
+            html = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", html, flags=re.DOTALL|re.IGNORECASE)
             # Extract text
-            text = _re.sub(r"<[^>]+>", " ", html)
-            text = _re.sub(r"[ \t]+", " ", text)
-            text = _re.sub(r"\n{3,}", "\n\n", text)
+            text = re.sub(r"<[^>]+>", " ", html)
+            text = re.sub(r"[ \t]+", " ", text)
+            text = re.sub(r"\n{3,}", "\n\n", text)
             text_parts.append("=== LINKEDIN PAGE CONTENT ===")
             text_parts.append(text.strip()[:5000])
     except Exception as e:
@@ -333,9 +359,6 @@ def _scrape_linkedin_via_serper(linkedin_url: str) -> str:
 
 def _extract_profile_from_linkedin(linkedin_url: str, scraped_text: str) -> ImportedProfile:
     """Send scraped LinkedIn data to Claude for structuring."""
-    if not settings.anthropic_api_key:
-        raise HTTPException(status_code=503, detail="Claude API key not configured")
-
     prompt = f"""You are an expert LinkedIn profile analyst and career researcher. Extract EVERYTHING from this LinkedIn profile data.
 
 LINKEDIN URL: {linkedin_url}
@@ -383,37 +406,14 @@ RULES:
 - If data is limited, still construct the best possible profile from what's available
 - Reverse chronological order"""
 
-    try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=60.0)
-        resp = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=4000,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        raw = resp.content[0].text.strip()
-        raw = re.sub(r'^```json\s*', '', raw)
-        raw = re.sub(r'\s*```$', '', raw)
-        data = json.loads(raw)
-        experiences = [ImportedExperience(**e) for e in data.get("experiences", [])]
-        return ImportedProfile(
-            full_name=data.get("full_name", ""),
-            headline=data.get("headline", ""),
-            location=data.get("location", ""),
-            email=data.get("email", ""),
-            phone=data.get("phone", ""),
-            nationality=data.get("nationality", ""),
-            linkedin_url=linkedin_url,
-            summary=data.get("summary", ""),
-            skills=data.get("skills", []),
-            languages=data.get("languages", []),
-            education=data.get("education", []),
-            experiences=experiences,
-            raw_source="linkedin",
-        )
-    except Exception as e:
-        logger.error("linkedin_parse_error", error=str(e))
-        raise HTTPException(status_code=500, detail=f"LinkedIn extraction failed: {str(e)}")
+    # Call shared helper
+    profile = _call_claude_for_profile(prompt, max_tokens=4000, timeout=60.0)
+    if profile:
+        profile.raw_source = "linkedin"
+        # Ensure linkedin_url is set from the parameter (not from Claude response)
+        profile.linkedin_url = linkedin_url
+        logger.info("extract_linkedin_done", experiences=len(profile.experiences))
+    return profile
 
 
 
@@ -422,7 +422,7 @@ def _extract_text_from_bytes(file_bytes: bytes, filename: str) -> str:
     ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
 
     if ext == "docx":
-        import io
+        # Optional: imported at call site because python-docx may not be installed
         from docx import Document
         from docx.text.paragraph import Paragraph as _Para
         doc = Document(io.BytesIO(file_bytes))
@@ -444,14 +444,15 @@ def _extract_text_from_bytes(file_bytes: bytes, filename: str) -> str:
 
     elif ext == "pdf":
         try:
+            # Optional: imported at call site because pdfminer may not be installed
             import pdfminer.high_level as _pdf
-            import io
             text = _pdf.extract_text(io.BytesIO(file_bytes))
             return text or ""
         except ImportError:
             pass
         try:
-            import fitz  # PyMuPDF
+            # Optional: imported at call site because PyMuPDF may not be installed
+            import fitz
             doc = fitz.open(stream=file_bytes, filetype="pdf")
             return "\n".join(page.get_text() for page in doc)
         except ImportError:
@@ -474,11 +475,6 @@ async def import_from_cv(
     Reads raw file bytes directly from S3 — no need to wait for Celery parsing.
     Works immediately after upload.
     """
-    import asyncio
-    from sqlalchemy import select
-    from app.models.cv import CV
-    from app.config import settings as _s
-
     result = await db.execute(
         select(CV).where(CV.id == uuid.UUID(payload.cv_id), CV.user_id == str(current_user_id))
     )
@@ -496,13 +492,12 @@ async def import_from_cv(
     # Path 2: Not yet parsed — read raw bytes from S3 and extract text directly
     if not cv_text.strip():
         try:
-            import boto3
             s3 = boto3.client(
                 "s3",
-                endpoint_url=_s.s3_endpoint_url,
-                aws_access_key_id=_s.s3_access_key_id,
-                aws_secret_access_key=_s.s3_secret_access_key,
-                region_name=_s.s3_region,
+                endpoint_url=settings.s3_endpoint_url,
+                aws_access_key_id=settings.s3_access_key_id,
+                aws_secret_access_key=settings.s3_secret_access_key,
+                region_name=settings.s3_region,
             )
             loop = asyncio.get_running_loop()
             obj = await loop.run_in_executor(
@@ -534,8 +529,6 @@ async def import_from_linkedin(
     current_user_id: CurrentUserId,
 ) -> dict:
     """Extract profile data from a LinkedIn URL."""
-    import asyncio
-
     has_url = "linkedin.com" in payload.linkedin_url
     has_paste = len(payload.paste_text.strip()) > 50
     if not has_url and not has_paste:
@@ -560,8 +553,7 @@ async def import_from_linkedin(
     logger.info("import_linkedin_done", experiences=len(imported.experiences))
 
     # Quality check: flag empty experiences
-    import json as _j
-    result = _j.loads(imported.model_dump_json())
+    result = json.loads(imported.model_dump_json())
 
     empty_experiences = sum(
         1 for exp in imported.experiences
@@ -619,10 +611,6 @@ async def apply_import(
     Apply imported profile data to an existing profile.
     Upserts experiences, updates headline/summary/skills.
     """
-    from sqlalchemy import select
-    from app.models.candidate_profile import CandidateProfile, ExperienceEntry
-    from app.models.user import User
-
     imp = payload.imported
 
     # Load profile
@@ -643,14 +631,12 @@ async def apply_import(
         profile.location = imp.location
 
     # Mark profile as active once we have real data
-    from app.models.candidate_profile import ProfileStatus
     if imp.experiences or imp.headline:
         profile.status = ProfileStatus.ACTIVE
 
     # Store skills, languages, education, summary in global_context
-    import json as _json
     try:
-        ctx = _json.loads(profile.global_context or "{}")
+        ctx = json.loads(profile.global_context or "{}")
     except Exception:
         ctx = {}
 
@@ -675,7 +661,7 @@ async def apply_import(
     if imp.education:
         ctx["education"] = [e if isinstance(e, dict) else e.model_dump() for e in imp.education]
 
-    profile.global_context = _json.dumps(ctx)
+    profile.global_context = json.dumps(ctx)
 
     # Update user full_name if we have it
     if imp.full_name:
@@ -690,7 +676,6 @@ async def apply_import(
     experiences_added = 0
     if payload.overwrite_existing:
         # Delete existing experiences
-        from sqlalchemy import delete
         await db.execute(
             delete(ExperienceEntry).where(ExperienceEntry.profile_id == profile_id)
         )

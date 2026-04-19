@@ -358,18 +358,23 @@
     return badge;
   }
 
-  // Re-classify when new messages appear (messaging is a SPA)
-  if (SR.getPageType() === "messaging") {
-    const msgObserver = new MutationObserver(() => {
+  // Re-classify when new messages appear (messaging is a SPA).
+  // Store observer ref on SR so it can be disconnected on page change.
+
+  SR._installMsgClassifierObserver = function () {
+    // Disconnect previous observer if any
+    SR._msgClassifierObserver?.disconnect();
+    SR._msgClassifierObserver = new MutationObserver(() => {
       SR.classifyVisibleConversations?.();
     });
-    // Delay to ensure DOM is ready
-    setTimeout(() => {
-      const sidebar = document.querySelector(".msg-conversations-container__conversations-list, [class*='conversations-list']");
-      if (sidebar) {
-        msgObserver.observe(sidebar, { childList: true, subtree: true });
-        console.log("[SR] Messaging sidebar observer installed");
-      }
-    }, 3000);
+    const sidebar = document.querySelector(".msg-conversations-container__conversations-list, [class*='conversations-list']");
+    if (sidebar) {
+      SR._msgClassifierObserver.observe(sidebar, { childList: true, subtree: true });
+      console.log("[SR] Messaging sidebar observer installed");
+    }
+  };
+
+  if (SR.getPageType() === "messaging") {
+    setTimeout(() => SR._installMsgClassifierObserver(), 3000);
   }
 })();

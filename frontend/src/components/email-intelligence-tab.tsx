@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { getAuthHeaders } from "@/lib/utils";
 
 interface EmailIntelData {
   scan_status: string;
@@ -40,8 +41,7 @@ export default function EmailIntelligenceTab() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem("sr_token");
-    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const headers = getAuthHeaders();
 
     Promise.allSettled([
       fetch("/api/v1/email-integration/accounts", { headers }).then((r) => r.ok ? r.json() : null),
@@ -92,10 +92,10 @@ export default function EmailIntelligenceTab() {
             <button id="scan-emails-btn" onClick={async () => {
               const btn = document.getElementById("scan-emails-btn") as HTMLButtonElement;
               if (btn) { btn.textContent = "Diving into your inbox..."; btn.disabled = true; btn.style.opacity = "0.5"; btn.style.cursor = "not-allowed"; }
-              const token = localStorage.getItem("sr_token");
+              const headers = getAuthHeaders();
               await fetch("/api/v1/email-intelligence/scan", {
                 method: "POST",
-                headers: token ? { Authorization: `Bearer ${token}` } : {},
+                headers,
               });
               window.location.reload();
             }} className="px-5 py-2.5 bg-brand-600 text-white text-sm font-semibold rounded-lg hover:bg-brand-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
@@ -126,10 +126,10 @@ export default function EmailIntelligenceTab() {
           const btn = document.getElementById("rescan-btn");
           if (btn) btn.textContent = "Reading between the lines...";
           try {
-            const token = localStorage.getItem("sr_token");
+            const headers = getAuthHeaders();
             const res = await fetch("/api/v1/email-intelligence/scan", {
               method: "POST",
-              headers: token ? { Authorization: `Bearer ${token}` } : {},
+              headers,
             });
             const data = await res.json();
             if (btn) btn.textContent = res.ok ? "Scan started! Refresh in 60s..." : `Error: ${data.detail || res.status}`;

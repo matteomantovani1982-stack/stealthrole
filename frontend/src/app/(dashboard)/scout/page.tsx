@@ -5,7 +5,9 @@
 
 import { useEffect, useState, Component } from "react";
 import { useRouter } from "next/navigation";
-import { getHiddenMarket, type HiddenSignal } from "@/lib/api";
+import { getHiddenMarket, createAppAndPack, formatApiError, type HiddenSignal } from "@/lib/api";
+import { getAuthHeaders, timeAgo, initials as makeInitials } from "@/lib/utils";
+import { TRIGGER_COLORS } from "@/lib/constants";
 import MarketSignals from "@/components/market-signals";
 import FindWayInPanel from "@/components/find-way-in";
 
@@ -47,64 +49,8 @@ class ScoutErrorBoundary extends Component<{ children: React.ReactNode }, { hasE
   }
 }
 
-const TRIGGER_COLORS = {
-  funding: "bg-green-50 text-green-700",
-  regulatory: "bg-red-50 text-red-700",
-  expansion: "bg-blue-50 text-blue-700",
-  competitive: "bg-amber-50 text-amber-700",
-  lifecycle: "bg-purple-50 text-purple-700",
-  industry_shift: "bg-cyan-50 text-cyan-700",
-  ma_activity: "bg-orange-50 text-orange-700",
-};
-
-async function addAndGeneratePack(company: string, role: string, url: string | null, description: string) {
-  const tk = localStorage.getItem("sr_token");
-  const hdrs = tk ? { Authorization: `Bearer ${tk}` } : {};
-
-  // 1. Get latest CV first — REQUIRED for pack generation
-  const cvsRes = await fetch("/api/v1/cvs", { headers: hdrs });
-  const cvs = cvsRes.ok ? await cvsRes.json() : [];
-  const cv = Array.isArray(cvs) ? cvs.find((c: any) => c.status === "parsed") : null;
-
-  if (!cv) {
-    throw new Error("NO_CV: Upload a CV in your Profile before generating a pack.");
-  }
-
-  // 2. Create job run (pack) first so we have the ID
-  const jdText = `Role: ${role}\nCompany: ${company}\n\n${description || `${role} position at ${company}`}${url ? `\n\nSource: ${url}` : ""}`;
-  const jobRes = await fetch("/api/v1/jobs", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...hdrs },
-    body: JSON.stringify({
-      cv_id: cv.id,
-      jd_text: jdText,
-      preferences: { tone: "executive", region: "UAE" },
-    }),
-  });
-  if (!jobRes.ok) {
-    const body = await jobRes.json().catch(() => ({}));
-    const { formatApiError } = await import("@/lib/api");
-    throw new Error(formatApiError(body.detail) || `Failed to start pack generation (HTTP ${jobRes.status})`);
-  }
-  const job = await jobRes.json();
-  const jobRunId = job.id;
-
-  // 3. Create application WITH job_run_id already linked
-  const appRes = await fetch("/api/v1/applications", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...hdrs },
-    body: JSON.stringify({
-      company, role,
-      date_applied: new Date().toISOString(),
-      source_channel: "job_board",
-      stage: "watching",
-      url: url || undefined,
-      job_run_id: jobRunId,
-    }),
-  });
-  if (!appRes.ok) throw new Error("Failed to create application");
-  return await appRes.json();
-}
+// TRIGGER_COLORS imported from @/lib/constants
+// createAppAndPack imported from @/lib/api
 
 
 export default function ScoutPageWrapper() {
@@ -126,8 +72,7 @@ function ScoutPage() {
   const [scanning, setScanning] = useState(false);
   const [tab, setTab] = useState("vacancies");
 
-  const token = typeof window !== "undefined" ? localStorage.getItem("sr_token") : null;
-  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+  const headers = getAuthHeaders(false);
 
   // Load on mount — use sessionStorage cache to avoid re-fetching on navigation
   useEffect(() => {
@@ -246,10 +191,10 @@ function ScoutPage() {
       )}
 
       {/* ═══ CURRENT VACANCIES ═══ */}
-      {!loading && tab === "vacancies" && <VacanciesTab onAddPack={addAndGeneratePack} vacancies={vacancies} />}
+      {!loading && tab === "vacancies" && <VacanciesTab onAddPack={createAppAndPack} vacancies={vacancies} />}
 
       {/* ═══ PREDICTED OPPORTUNITIES ═══ */}
-      {!loading && tab === "predictions" && <PredictionsTab onAddPack={addAndGeneratePack} predictions={predictions} />}
+      {!loading && tab === "predictions" && <PredictionsTab onAddPack={createAppAndPack} predictions={predictions} />}
 
       {/* ═══ HIRING SIGNALS ═══ */}
       {!loading && tab === "signals" && <SignalsTab signals={signals} />}
@@ -410,7 +355,7 @@ function VacanciesTab({ onAddPack, vacancies = [] }: { onAddPack: (company: stri
       {/* Way In Panel */}
       {wayInTarget && (
         <div style={{ marginBottom: 16 }}>
-          <FindWayInPanel company={wayInTarget.company} role={wayInTarget.role} headers={{ ...(typeof window !== "undefined" && localStorage.getItem("sr_token") ? { Authorization: `Bearer ${localStorage.getItem("sr_token")}` } : {}) } as Record<string, string>} />
+          <FindWayInPanel company={wayInTarget.company} role={wayInTarget.role} headers={getAuthHeaders(false)} />
         </div>
       )}
 
@@ -546,7 +491,7 @@ function PredictionsTab({ onAddPack, predictions = [] }: { onAddPack: (company: 
     const status = mapUrgencyToStatus(p.urgency, p.confidence);
     return {
       status,
-      initials: (p.company || "??").split(" ").map((w: string) => w[0]).join("").substring(0, 2).toUpperCase(),
+      initials: makeInitials(p.company || "??"),
       window: p.timeline || "30 days",
       title: p.predicted_role || "Role",
       company: p.company || "Company",
@@ -688,7 +633,7 @@ function PredictionsTab({ onAddPack, predictions = [] }: { onAddPack: (company: 
             <FindWayInPanel
               company={wayInTarget.company}
               role={wayInTarget.role}
-              headers={typeof window !== "undefined" && localStorage.getItem("sr_token") ? { Authorization: `Bearer ${localStorage.getItem("sr_token")}` } : {}}
+              headers={getAuthHeaders(false)}
               alwaysOpen={true}
             />
           </div>
@@ -783,15 +728,7 @@ function SignalsTab({ signals = [] }: { signals?: import("@/lib/api").HiddenSign
     board_change: "departure",
   };
 
-  function timeAgo(dateStr: string): string {
-    const diffMs = Date.now() - new Date(dateStr).getTime();
-    const mins = Math.floor(diffMs / 60000);
-    if (mins < 1) return "just now";
-    if (mins < 60) return `${mins}m ago`;
-    const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours}h ago`;
-    return `${Math.floor(hours / 24)}d ago`;
-  }
+  // timeAgo imported from @/lib/utils at module level
 
   // Map real signals to card format — defensive against any missing/null fields
   const cards: SignalCard[] = (signals || []).filter(s => s && s.company_name).map((s) => {
@@ -801,7 +738,7 @@ function SignalsTab({ signals = [] }: { signals?: import("@/lib/api").HiddenSign
     const rawConfidence = typeof s.confidence === "number" ? s.confidence : 0;
     // Handle confidence expressed as 0-1 or 0-100
     const confidencePct = rawConfidence <= 1 ? Math.round(rawConfidence * 100) : Math.round(rawConfidence);
-    const initials = companyName.split(" ").map((w: string) => w[0] || "").join("").substring(0, 2).toUpperCase() || "??";
+    const initials = makeInitials(companyName) || "??";
     const signalTypeLabel = s.signal_type ? s.signal_type.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()) : "Signal";
     return {
       type: signalType,
@@ -990,7 +927,7 @@ function SignalsTab({ signals = [] }: { signals?: import("@/lib/api").HiddenSign
                       <button
                         onClick={async () => {
                           try {
-                            const app = await addAndGeneratePack(card.company, card.headline.split(" — ")[0] || "Senior Role", card.url || null, "");
+                            const app = await createAppAndPack(card.company, card.headline.split(" — ")[0] || "Senior Role", card.url || null, "");
                             if (app?.id) router.push(`/applications/${app.id}/package`);
                             else router.push("/applications");
                           } catch (err: any) {
@@ -1008,7 +945,7 @@ function SignalsTab({ signals = [] }: { signals?: import("@/lib/api").HiddenSign
                   </div>
                   {wayInCard === card.company && (
                     <div style={{ marginTop: 10 }}>
-                      <FindWayInPanel company={card.company} role={card.headline.split(" — ")[0] || "Senior Role"} headers={{ Authorization: `Bearer ${typeof window !== "undefined" ? localStorage.getItem("sr_token") || "" : ""}` }} />
+                      <FindWayInPanel company={card.company} role={card.headline.split(" — ")[0] || "Senior Role"} headers={getAuthHeaders(false)} />
                     </div>
                   )}
                 </div>

@@ -47,7 +47,7 @@
       const build = builders[i];
       const testUrl = build(0, 10);
       try {
-        const res = await fetch(testUrl, { headers, credentials: "include" });
+        const res = await SR.fetchWithTimeout(testUrl, { headers, credentials: "include" }, 15000);
         console.log(`[SR] conn probe ${i}:`, testUrl.slice(0, 110), "→", res.status);
         if (!res.ok) continue;
         const data = await res.json();
@@ -69,6 +69,29 @@
     return null;
   }
 
+  // ── Connection prioritization ──
+  // Sorts connections by relevance to job search: recruiters and hiring managers
+  // first, then people at target companies, then everyone else by recency.
+
+  const RECRUITER_KEYWORDS = /\b(recruit|talent\s*acqui|sourcer|head\s*hunt|staffing|hiring\s*partner|people\s*ops|hr\s*business\s*partner|ta\s*lead|ta\s*manager)\b/i;
+  const HM_KEYWORDS = /\b(hiring\s*manager|engineering\s*manager|vp\s*of\s*eng|director\s*of\s*eng|cto|head\s*of\s*product|head\s*of\s*eng|head\s*of\s*design|team\s*lead)\b/i;
+
+  function prioritizeConnections(connections) {
+    // Score each connection: lower = higher priority
+    const scored = connections.map((c) => {
+      const title = (c.current_title || c.headline || "").toLowerCase();
+      let score = 3; // default: regular connection
+      if (RECRUITER_KEYWORDS.test(title)) score = 0;        // recruiters first
+      else if (HM_KEYWORDS.test(title)) score = 1;          // hiring managers second
+      // Connections at common tech/target companies get a slight bump
+      else if (/\b(engineer|developer|designer|product\s*manager|data\s*scientist)\b/i.test(title)) score = 2;
+      return { ...c, _score: score };
+    });
+    scored.sort((a, b) => a._score - b._score);
+    // Strip internal score before returning
+    return scored.map(({ _score, ...rest }) => rest);
+  }
+
   async function paginateVoyager(build, headers, firstPageData) {
     const all = [];
     const BATCH = 40;
@@ -82,11 +105,21 @@
     console.log(`[SR] voyager conn: page 0 → ${extracted.length} records`);
 
     let start = BATCH;
+    let rateLimitRetries = 0;
     while (start < MAX_TOTAL) {
       const url = build(start, BATCH);
       try {
-        const res = await fetch(url, { headers, credentials: "include" });
+        const res = await SR.fetchWithRetry(url, { headers, credentials: "include" }, { retries: 2, backoffMs: 2000 });
+        if (res.status === 429 || res.status === 503) {
+          rateLimitRetries++;
+          if (rateLimitRetries > 5) { console.warn("[SR] voyager conn: too many rate limits, stopping"); break; }
+          const retryAfter = parseInt(res.headers?.get?.("retry-after") || "15", 10);
+          console.warn(`[SR] voyager conn page ${start}: rate-limited (${res.status}), waiting ${retryAfter}s`);
+          await new Promise((r) => setTimeout(r, retryAfter * 1000));
+          continue; // retry same page
+        }
         if (!res.ok) { console.warn("[SR] voyager conn page", start, "→", res.status); break; }
+        rateLimitRetries = 0;
         const data = await res.json();
         extracted = extractVoyagerRecords(data);
         if (extracted.length === 0) { console.log("[SR] voyager conn: end at start=", start); break; }
@@ -252,20 +285,6 @@
     });
   };
 
-  // ── scrollToBottom helper ──
-
-  async function scrollToBottom(maxDurationMs = 180000) {
-    return new Promise((resolve) => {
-      const started = Date.now();
-      const interval = setInterval(() => {
-        if (Date.now() - started > maxDurationMs) { clearInterval(interval); resolve(); return; }
-        const scrollers = [document.scrollingElement || document.documentElement, document.body];
-        scrollers.forEach((s) => { try { s.scrollTop = s.scrollHeight; } catch {} });
-        try { window.scrollTo(0, document.body.scrollHeight); } catch {}
-      }, 2500);
-    });
-  }
-
   // ── Auto-scrape: full sync triggered by background ──
 
   SR.autoScrapeConnections = async function () {
@@ -285,18 +304,26 @@
       console.log("[SR] attempting Voyager API…");
       const voyagerRecords = await fetchAllConnectionsViaVoyager();
       if (voyagerRecords && voyagerRecords.length > 0) {
-        console.log(`[SR] Voyager returned ${voyagerRecords.length} — skipping DOM scroll`);
-        progress(voyagerRecords.length, "scanning");
+        console.log(`[SR] Voyager returned ${voyagerRecords.length} — prioritizing by job relevance`);
+        const sorted = prioritizeConnections(voyagerRecords);
+        progress(sorted.length, "scanning");
         const CHUNK = 100;
+        const MAX_RETRIES = 2;
         let posted = 0;
-        for (let i = 0; i < voyagerRecords.length; i += CHUNK) {
-          const batch = voyagerRecords.slice(i, i + CHUNK);
-          const res = await SR.apiPost("/linkedin/ingest/connections", { connections: batch });
-          if (!res?.ok) console.warn("[SR] voyager batch error:", res?.error);
+        for (let i = 0; i < sorted.length; i += CHUNK) {
+          const batch = sorted.slice(i, i + CHUNK);
+          let ok = false;
+          for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            const res = await SR.apiPost("/linkedin/ingest/connections", { connections: batch });
+            if (res?.ok) { ok = true; break; }
+            console.warn(`[SR] voyager batch error (attempt ${attempt + 1}):`, res?.error);
+            if (attempt < MAX_RETRIES) await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+          }
+          if (!ok) console.error("[SR] voyager batch failed after retries, skipping chunk at", i);
           posted += batch.length;
           progress(posted, "scanning");
         }
-        progress(voyagerRecords.length, "done");
+        progress(sorted.length, "done");
         SR._autoScrapeInProgress = false;
         return;
       }
@@ -424,13 +451,20 @@
         return;
       }
 
-      // POST in chunks
+      // POST in chunks with retry
       const CHUNK = 100;
+      const MAX_RETRIES = 2;
       let posted = 0;
       for (let i = 0; i < allConnections.length; i += CHUNK) {
         const batch = allConnections.slice(i, i + CHUNK);
-        const res = await SR.apiPost("/linkedin/ingest/connections", { connections: batch });
-        if (!res?.ok) console.warn("[SR] batch import error:", res?.error);
+        let ok = false;
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+          const res = await SR.apiPost("/linkedin/ingest/connections", { connections: batch });
+          if (res?.ok) { ok = true; break; }
+          console.warn(`[SR] batch import error (attempt ${attempt + 1}):`, res?.error);
+          if (attempt < MAX_RETRIES) await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+        }
+        if (!ok) console.error("[SR] DOM batch failed after retries, skipping chunk at", i);
         posted += batch.length;
         progress(posted, "scanning");
       }

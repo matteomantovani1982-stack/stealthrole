@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
+import { getAuthHeaders } from "@/lib/utils";
 import {
   getActiveProfile,
   createProfile,
@@ -374,9 +375,8 @@ export default function ProfilePage() {
             <button id="dl-cv-btn" onClick={async () => {
               const btn = document.getElementById("dl-cv-btn");
               if (btn) btn.textContent = "Generating...";
-              const token = localStorage.getItem("sr_token");
               try {
-                const res = await fetch("/api/v1/cv-builder/generate", { method: "POST", headers: token ? { Authorization: `Bearer ${token}` } : {} });
+                const res = await fetch("/api/v1/cv-builder/generate", { method: "POST", headers: getAuthHeaders() });
                 if (res.ok) {
                   const blob = await res.blob();
                   const url = URL.createObjectURL(blob);

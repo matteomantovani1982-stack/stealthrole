@@ -1,4 +1,4 @@
-// StealthRole popup script — v1.0.0
+// StealthRole popup script — v2.0.0
 // Expanded UI with stats grid, Sync connections orchestration, and live progress.
 // Keeps the legacy "Save this job" and "Auto-fill application" flows intact.
 
@@ -85,9 +85,10 @@ syncMsgBtn.addEventListener("click", () => {
 function restoreSyncStatus() {
   chrome.runtime.sendMessage({ type: "GET_SYNC_STATUS" }, (res) => {
     const task = res && res.task;
-    if (task && task.type === "connections" && task.status === "scanning") {
-      setProgress({ status: "scanning", count: task.count || 0, indet: true });
-      syncBtn.disabled = true;
+    if (task && task.status === "scanning") {
+      setProgress({ status: "scanning", count: task.count || 0, indet: true, feature: task.type });
+      if (task.type === "connections") syncBtn.disabled = true;
+      if (task.type === "messages") syncMsgBtn.disabled = true;
     }
   });
 }
@@ -113,7 +114,7 @@ function setProgress({ status, count, error, indet, feature }) {
   if (status === "scanning") {
     progressLabel.textContent = label;
     progressCount.textContent = String(count || 0);
-    progressFill.style.width = indet ? "40%" : Math.min(100, ((count || 0) / 50)) + "%";
+    progressFill.style.width = indet ? "40%" : Math.min(100, ((count || 0) / 5)) + "%";
   } else if (status === "done") {
     progressLabel.textContent = "✓ Done";
     progressCount.textContent = String(count || 0);
@@ -190,8 +191,25 @@ function loadStats() {
   chrome.runtime.sendMessage({ type: "API_REQUEST", path: "/linkedin/stats", options: {} }, (res) => {
     if (res?.ok && res.data) {
       document.getElementById("stat-connections").textContent = res.data.total_connections ?? 0;
-      const sub = document.getElementById("stat-connections-sub");
-      if (res.data.total_connections) sub.textContent = `${res.data.recruiters || 0} recruiters`;
+      const connSub = document.getElementById("stat-connections-sub");
+      if (res.data.total_connections) connSub.textContent = `${res.data.recruiters || 0} recruiters`;
+
+      // Message stats (same endpoint)
+      const msgEl = document.getElementById("stat-messages");
+      const msgSub = document.getElementById("stat-messages-sub");
+      if (res.data.total_conversations != null) {
+        msgEl.textContent = res.data.total_conversations;
+        if (res.data.unread_conversations) msgSub.textContent = `${res.data.unread_conversations} unread`;
+        else msgSub.textContent = "synced";
+      }
+
+      // Intro paths
+      const pathEl = document.getElementById("stat-paths");
+      const pathSub = document.getElementById("stat-paths-sub");
+      if (res.data.intro_paths != null) {
+        pathEl.textContent = res.data.intro_paths;
+        pathSub.textContent = "available";
+      }
     }
   });
   chrome.runtime.sendMessage({ type: "API_REQUEST", path: "/applications/analytics", options: {} }, (res) => {

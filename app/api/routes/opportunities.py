@@ -8,6 +8,7 @@ import structlog
 from fastapi import APIRouter, Query
 
 from app.dependencies import DB, CurrentUserId
+from app.api.routes.scout import _extract_prefs
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/v1/opportunities", tags=["OpportunityRadar"])
@@ -41,16 +42,11 @@ async def get_radar(
     profile = await svc.get_active_profile_orm(current_user_id)
     profile_dict = profile.to_prompt_dict() if profile else None
 
-    prefs = {}
-    if profile and profile.preferences:
-        prefs = profile.preferences
-    elif profile and profile.global_context:
-        import json
-        try:
-            ctx = json.loads(profile.global_context)
-            prefs = ctx.get("preferences", ctx.get("__preferences", {}))
-        except Exception:
-            pass
+    # Extract preferences using shared helper
+    prefs = _extract_prefs({
+        "preferences": profile.preferences if profile else None,
+        "global_context": profile.global_context if profile else None,
+    })
 
     from app.services.radar.opportunity_radar import run_radar
 

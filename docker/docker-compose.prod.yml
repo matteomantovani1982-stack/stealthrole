@@ -37,7 +37,7 @@ x-app-env: &app-env
   SMTP_FROM: ${SMTP_FROM:-noreply@cvlab.co}
   APP_BASE_URL: ${APP_BASE_URL:-https://cvlab.co}
   FRONTEND_URL: ${FRONTEND_URL:-https://cvlab.co}
-  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://cvlab.co,https://www.cvlab.co}
+  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://stealthrole.com,https://www.stealthrole.com,https://www.linkedin.com}
   SENTRY_DSN: ${SENTRY_DSN}
   SENTRY_ENVIRONMENT: production
   DEBUG: "false"

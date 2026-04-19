@@ -17,6 +17,10 @@ from app.services.intelligence.user_intelligence_service import UserIntelligence
 router = APIRouter(prefix="/api/v1/intelligence", tags=["User Intelligence"])
 
 
+def _svc(db: DB) -> UserIntelligenceService:
+    return UserIntelligenceService(db=db)
+
+
 @router.post(
     "/compute",
     response_model=UserIntelligenceResponse,
@@ -25,7 +29,7 @@ router = APIRouter(prefix="/api/v1/intelligence", tags=["User Intelligence"])
 async def compute_intelligence(
     db: DB, user_id: CurrentUserId,
 ) -> UserIntelligenceResponse:
-    svc = UserIntelligenceService(db)
+    svc = _svc(db)
     intel = await svc.compute(user_id)
     return UserIntelligenceResponse.model_validate(intel)
 
@@ -38,7 +42,7 @@ async def compute_intelligence(
 async def get_intelligence(
     db: DB, user_id: CurrentUserId,
 ) -> UserIntelligenceResponse:
-    svc = UserIntelligenceService(db)
+    svc = _svc(db)
     intel = await svc.get(user_id)
     if not intel:
         raise HTTPException(

@@ -3,6 +3,7 @@
 
 import { useState } from "react";
 import { useAuth } from "@/lib/auth-context";
+import { getAuthHeaders } from "@/lib/utils";
 
 const PLANS = [
   {
@@ -67,10 +68,9 @@ export default function BillingPage() {
     if (!priceId) return;
     setLoading(priceId);
     try {
-      const token = localStorage.getItem("sr_token");
       const res = await fetch("/api/v1/billing/checkout", {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        headers: getAuthHeaders(),
         body: JSON.stringify({
           price_id: priceId,
           success_url: `${window.location.origin}/billing?success=true`,

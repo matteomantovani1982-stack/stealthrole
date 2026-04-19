@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { getAuthHeaders } from "@/lib/utils";
 
 interface LinkedInStats {
   total_connections: number;
@@ -36,8 +37,7 @@ export default function LinkedInIntelligenceTab() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    const token = localStorage.getItem("sr_token");
-    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const headers = getAuthHeaders();
     const currentUserId = localStorage.getItem("sr_user_id");
 
     // SECURITY: Load cached AI insights ONLY if they belong to the current user
@@ -68,10 +68,10 @@ export default function LinkedInIntelligenceTab() {
     setAnalyzing(true);
     setError("");
     try {
-      const token = localStorage.getItem("sr_token");
+      const headers = getAuthHeaders();
       const res = await fetch("/api/v1/linkedin/analyze-network", {
         method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers,
       });
       if (res.ok) {
         const data = await res.json();
