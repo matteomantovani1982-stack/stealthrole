@@ -365,7 +365,14 @@ export default function ConnectionPathPanel({ company, role }: ConnectionPathPro
                     {person.avatarInitials}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-[15px] font-medium text-white">{person.name}</div>
+                    {person.linkedinUrl ? (
+                      <a href={person.linkedinUrl} target="_blank" rel="noopener noreferrer"
+                        className="text-[15px] font-medium text-white hover:text-[#7F8CFF] transition-colors cursor-pointer">
+                        {person.name}
+                      </a>
+                    ) : (
+                      <div className="text-[15px] font-medium text-white">{person.name}</div>
+                    )}
                     <div className="text-[12px] text-[#8B92B0]">{person.role} · {person.company}</div>
                   </div>
                   <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full shrink-0"
@@ -454,7 +461,14 @@ export default function ConnectionPathPanel({ company, role }: ConnectionPathPro
                                 {conn.avatarInitials}
                               </div>
                               <div className="flex-1 min-w-0">
-                                <div className="text-[14px] font-medium text-white">{conn.name}</div>
+                                {conn.linkedinUrl ? (
+                                  <a href={conn.linkedinUrl} target="_blank" rel="noopener noreferrer"
+                                    className="text-[14px] font-medium text-white hover:text-[#7F8CFF] transition-colors cursor-pointer">
+                                    {conn.name}
+                                  </a>
+                                ) : (
+                                  <div className="text-[14px] font-medium text-white">{conn.name}</div>
+                                )}
                                 <div className="text-[11px] text-[#8B92B0]">{conn.role} · {conn.company}</div>
                               </div>
                               <span className="text-[11px] font-medium px-2.5 py-1 rounded-full shrink-0"

@@ -243,13 +243,27 @@ export default function MessagesPage() {
                           {conv.contact_name?.[0]?.toUpperCase() || "?"}
                         </div>
                         <div className="min-w-0">
-                          <div
-                            className={`text-[13px] truncate ${
-                              conv.is_unread ? "font-semibold text-white" : "font-medium text-white/80"
-                            }`}
-                          >
-                            {conv.contact_name || "Unknown"}
-                          </div>
+                          {conv.contact_linkedin_url ? (
+                            <a
+                              href={conv.contact_linkedin_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className={`text-[13px] truncate block hover:text-[#7F8CFF] transition-colors ${
+                                conv.is_unread ? "font-semibold text-white" : "font-medium text-white/80"
+                              }`}
+                            >
+                              {conv.contact_name || "Unknown"}
+                            </a>
+                          ) : (
+                            <div
+                              className={`text-[13px] truncate ${
+                                conv.is_unread ? "font-semibold text-white" : "font-medium text-white/80"
+                              }`}
+                            >
+                              {conv.contact_name || "Unknown"}
+                            </div>
+                          )}
                           {conv.contact_company && (
                             <div className="text-[11px] text-[#555C7A] truncate">
                               {conv.contact_title ? `${conv.contact_title} · ` : ""}
@@ -370,9 +384,16 @@ function ThreadDetail({ conversation }: { conversation: InboxConversation }) {
             {conversation.contact_name?.[0]?.toUpperCase() || "?"}
           </div>
           <div className="min-w-0">
-            <div className="text-[14px] font-semibold text-white/90 truncate">
-              {conversation.contact_name || "Unknown"}
-            </div>
+            {conversation.contact_linkedin_url ? (
+              <a href={conversation.contact_linkedin_url} target="_blank" rel="noopener noreferrer"
+                className="text-[14px] font-semibold text-white/90 truncate block hover:text-[#7F8CFF] transition-colors">
+                {conversation.contact_name || "Unknown"}
+              </a>
+            ) : (
+              <div className="text-[14px] font-semibold text-white/90 truncate">
+                {conversation.contact_name || "Unknown"}
+              </div>
+            )}
             <div className="text-[12px] text-[#6B7194] truncate">
               {[conversation.contact_title, conversation.contact_company]
                 .filter(Boolean)
