@@ -402,7 +402,7 @@ async def get_inbox(
             contact_linkedin_url=r.contact_linkedin_url,
             contact_title=r.contact_title,
             contact_company=r.contact_company,
-            messages=r.messages if isinstance(r.messages, list) else [],
+            messages=list(r.messages) if r.messages else [],
             message_count=r.message_count,
             last_message_at=r.last_message_at.isoformat() if r.last_message_at else None,
             last_sender=r.last_sender,

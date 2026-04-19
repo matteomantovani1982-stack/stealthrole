@@ -51,7 +51,7 @@ class LinkedInMessage(Base, UUIDMixin, TimestampMixin):
     # ── Message body ───────────────────────────────────────────────────────
     # JSONB array of {sender, text, sent_at, is_mine} objects.
     # Full conversation history for the thread.
-    messages: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    messages: Mapped[list] = mapped_column(JSONB, nullable=False)
     message_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0",
     )
