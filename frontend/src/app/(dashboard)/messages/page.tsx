@@ -76,6 +76,7 @@ export default function MessagesPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<InboxConversation | null>(null);
@@ -86,6 +87,7 @@ export default function MessagesPage() {
   const fetchInbox = useCallback(
     async (f: FilterKey, s: string) => {
       setLoading(true);
+      setError(null);
       try {
         const res = await getInbox({
           filter: f === "all" ? undefined : f,
@@ -95,8 +97,9 @@ export default function MessagesPage() {
         });
         setConversations(res.conversations);
         setTotal(res.total);
-      } catch (e) {
+      } catch (e: any) {
         console.error("Failed to load inbox", e);
+        setError(e?.message || "Failed to load messages. The API may be down.");
       } finally {
         setLoading(false);
       }
@@ -203,6 +206,17 @@ export default function MessagesPage() {
         <div className="flex-1 overflow-y-auto" ref={listRef} onScroll={handleListScroll}>
           {loading ? (
             <div className="px-5 py-12 text-center text-[#555C7A] text-sm">Loading…</div>
+          ) : error ? (
+            <div className="px-5 py-12 text-center">
+              <div className="text-red-400 text-sm mb-1">Failed to load messages</div>
+              <div className="text-[#3E4460] text-xs">{error}</div>
+              <button
+                onClick={() => fetchInbox(filter, search)}
+                className="mt-3 px-3 py-1.5 rounded-lg bg-[#7F8CFF]/15 text-[#7F8CFF] text-xs font-medium hover:bg-[#7F8CFF]/25 transition-colors"
+              >
+                Retry
+              </button>
+            </div>
           ) : conversations.length === 0 ? (
             <div className="px-5 py-12 text-center">
               <div className="text-[#555C7A] text-sm mb-1">No conversations found</div>

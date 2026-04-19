@@ -35,6 +35,7 @@ class IngestConnectionsResponse(BaseModel):
     created: int
     updated: int
     total_processed: int
+    skipped: int = 0
     recruiters_detected: int
     applications_matched: int
 

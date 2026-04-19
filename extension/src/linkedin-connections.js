@@ -122,12 +122,11 @@
     }
     console.log(`[SR] voyager conn: page 0 → ${extracted.length} records (${all.length} unique)`);
 
-    // Start from where the first page left off, NOT from a fixed BATCH offset.
-    // Use elements.length (actual items returned) rather than paging.count (which
-    // might be the total, see heuristic above).
-    const firstPageElements = firstPageData?.elements?.length || 0;
-    const firstPageCount = firstPageElements || extracted.length || BATCH;
-    let start = Math.max(firstPageCount, extracted.length);
+    // Start from the API's actual page boundary, NOT extracted record count.
+    // extracted.length can be LESS than elements.length due to dedup, but the
+    // API paginates by element index, not by unique records.
+    const firstPageElements = firstPageData?.elements?.length || BATCH;
+    let start = firstPageElements;
     let rateLimitRetries = 0;
     let consecutiveEmpty = 0;
     const MAX_EMPTY = 5; // allow up to 5 empty pages before giving up (LinkedIn skips sometimes)
@@ -417,32 +416,46 @@
         const CHUNK = 100;
         const MAX_RETRIES = 2;
         let posted = 0;
+        let batchFails = 0;
         for (let i = 0; i < sorted.length; i += CHUNK) {
           const batch = sorted.slice(i, i + CHUNK);
           let ok = false;
           for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
             const res = await SR.apiPost("/linkedin/ingest/connections", { connections: batch });
-            if (res?.ok) { ok = true; break; }
+            if (res?.ok) {
+              ok = true;
+              // Use server's actual count, not batch.length
+              const serverProcessed = res.data?.total_processed || batch.length;
+              posted += serverProcessed;
+              if (res.data?.skipped > 0) {
+                console.log(`[SR] voyager batch at ${i}: server skipped ${res.data.skipped} records`);
+              }
+              break;
+            }
             console.warn(`[SR] voyager batch error (attempt ${attempt + 1}):`, res?.error);
             if (attempt < MAX_RETRIES) await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
           }
-          if (!ok) console.error("[SR] voyager batch failed after retries, skipping chunk at", i);
-          posted += batch.length;
+          if (!ok) {
+            console.error("[SR] voyager batch failed after retries, skipping chunk at", i);
+            batchFails++;
+          }
           progress(posted, "scanning");
         }
         voyagerCount = sorted.length;
         for (const c of sorted) voyagerSeenIds.add(c.linkedin_id);
+        if (batchFails > 0) console.warn(`[SR] voyager POST: ${batchFails} batch(es) failed out of ${Math.ceil(sorted.length / CHUNK)}`);
 
-        // Check if we got everything — if not, fall through to DOM scroll to catch stragglers
-        // Use a 5% tolerance (e.g. 2630 out of 2766 is 95%, still do DOM)
-        const missingPercent = voyagerExpected > 0 ? (1 - voyagerCount / voyagerExpected) * 100 : 0;
-        if (voyagerExpected === 0 || voyagerCount >= voyagerExpected * 0.98) {
-          console.log(`[SR] Voyager got ${voyagerCount}${voyagerExpected ? ` / ${voyagerExpected}` : ""} — looks complete, skipping DOM`);
-          progress(sorted.length, "done");
+        // Check if we got everything — if not, fall through to DOM scroll.
+        // Only skip DOM if we got ALL connections (no tolerance — exact match).
+        if (voyagerExpected > 0 && voyagerCount >= voyagerExpected) {
+          console.log(`[SR] Voyager got ${voyagerCount} / ${voyagerExpected} — complete, skipping DOM`);
+          progress(posted, "done");
           SR._autoScrapeInProgress = false;
           return;
         }
-        console.log(`[SR] Voyager got ${voyagerCount} / ${voyagerExpected} (${missingPercent.toFixed(1)}% missing) — supplementing with DOM scroll`);
+        // Always fall through to DOM if we don't have everything
+        const missingPercent = voyagerExpected > 0 ? (1 - voyagerCount / voyagerExpected) * 100 : 0;
+        console.log(`[SR] Voyager got ${voyagerCount}${voyagerExpected ? ` / ${voyagerExpected} (${missingPercent.toFixed(1)}% missing)` : ""} — supplementing with DOM scroll`);
       } else {
         console.warn("[SR] Voyager did not return data — falling back to DOM scroll");
       }
@@ -578,12 +591,15 @@
         let ok = false;
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
           const res = await SR.apiPost("/linkedin/ingest/connections", { connections: batch });
-          if (res?.ok) { ok = true; break; }
+          if (res?.ok) {
+            ok = true;
+            posted += res.data?.total_processed || batch.length;
+            break;
+          }
           console.warn(`[SR] batch import error (attempt ${attempt + 1}):`, res?.error);
           if (attempt < MAX_RETRIES) await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
         }
         if (!ok) console.error("[SR] DOM batch failed after retries, skipping chunk at", i);
-        posted += batch.length;
         progress(posted, "scanning");
       }
       progress(allConnections.length, "done");
