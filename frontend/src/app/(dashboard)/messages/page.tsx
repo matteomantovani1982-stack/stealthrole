@@ -249,9 +249,7 @@ export default function MessagesPage() {
                               target="_blank"
                               rel="noopener noreferrer"
                               onClick={(e) => e.stopPropagation()}
-                              className={`text-[13px] truncate block hover:text-[#7F8CFF] transition-colors ${
-                                conv.is_unread ? "font-semibold text-white" : "font-medium text-white/80"
-                              }`}
+                              className="text-[13px] truncate block font-semibold text-[#7F8CFF] hover:text-white underline decoration-[#7F8CFF]/40 hover:decoration-white/60 transition-colors"
                             >
                               {conv.contact_name || "Unknown"}
                             </a>
@@ -386,7 +384,7 @@ function ThreadDetail({ conversation }: { conversation: InboxConversation }) {
           <div className="min-w-0">
             {conversation.contact_linkedin_url ? (
               <a href={conversation.contact_linkedin_url} target="_blank" rel="noopener noreferrer"
-                className="text-[14px] font-semibold text-white/90 truncate block hover:text-[#7F8CFF] transition-colors">
+                className="text-[14px] font-semibold text-[#7F8CFF] truncate block hover:text-white underline decoration-[#7F8CFF]/40 hover:decoration-white/60 transition-colors">
                 {conversation.contact_name || "Unknown"}
               </a>
             ) : (

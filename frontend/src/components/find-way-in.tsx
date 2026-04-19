@@ -195,9 +195,9 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             {linkedInUrlFor(c) ? (
-                              <a href={linkedInUrlFor(c)} target="_blank" rel="noopener noreferrer" className="text-[12px] font-medium text-white hover:text-[#7F8CFF] transition-colors">{c.name}</a>
+                              <a href={linkedInUrlFor(c)} target="_blank" rel="noopener noreferrer" className="text-[13px] font-semibold text-[#7F8CFF] hover:text-white underline decoration-[#7F8CFF]/40 hover:decoration-white/60 transition-colors">{c.name}</a>
                             ) : (
-                              <span className="text-[12px] font-medium text-white">{c.name}</span>
+                              <span className="text-[13px] font-semibold text-white">{c.name}</span>
                             )}
                             <span className="text-[9px] px-1.5 py-0.5 rounded-full font-medium" style={{ background: `${tierColor}26`, color: tierColor }}>{tierLabel}</span>
                             <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/10 text-[#8B92B0] font-medium">1st</span>
@@ -319,9 +319,9 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             {linkUrl ? (
-                              <a href={linkUrl} target="_blank" rel="noopener noreferrer" className="text-[12px] font-medium text-white hover:text-[#7F8CFF] transition-colors">{c.name}</a>
+                              <a href={linkUrl} target="_blank" rel="noopener noreferrer" className="text-[13px] font-semibold text-[#7F8CFF] hover:text-white underline decoration-[#7F8CFF]/40 hover:decoration-white/60 transition-colors">{c.name}</a>
                             ) : (
-                              <span className="text-[12px] font-medium text-white">{c.name}</span>
+                              <span className="text-[13px] font-semibold text-white">{c.name}</span>
                             )}
                             <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 font-medium">Recruiter</span>
                             <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/10 text-[#8B92B0] font-medium">1st</span>
@@ -355,9 +355,9 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5">
                           {c.linkedin_url ? (
-                            <a href={c.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-[12px] font-medium text-white hover:text-[#7F8CFF] transition-colors">{c.name}</a>
+                            <a href={c.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-[13px] font-semibold text-[#7F8CFF] hover:text-white underline decoration-[#7F8CFF]/40 hover:decoration-white/60 transition-colors">{c.name}</a>
                           ) : (
-                            <span className="text-[12px] font-medium text-white">{c.name}</span>
+                            <span className="text-[13px] font-semibold text-white">{c.name}</span>
                           )}
                           {c.is_hiring_manager && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 font-medium">Decision Maker</span>}
                           {c.is_recruiter && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-medium">Recruiter</span>}

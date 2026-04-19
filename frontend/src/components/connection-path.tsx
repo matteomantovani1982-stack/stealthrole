@@ -367,11 +367,11 @@ export default function ConnectionPathPanel({ company, role }: ConnectionPathPro
                   <div className="flex-1 min-w-0">
                     {person.linkedinUrl ? (
                       <a href={person.linkedinUrl} target="_blank" rel="noopener noreferrer"
-                        className="text-[15px] font-medium text-white hover:text-[#7F8CFF] transition-colors cursor-pointer">
+                        className="text-[15px] font-semibold text-[#7F8CFF] hover:text-white underline decoration-[#7F8CFF]/40 hover:decoration-white/60 transition-colors cursor-pointer">
                         {person.name}
                       </a>
                     ) : (
-                      <div className="text-[15px] font-medium text-white">{person.name}</div>
+                      <div className="text-[15px] font-semibold text-white">{person.name}</div>
                     )}
                     <div className="text-[12px] text-[#8B92B0]">{person.role} · {person.company}</div>
                   </div>
@@ -463,11 +463,11 @@ export default function ConnectionPathPanel({ company, role }: ConnectionPathPro
                               <div className="flex-1 min-w-0">
                                 {conn.linkedinUrl ? (
                                   <a href={conn.linkedinUrl} target="_blank" rel="noopener noreferrer"
-                                    className="text-[14px] font-medium text-white hover:text-[#7F8CFF] transition-colors cursor-pointer">
+                                    className="text-[14px] font-semibold text-[#7F8CFF] hover:text-white underline decoration-[#7F8CFF]/40 hover:decoration-white/60 transition-colors cursor-pointer">
                                     {conn.name}
                                   </a>
                                 ) : (
-                                  <div className="text-[14px] font-medium text-white">{conn.name}</div>
+                                  <div className="text-[14px] font-semibold text-white">{conn.name}</div>
                                 )}
                                 <div className="text-[11px] text-[#8B92B0]">{conn.role} · {conn.company}</div>
                               </div>
