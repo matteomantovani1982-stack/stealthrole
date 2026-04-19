@@ -95,8 +95,15 @@
   async function paginateVoyager(build, headers, firstPageData) {
     const all = [];
     const BATCH = 40;
-    const MAX_TOTAL = 10000;
+    const MAX_TOTAL = 15000;
     const seenIds = new Set();
+
+    // Extract total from paging metadata so we know when we're truly done
+    const pagingTotal = firstPageData?.paging?.total
+      || firstPageData?.paging?.count
+      || firstPageData?.metadata?.totalResultCount
+      || 0;
+    console.log(`[SR] voyager conn: paging.total = ${pagingTotal}`);
 
     let extracted = extractVoyagerRecords(firstPageData);
     for (const c of extracted) {
@@ -106,13 +113,22 @@
 
     let start = BATCH;
     let rateLimitRetries = 0;
+    let consecutiveEmpty = 0;
+    const MAX_EMPTY = 5; // allow up to 5 empty pages before giving up (LinkedIn skips sometimes)
+
     while (start < MAX_TOTAL) {
+      // If we know the total and we've got them all, stop
+      if (pagingTotal > 0 && all.length >= pagingTotal) {
+        console.log(`[SR] voyager conn: reached paging.total (${all.length} >= ${pagingTotal})`);
+        break;
+      }
+
       const url = build(start, BATCH);
       try {
         const res = await SR.fetchWithRetry(url, { headers, credentials: "include" }, { retries: 2, backoffMs: 2000 });
         if (res.status === 429 || res.status === 503) {
           rateLimitRetries++;
-          if (rateLimitRetries > 5) { console.warn("[SR] voyager conn: too many rate limits, stopping"); break; }
+          if (rateLimitRetries > 8) { console.warn("[SR] voyager conn: too many rate limits, stopping"); break; }
           const retryAfter = parseInt(res.headers?.get?.("retry-after") || "15", 10);
           console.warn(`[SR] voyager conn page ${start}: rate-limited (${res.status}), waiting ${retryAfter}s`);
           await new Promise((r) => setTimeout(r, retryAfter * 1000));
@@ -122,21 +138,46 @@
         rateLimitRetries = 0;
         const data = await res.json();
         extracted = extractVoyagerRecords(data);
-        if (extracted.length === 0) { console.log("[SR] voyager conn: end at start=", start); break; }
+
+        if (extracted.length === 0) {
+          consecutiveEmpty++;
+          console.log(`[SR] voyager conn: empty page at start=${start} (consecutive: ${consecutiveEmpty}/${MAX_EMPTY})`);
+          if (consecutiveEmpty >= MAX_EMPTY) {
+            console.log("[SR] voyager conn: too many consecutive empty pages, stopping");
+            break;
+          }
+          // Skip ahead and try next page — LinkedIn sometimes has gaps
+          start += BATCH;
+          await new Promise((r) => setTimeout(r, 800));
+          continue;
+        }
+
+        consecutiveEmpty = 0; // reset on successful extraction
         let added = 0;
         for (const c of extracted) {
           if (!seenIds.has(c.linkedin_id)) { seenIds.add(c.linkedin_id); all.push(c); added++; }
         }
-        console.log(`[SR] voyager conn: page ${start / BATCH} → ${extracted.length} records (${added} new, total ${all.length})`);
-        if (extracted.length < BATCH) break;
+        console.log(`[SR] voyager conn: page ${Math.floor(start / BATCH)} → ${extracted.length} records (${added} new, total ${all.length}${pagingTotal ? ` / ${pagingTotal}` : ""})`);
+
+        // Only stop on short page if we DON'T know the total, or we've reached it
+        if (extracted.length < BATCH && (!pagingTotal || all.length >= pagingTotal)) break;
+
         start += BATCH;
-        await new Promise((r) => setTimeout(r, 400));
+        // Slow down slightly after 1000 to avoid rate limits
+        const delay = all.length > 1000 ? 600 : 400;
+        await new Promise((r) => setTimeout(r, delay));
       } catch (e) {
         console.warn("[SR] voyager conn page", start, "error:", e.message);
-        break;
+        // Don't give up on one error — skip and try next page
+        consecutiveEmpty++;
+        if (consecutiveEmpty >= MAX_EMPTY) break;
+        start += BATCH;
+        await new Promise((r) => setTimeout(r, 1000));
       }
     }
-    return all;
+
+    console.log(`[SR] voyager conn: pagination complete — ${all.length} total records${pagingTotal ? ` (expected ${pagingTotal})` : ""}`);
+    return { records: all, expectedTotal: pagingTotal };
   }
 
   // ── Extract connection records from voyager response ──
@@ -146,19 +187,27 @@
     const results = [];
     const seen = new Set();
 
+    // LinkedIn GraphQL wraps strings as {text:"value"} — unwrap them
+    const str = (v) => {
+      if (typeof v === "string") return v;
+      if (v && typeof v === "object" && typeof v.text === "string") return v.text;
+      return "";
+    };
+
     const addResult = (slug, first, last, headline) => {
-      if (!slug || seen.has(slug)) return;
-      seen.add(slug);
-      const fullName = [first, last].filter(Boolean).join(" ").trim();
+      const cleanSlug = str(slug);
+      if (!cleanSlug || seen.has(cleanSlug)) return;
+      seen.add(cleanSlug);
+      const fullName = [str(first), str(last)].filter(Boolean).join(" ").trim();
       if (!fullName) return;
-      const hl = headline || "";
+      const hl = str(headline) || "";
       let currentTitle = hl;
       let currentCompany = "";
       const m = hl.match(/^(.+?)\s+(?:at|@)\s+(.+)$/i);
       if (m) { currentTitle = m[1].trim(); currentCompany = m[2].trim(); }
       results.push({
-        linkedin_id: slug,
-        linkedin_url: `https://www.linkedin.com/in/${slug}/`,
+        linkedin_id: cleanSlug,
+        linkedin_url: `https://www.linkedin.com/in/${cleanSlug}/`,
         full_name: fullName,
         headline: hl,
         current_title: currentTitle,
@@ -168,21 +217,40 @@
 
     const visit = (obj) => {
       if (!obj || typeof obj !== "object") return;
-      // Direct profile
-      if (obj.publicIdentifier && (obj.firstName || obj.lastName)) {
-        addResult(obj.publicIdentifier, obj.firstName, obj.lastName, obj.headline || obj.occupation || "");
+
+      // Extract publicIdentifier — may be on the object itself or nested
+      const pubId = str(obj.publicIdentifier);
+
+      // Direct profile (handles both string and {text:""} wrapped values)
+      if (pubId && (obj.firstName || obj.lastName)) {
+        addResult(pubId, obj.firstName, obj.lastName, obj.headline || obj.occupation || "");
       }
       // miniProfile nested
       if (obj.miniProfile?.publicIdentifier) {
-        addResult(obj.miniProfile.publicIdentifier, obj.miniProfile.firstName, obj.miniProfile.lastName, obj.miniProfile.occupation || obj.headline || "");
+        const mp = obj.miniProfile;
+        addResult(mp.publicIdentifier, mp.firstName, mp.lastName, mp.occupation || mp.headline || obj.headline || "");
       }
       // profile nested
       if (obj.profile?.publicIdentifier) {
-        addResult(obj.profile.publicIdentifier, obj.profile.firstName, obj.profile.lastName, obj.profile.headline || obj.profile.occupation || "");
+        const p = obj.profile;
+        addResult(p.publicIdentifier, p.firstName, p.lastName, p.headline || p.occupation || "");
       }
       // connectedMember (dash model)
       if (obj.connectedMember?.publicIdentifier) {
-        addResult(obj.connectedMember.publicIdentifier, obj.connectedMember.firstName, obj.connectedMember.lastName, obj.connectedMember.headline || "");
+        const cm = obj.connectedMember;
+        addResult(cm.publicIdentifier, cm.firstName, cm.lastName, cm.headline || cm.occupation || "");
+      }
+      // connectedMemberResolutionResult (newer dash model)
+      if (obj.connectedMemberResolutionResult?.publicIdentifier) {
+        const cr = obj.connectedMemberResolutionResult;
+        addResult(cr.publicIdentifier, cr.firstName, cr.lastName, cr.headline || cr.occupation || "");
+      }
+      // Extract from profileUrl slug (fallback when publicIdentifier is missing)
+      if (!pubId && obj.profileUrl && (obj.firstName || obj.lastName)) {
+        const slugMatch = str(obj.profileUrl).match(/\/in\/([A-Za-z0-9_-]+)/);
+        if (slugMatch) {
+          addResult(slugMatch[1], obj.firstName, obj.lastName, obj.headline || obj.occupation || "");
+        }
       }
       // Recurse
       if (Array.isArray(obj)) { for (const item of obj) visit(item); }
@@ -300,12 +368,18 @@
 
     // ── Try Voyager API first ──
 
+    let voyagerSeenIds = new Set();
+    let voyagerCount = 0;
+    let voyagerExpected = 0;
+
     try {
       console.log("[SR] attempting Voyager API…");
-      const voyagerRecords = await fetchAllConnectionsViaVoyager();
+      const voyagerResult = await fetchAllConnectionsViaVoyager();
+      const voyagerRecords = voyagerResult?.records || voyagerResult;
+      voyagerExpected = voyagerResult?.expectedTotal || 0;
       if (voyagerRecords && voyagerRecords.length > 0) {
-        console.log(`[SR] Voyager returned ${voyagerRecords.length} — prioritizing by job relevance`);
-        const sorted = prioritizeConnections(voyagerRecords);
+        console.log(`[SR] Voyager returned ${voyagerRecords.length}${voyagerExpected ? ` (expected ${voyagerExpected})` : ""} — prioritizing by job relevance`);
+        const sorted = prioritizeConnections(Array.isArray(voyagerRecords) ? voyagerRecords : []);
         progress(sorted.length, "scanning");
         const CHUNK = 100;
         const MAX_RETRIES = 2;
@@ -323,21 +397,32 @@
           posted += batch.length;
           progress(posted, "scanning");
         }
-        progress(sorted.length, "done");
-        SR._autoScrapeInProgress = false;
-        return;
+        voyagerCount = sorted.length;
+        for (const c of sorted) voyagerSeenIds.add(c.linkedin_id);
+
+        // Check if we got everything — if not, fall through to DOM scroll to catch stragglers
+        // Use a 5% tolerance (e.g. 2630 out of 2766 is 95%, still do DOM)
+        const missingPercent = voyagerExpected > 0 ? (1 - voyagerCount / voyagerExpected) * 100 : 0;
+        if (voyagerExpected === 0 || voyagerCount >= voyagerExpected * 0.98) {
+          console.log(`[SR] Voyager got ${voyagerCount}${voyagerExpected ? ` / ${voyagerExpected}` : ""} — looks complete, skipping DOM`);
+          progress(sorted.length, "done");
+          SR._autoScrapeInProgress = false;
+          return;
+        }
+        console.log(`[SR] Voyager got ${voyagerCount} / ${voyagerExpected} (${missingPercent.toFixed(1)}% missing) — supplementing with DOM scroll`);
+      } else {
+        console.warn("[SR] Voyager did not return data — falling back to DOM scroll");
       }
-      console.warn("[SR] Voyager did not return data — falling back to DOM scroll");
     } catch (e) {
       console.error("[SR] Voyager attempt errored:", e);
     }
 
     // ── DOM scroll fallback ──
 
-    console.log("[SR] starting DOM scroll fallback");
-    progress(0, "scanning");
+    console.log(`[SR] starting DOM scroll ${voyagerCount > 0 ? "supplement" : "fallback"} (already have ${voyagerCount} from Voyager)`);
+    progress(voyagerCount, "scanning");
 
-    const seen = new Set();
+    const seen = new Set(voyagerSeenIds);
     const allConnections = [];
     let tickCounter = 0;
 
