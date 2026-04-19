@@ -358,13 +358,13 @@ class InboxResponse(BaseModel):
     total: int
 
 
+_dedup_done: set[str] = set()  # track which users have been deduped this process lifetime
+
 @router.get(
     "/inbox",
     response_model=InboxResponse,
     summary="List LinkedIn conversation threads for the Inbox page",
 )
-_dedup_done: set[str] = set()  # track which users have been deduped this process lifetime
-
 async def get_inbox(
     db: DB,
     user_id: CurrentUserId,
