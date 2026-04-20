@@ -382,19 +382,23 @@ class RelationshipEngine:
 
             system_prompt = (
                 "You are drafting a short, warm, professional LinkedIn message. "
-                "The user is asking their connection for an introduction to a target person "
+                "The user is asking their mutual connection for an introduction to someone "
                 "at a target company. Keep it under 80 words. Warm but professional. "
-                "Reference the target's actual title and the specific role being pursued. "
-                "End with 'no pressure at all'. Do NOT use generic openers like 'Hope you're doing well'. "
-                "Do NOT include subject lines. Do NOT include placeholder brackets. "
+                "Be SPECIFIC: mention the target person's name and title, the company, "
+                "and the specific role. Show you did your research. "
+                "End with 'No pressure at all!' "
+                "Do NOT use generic openers like 'Hope you're doing well' or 'I hope this message finds you well'. "
+                "Do NOT include subject lines or placeholder brackets. "
                 "Return ONLY the message body."
             )
 
             user_prompt = (
-                f"Mutual connection (recipient): {mutual_name}\n"
-                f"Target person: {target_name}, {target_title}, at {company}\n"
-                f"Role the user is pursuing: {role}\n\n"
-                f"Write the message from the user to {mutual_first}, asking for an intro to {target_first}."
+                f"Mutual connection (the person I'm writing TO): {mutual_name}\n"
+                f"Target person (who I want to be introduced to): {target_name}, {target_title}, at {company}\n"
+                f"Role I am pursuing: {role}\n\n"
+                f"Write a personalized message from me to {mutual_first}, asking them to introduce me to "
+                f"{target_first} at {company}. Mention why {target_first}'s role ({target_title}) "
+                f"is relevant to my pursuit of the {role} position."
             )
 
             client = ClaudeClient(task=LLMTask.CLASSIFICATION, max_tokens=200)
@@ -661,13 +665,17 @@ class RelationshipEngine:
                 # Find the mutual connector in our 1st-degree connections
                 connector = _find_connector(mc)
                 if connector:
+                    t_name = mc.target_name or ""
+                    t_title = mc.target_title or ""
+                    t_company = mc.target_company or company
+                    t_url = mc.target_linkedin_url or ""
                     real_paths.append({
                         "target": {
-                            "name": mc.target_name,
-                            "title": mc.target_title or "",
-                            "company": mc.target_company or company,
-                            "linkedin_url": mc.target_linkedin_url or "",
-                            "why_target": f"{mc.target_name} works at {mc.target_company or company} as {mc.target_title or 'employee'}"
+                            "name": t_name,
+                            "title": t_title,
+                            "company": t_company,
+                            "linkedin_url": t_url,
+                            "why_target": f"{t_name or 'Contact'} works at {t_company} as {t_title or 'employee'}"
                         },
                         "connector": {
                             "name": connector.full_name,
@@ -735,27 +743,33 @@ class RelationshipEngine:
         # Cap at 50 to match LinkedIn's visible mutual count
         if real_paths:
             real_paths = real_paths[:50]
-            # Attach a personalized intro message to the top 5 paths (cached)
-            for p in real_paths[:5]:
+            # Attach a personalized intro message to ALL displayed paths (up to 10)
+            for p in real_paths[:10]:
+                target_name = p["target"]["name"] or f"your contact at {company}"
+                target_title = p["target"].get("title") or "employee"
+                connector_first = p["connector"]["name"].split()[0] if p["connector"]["name"] else "there"
                 try:
-                    p["intro_message"] = self._ai_intro_message(
+                    msg = self._ai_intro_message(
                         mutual_name=p["connector"]["name"],
-                        target_name=p["target"]["name"],
-                        target_title=p["target"].get("title") or "employee",
+                        target_name=target_name,
+                        target_title=target_title,
                         company=company,
                         role=role or "senior role",
                     )
+                    # Ensure non-empty message (LLM sometimes returns empty)
+                    if msg and msg.strip():
+                        p["intro_message"] = msg
+                    else:
+                        raise ValueError("empty message")
                 except Exception:
-                    # Fallback to template if LLM fails
+                    # Fallback to template if LLM fails or returns empty
+                    target_first = target_name.split()[0] if target_name else "them"
                     p["intro_message"] = (
-                        f"Hi {p['connector']['name'].split()[0]}, hope you're well! "
-                        f"I noticed you're connected with {p['target']['name']} "
-                        f"who is {p['target'].get('title', 'at')} at {company}. "
-                        f"I'm exploring a {role or 'senior'} opportunity there and I think "
-                        f"{p['target']['name'].split()[0]} could be a great person to speak with. "
-                        f"Would you be comfortable making a quick introduction? "
-                        f"Happy to send you a short bio to forward. "
-                        f"Really appreciate it — no pressure at all."
+                        f"Hi {connector_first}, I'd love to connect with {target_name} "
+                        f"({target_title}) at {company}. I know you're connected with the team "
+                        f"there, and I'd be grateful if you could introduce me to the right person. "
+                        f"Your insight into their culture and mission would be invaluable as I explore "
+                        f"this next step. No pressure at all!"
                     )
             best_path = real_paths[0]
             backup_paths = real_paths[1:]
@@ -763,7 +777,8 @@ class RelationshipEngine:
         # Recommended action
         if real_paths:
             rp = real_paths[0]
-            recommended = f"Ask {rp['connector']['name']} to introduce you to {rp['target']['name']} at {company} — they're connected on LinkedIn"
+            target_display = rp['target']['name'] or f"your contact at {company}"
+            recommended = f"Ask {rp['connector']['name']} to introduce you to {target_display} at {company} — they're connected on LinkedIn"
         elif direct:
             best = direct[0]
             recommended = f"Message {best['name']} ({best['title']}) directly at {company}"

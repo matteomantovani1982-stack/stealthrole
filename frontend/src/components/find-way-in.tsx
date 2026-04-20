@@ -248,7 +248,10 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
                 Intro paths via your network · {introPaths.length}
               </div>
               <div className="space-y-3">
-                {introPaths.slice(0, 10).map((p: any, i: number) => (
+                {introPaths.slice(0, 10).map((p: any, i: number) => {
+                  const targetDisplayName = p.target?.name || `someone at ${company}`;
+                  const targetTitle = p.target?.title || "";
+                  return (
                   <div key={i} className="rounded-lg p-3 bg-white/[0.04]">
                     {/* Path chain */}
                     <div className="flex items-center gap-1.5 flex-wrap mb-2">
@@ -261,9 +264,9 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
                       )}
                       <span className="text-[#555C7A] text-[10px]">→</span>
                       {p.target?.linkedin_url ? (
-                        <a href={p.target.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/15 text-[#7F8CFF] font-medium underline decoration-[#7F8CFF]/40 hover:text-white transition-colors">{p.target?.name}</a>
+                        <a href={p.target.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/15 text-[#7F8CFF] font-medium underline decoration-[#7F8CFF]/40 hover:text-white transition-colors">{targetDisplayName}</a>
                       ) : (
-                        <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-medium">{p.target?.name}</span>
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-medium">{targetDisplayName}</span>
                       )}
                     </div>
                     {/* Connector details */}
@@ -274,10 +277,10 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
                         ) : (
                           <span className="text-white font-medium">{p.connector.name}</span>
                         )} ({p.connector.title}{p.connector.company ? ` at ${p.connector.company}` : ""}) to introduce you to {p.target?.linkedin_url ? (
-                          <a href={p.target.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-[#7F8CFF] underline decoration-[#7F8CFF]/40 hover:text-white transition-colors">{p.target?.name}</a>
+                          <a href={p.target.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-[#7F8CFF] underline decoration-[#7F8CFF]/40 hover:text-white transition-colors">{targetDisplayName}</a>
                         ) : (
-                          <span className="text-emerald-400">{p.target?.name}</span>
-                        )}{p.target?.title ? ` (${p.target.title})` : ""}.
+                          <span className="text-emerald-400">{targetDisplayName}</span>
+                        )}{targetTitle ? ` (${targetTitle})` : ""}.
                       </div>
                     )}
                     {/* AI-generated intro message */}
@@ -309,7 +312,8 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
                       </div>
                     )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
