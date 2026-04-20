@@ -102,16 +102,15 @@
     const MAX_TOTAL = 15000;
     const seenIds = new Set();
 
-    // Extract total from paging metadata so we know when we're truly done.
-    // IMPORTANT: paging.count is USUALLY the page size (~40), not total.
-    // But some endpoints put the total in paging.count when paging.total is absent.
+    // Extract total from paging metadata.
+    // Try multiple sources — LinkedIn is inconsistent across endpoints.
     let pagingTotal = firstPageData?.paging?.total
       || firstPageData?.metadata?.totalResultCount
       || 0;
     // Heuristic: if paging.count > 100 and there's no paging.total, it's likely the real total
     const pagingCount = firstPageData?.paging?.count || 0;
     if (!pagingTotal && pagingCount > 100) {
-      console.log(`[SR] voyager conn: paging.count=${pagingCount} looks like total (no paging.total found) — using it`);
+      console.log(`[SR] voyager conn: paging.count=${pagingCount} looks like total (no paging.total) — using it`);
       pagingTotal = pagingCount;
     }
     console.log(`[SR] voyager conn: paging.total = ${pagingTotal}, paging.count = ${pagingCount || "?"}, paging.start = ${firstPageData?.paging?.start || "?"}`);
@@ -122,18 +121,18 @@
     }
     console.log(`[SR] voyager conn: page 0 → ${extracted.length} records (${all.length} unique)`);
 
-    // Start from the API's actual page boundary, NOT extracted record count.
-    // extracted.length can be LESS than elements.length due to dedup, but the
-    // API paginates by element index, not by unique records.
+    // Start from the API's actual page boundary
     const firstPageElements = firstPageData?.elements?.length || BATCH;
     let start = firstPageElements;
     let rateLimitRetries = 0;
     let consecutiveEmpty = 0;
-    const MAX_EMPTY = 5; // allow up to 5 empty pages before giving up (LinkedIn skips sometimes)
+    let nonOkRetries = 0;
+    // Be very generous with empty pages — LinkedIn's API has many gaps
+    const MAX_EMPTY = 10;
 
     while (start < MAX_TOTAL) {
-      // If we know the total and we've got them all, stop
-      if (pagingTotal > 0 && all.length >= pagingTotal) {
+      // Only stop on pagingTotal if we TRUST it (it must be > 100 to be believable)
+      if (pagingTotal > 100 && all.length >= pagingTotal) {
         console.log(`[SR] voyager conn: reached paging.total (${all.length} >= ${pagingTotal})`);
         break;
       }
@@ -143,13 +142,26 @@
         const res = await SR.fetchWithRetry(url, { headers, credentials: "include" }, { retries: 2, backoffMs: 2000 });
         if (res.status === 429 || res.status === 503) {
           rateLimitRetries++;
-          if (rateLimitRetries > 8) { console.warn("[SR] voyager conn: too many rate limits, stopping"); break; }
-          const retryAfter = parseInt(res.headers?.get?.("retry-after") || "15", 10);
+          if (rateLimitRetries > 12) { console.warn("[SR] voyager conn: too many rate limits, stopping"); break; }
+          const retryAfter = parseInt(res.headers?.get?.("retry-after") || "20", 10);
           console.warn(`[SR] voyager conn page ${start}: rate-limited (${res.status}), waiting ${retryAfter}s`);
           await new Promise((r) => setTimeout(r, retryAfter * 1000));
           continue; // retry same page
         }
-        if (!res.ok) { console.warn("[SR] voyager conn page", start, "→", res.status); break; }
+        if (!res.ok) {
+          // DON'T hard-stop on one error — treat it like an empty page and skip ahead
+          nonOkRetries++;
+          console.warn(`[SR] voyager conn page ${start}: status ${res.status} (non-ok #${nonOkRetries})`);
+          if (nonOkRetries > 10) {
+            console.warn("[SR] voyager conn: too many non-OK responses, stopping");
+            break;
+          }
+          consecutiveEmpty++;
+          if (consecutiveEmpty >= MAX_EMPTY) break;
+          start += BATCH;
+          await new Promise((r) => setTimeout(r, 1500));
+          continue;
+        }
         rateLimitRetries = 0;
         const data = await res.json();
         extracted = extractVoyagerRecords(data);
@@ -161,7 +173,6 @@
             console.log("[SR] voyager conn: too many consecutive empty pages, stopping");
             break;
           }
-          // Skip ahead and try next page — LinkedIn sometimes has gaps
           start += BATCH;
           await new Promise((r) => setTimeout(r, 800));
           continue;
@@ -174,16 +185,14 @@
         }
         console.log(`[SR] voyager conn: page ${Math.floor(start / BATCH)} → ${extracted.length} records (${added} new, total ${all.length}${pagingTotal ? ` / ${pagingTotal}` : ""})`);
 
-        // Only stop on short page if we DON'T know the total, or we've reached it
-        if (extracted.length < BATCH && (!pagingTotal || all.length >= pagingTotal)) break;
-
+        // NEVER stop on a short page — LinkedIn frequently returns partial pages
+        // mid-stream. Only stop when we get consecutive EMPTY pages.
         start += BATCH;
-        // Slow down slightly after 1000 to avoid rate limits
-        const delay = all.length > 1000 ? 600 : 400;
+        // Slow down after 1000 to avoid rate limits
+        const delay = all.length > 2000 ? 800 : all.length > 1000 ? 600 : 400;
         await new Promise((r) => setTimeout(r, delay));
       } catch (e) {
         console.warn("[SR] voyager conn page", start, "error:", e.message);
-        // Don't give up on one error — skip and try next page
         consecutiveEmpty++;
         if (consecutiveEmpty >= MAX_EMPTY) break;
         start += BATCH;
