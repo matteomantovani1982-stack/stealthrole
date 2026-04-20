@@ -69,7 +69,7 @@ function formatTimestamp(iso: string | null): string {
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-const PAGE_SIZE = 2000;
+const PAGE_SIZE = 50;
 
 export default function MessagesPage() {
   const [conversations, setConversations] = useState<InboxConversation[]>([]);
