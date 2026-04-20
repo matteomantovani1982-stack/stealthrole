@@ -766,9 +766,18 @@ class RelationshipEngine:
                             return conn
             return None
 
+        # Build set of visited target linkedin_ids so we can also match mutuals for them
+        visited_target_ids = set()
+        for c in all_conns:
+            if c.relationship_strength == "visited" and c.linkedin_id:
+                if _conn_matches_company(c, company):
+                    visited_target_ids.add(c.linkedin_id)
+
         for mc in all_mutuals:
-            # Check if the target person works at our target company
-            if mc.target_company and companies_match(mc.target_company, company):
+            # Match by target company OR by target being a visited profile for this application
+            company_matches = mc.target_company and companies_match(mc.target_company, company)
+            target_is_visited = mc.target_linkedin_id in visited_target_ids
+            if company_matches or target_is_visited:
                 # Find the mutual connector in our 1st-degree connections
                 connector = _find_connector(mc)
                 if connector:

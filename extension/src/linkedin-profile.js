@@ -246,6 +246,8 @@
       if (atMatch) currentTitle = atMatch[1].trim();
 
       console.log(`[SR] scrapeProfile: name='${fullName}' title='${currentTitle}' company='${currentCompany}' degree=${degree}`);
+      // Cache profile data so scrapeMutualConnections doesn't re-scrape from a changed DOM
+      SR._lastScrapedProfile = { linkedinId, fullName, headline, currentTitle, currentCompany, url };
       // Expose degree so linkedin-core.js can auto-trigger mutual scraping for 2nd/3rd
       SR._lastScrapedDegree = degree;
       if (!fullName) { resolve(); return; }
@@ -576,14 +578,19 @@
     const linkedinId = url.split("/in/")[1]?.replace(/\/$/, "") || "";
     if (!linkedinId) return;
 
-    const targetName = getProfileName();
-    const targetHeadline = getProfileHeadline();
-    const targetCompany = getCompanyFromPage();
-    let targetTitle = targetHeadline;
-    const atMatch = targetHeadline.match(/^(.+?)\s+(?:at|@)\s+(.+)/i);
-    if (atMatch) targetTitle = atMatch[1].trim();
+    // Use cached profile data from scrapeProfile (DOM may have changed since then)
+    const cached = SR._lastScrapedProfile || {};
+    const isSameProfile = cached.linkedinId === linkedinId;
+    const targetName = isSameProfile && cached.fullName ? cached.fullName : getProfileName();
+    const targetHeadline = isSameProfile && cached.headline ? cached.headline : getProfileHeadline();
+    const targetCompany = isSameProfile && cached.currentCompany ? cached.currentCompany : getCompanyFromPage();
+    let targetTitle = isSameProfile && cached.currentTitle ? cached.currentTitle : targetHeadline;
+    if (!isSameProfile || !cached.currentTitle) {
+      const atMatch = targetHeadline.match(/^(.+?)\s+(?:at|@)\s+(.+)/i);
+      if (atMatch) targetTitle = atMatch[1].trim();
+    }
 
-    console.log(`[SR] scrapeMutualConnections: name='${targetName}' company='${targetCompany}' id=${linkedinId}`);
+    console.log(`[SR] scrapeMutualConnections: name='${targetName}' company='${targetCompany}' id=${linkedinId} (cached=${isSameProfile})`);
 
     const targetPerson = {
       linkedin_id: linkedinId,
