@@ -345,7 +345,20 @@ class LinkedInService:
             select(LinkedInConnection).where(LinkedInConnection.user_id == user_id)
         )).scalars().all()
         conn_by_name = {c.full_name.lower().strip(): c for c in all_conns}
-        conn_by_url = {c.linkedin_url: c for c in all_conns if c.linkedin_url}
+        conn_by_url = {}
+        conn_by_slug = {}
+        conn_by_first_last = {}
+        for c in all_conns:
+            if c.linkedin_url:
+                conn_by_url[c.linkedin_url] = c
+                # Also index by slug (the /in/xxx part)
+                slug = (c.linkedin_url.split("/in/")[-1] or "").rstrip("/").lower()
+                if slug:
+                    conn_by_slug[slug] = c
+            name_lower = c.full_name.lower().strip()
+            parts = name_lower.split()
+            if len(parts) >= 2:
+                conn_by_first_last[parts[0] + " " + parts[-1]] = c
 
         stored = 0
         for m in mutuals:
@@ -355,10 +368,24 @@ class LinkedInService:
             resolved_id = m.get("linkedin_id") or ""
             resolved_url = m.get("linkedin_url") or ""
 
-            # Match by LinkedIn URL first (most reliable), then by name
+            # Match by LinkedIn URL first (most reliable)
             matched_conn = conn_by_url.get(resolved_url) if resolved_url else None
+            # Then by slug from URL
+            if not matched_conn and resolved_url:
+                slug = (resolved_url.split("/in/")[-1] or "").rstrip("/").lower()
+                if slug:
+                    matched_conn = conn_by_slug.get(slug)
+            # Then by linkedin_id as slug
+            if not matched_conn and resolved_id:
+                matched_conn = conn_by_slug.get(resolved_id.lower())
+            # Then by exact name
             if not matched_conn:
                 matched_conn = conn_by_name.get(m["name"].lower().strip())
+            # Then by first+last name (handles middle names)
+            if not matched_conn:
+                parts = m["name"].lower().strip().split()
+                if len(parts) >= 2:
+                    matched_conn = conn_by_first_last.get(parts[0] + " " + parts[-1])
 
             if matched_conn and matched_conn.linkedin_id:
                 resolved_id = matched_conn.linkedin_id
