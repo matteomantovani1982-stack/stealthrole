@@ -63,11 +63,19 @@ COMPANY_SUFFIXES = [
 ]
 
 
+def _is_former_company(name: str) -> bool:
+    """Check if a company field indicates a former/past employer."""
+    n = name.lower().strip()
+    return bool(re.match(r'^(ex[\s\-]|former[\s\-]|previously[\s\-]|prev[\s\-]|fka[\s\-])', n))
+
+
 def normalize_company(name: str) -> str:
     """Normalize company name for matching."""
     if not name:
         return ""
     n = name.lower().strip()
+    # Strip "Ex-" / "Former" prefix (so "Ex-Oliver Wyman" → "oliver wyman")
+    n = re.sub(r'^(ex[\s\-]|former[\s\-]|previously[\s\-]|prev[\s\-]|fka[\s\-])', '', n).strip()
     # Remove content in parentheses
     n = re.sub(r'\([^)]*\)', '', n).strip()
     # Remove punctuation except &
@@ -141,7 +149,9 @@ def detect_seniority(title: str) -> int:
     tl = title.lower()
     if any(k in tl for k in ["ceo", "coo", "cfo", "cto", "cmo", "founder", "president", "managing director"]):
         return 100
-    if any(k in tl for k in ["vp", "vice president", "svp", "evp", "partner"]):
+    # "partner" needs word boundary to avoid matching "partnerships"
+    is_partner = bool(re.search(r'\bpartner\b', tl)) and 'partnership' not in tl
+    if is_partner or any(k in tl for k in ["vp", "vice president", "svp", "evp"]):
         return 80
     if any(k in tl for k in ["director", "head of"]):
         return 70
@@ -449,8 +459,8 @@ class RelationshipEngine:
         """Find all connections at a target company using normalized matching."""
         all_conns = await self._get_all_connections(user_id)
 
-        # Find direct connections using normalized matching
-        direct = [c for c in all_conns if c.current_company and companies_match(c.current_company, company)]
+        # Find direct connections using normalized matching (exclude former employees)
+        direct = [c for c in all_conns if c.current_company and companies_match(c.current_company, company) and not _is_former_company(c.current_company)]
 
         # Load existing warm intros
         conn_ids = [c.id for c in direct]
@@ -516,7 +526,9 @@ class RelationshipEngine:
             t = (title or "").lower()
             if any(k in t for k in ["recruiter", "talent acquisition", "talent partner", "headhunter", "head hunter", "human resources", "people operations", "people partner", "staffing", "executive search", "search consultant", "resourcing", "recruitment"]):
                 return (0, "RECRUITER")
-            if any(k in t for k in ["ceo", "coo", "cfo", "cto", "cio", "cpo", "chro", "chief", "founder", "co-founder", "president", "managing director", "managing partner", "general manager"]):
+            # "partner" needs word-boundary check to avoid matching "partnerships"
+            is_partner = bool(re.search(r'\bpartner\b', t)) and 'partnership' not in t
+            if is_partner or any(k in t for k in ["ceo", "coo", "cfo", "cto", "cio", "cpo", "chro", "chief", "founder", "co-founder", "president", "managing director", "managing partner", "general manager"]):
                 return (4, "C_SUITE")
             if any(k in t for k in ["vp", "vice president", " director", "head of", "svp", "evp", "group director", "regional director"]):
                 return (3, "VP_DIRECTOR")
@@ -524,33 +536,61 @@ class RelationshipEngine:
                 return (2, "MANAGER")
             return (1, "IC")
 
-        def _seniority_message(first_name: str, company: str, role: str | None, tier: str) -> str:
+        def _seniority_message(first_name: str, company: str, role: str | None, tier: str, contact_title: str = "") -> str:
             role_str = role or "senior role"
             if tier in ("C_SUITE", "VP_DIRECTOR"):
                 return (
-                    f"Hi {first_name}, I hope you're well. "
-                    f"I've been following {company}'s growth closely and I'm "
-                    f"genuinely excited about where the business is heading. "
-                    f"I noticed there may be an opportunity for a {role_str} — "
-                    f"I'd love to get your perspective on the team and direction. "
-                    f"Would you have 20 minutes for a quick call this week? "
-                    f"Really appreciate it."
+                    f"Hi {first_name}, I'd love to connect with someone at {company} "
+                    f"for a {role_str} opportunity there. "
+                    f"I know you're connected with the team, and I'd be grateful if you could "
+                    f"introduce me to the right person. "
+                    f"Your insight into their culture and mission would be invaluable "
+                    f"as I explore this next step. No pressure at all!"
+                )
+            if tier == "MANAGER":
+                return (
+                    f"Hi {first_name}, I'm exploring a {role_str} opportunity at {company} "
+                    f"and as someone in the team there, your perspective would be incredibly valuable. "
+                    f"I'd love to hear about the culture and what the team looks for. "
+                    f"Would you have 15 minutes for a quick chat this week?"
                 )
             return (
-                f"Hi {first_name}, great to be connected! "
-                f"I'm exploring an opportunity at {company} and would love to get "
-                f"an insider's view on the team and culture. "
-                f"Would you be open to a quick 15-minute chat? "
-                f"Happy to return the favour anytime."
+                f"Hi {first_name}, I'm exploring a {role_str} opportunity at {company} "
+                f"and would love to get an insider's view on the team and culture. "
+                f"Any perspective you could share would help a lot. "
+                f"Would you be open to a quick 15-minute chat? Happy to return the favour anytime."
             )
+
+        def _conn_matches_company(c: LinkedInConnection, company: str) -> bool:
+            """Check if a connection currently works at the target company.
+            Checks current_company field first, then falls back to headline parsing.
+            Excludes former employees (Ex-, Former prefix)."""
+            # Primary: current_company field
+            if c.current_company:
+                if _is_former_company(c.current_company):
+                    return False
+                if companies_match(c.current_company, company):
+                    return True
+            # Secondary: parse headline for " at Company" or " @ Company"
+            headline = c.headline or ""
+            if headline:
+                # Check for "Ex-" / "Former" patterns in headline
+                hl = headline.lower()
+                # Match "... at Company" or "... @ Company" but NOT "Ex-Company"
+                at_match = re.search(r'\bat\s+(.+?)(?:\s*[|·•,]|$)', hl)
+                if at_match:
+                    hl_company = at_match.group(1).strip()
+                    if not _is_former_company(hl_company) and companies_match(hl_company, company):
+                        return True
+            return False
 
         direct = []
         recruiter_contacts = []
         visited_targets = []
         for c in all_conns:
-            if c.current_company and companies_match(c.current_company, company):
+            if _conn_matches_company(c, company):
                 is_visited = c.relationship_strength == "visited"
-                tier_rank, tier_name = _seniority_tier(c.current_title or "")
+                tier_rank, tier_name = _seniority_tier(c.current_title or c.headline or "")
                 first_name = (c.full_name or "there").split()[0]
                 entry = {
                     "name": c.full_name,
@@ -563,7 +603,7 @@ class RelationshipEngine:
                     "_tier_rank": tier_rank,
                     "relevance_score": rank_connection(c, role),
                     "intro_angle": _suggest_intro_angle(c, role),
-                    "message": _seniority_message(first_name, company, role, tier_name),
+                    "message": _seniority_message(first_name, company, role, tier_name, c.current_title or c.headline or ""),
                     "connection_id": str(c.id),
                     "is_visited_profile": is_visited,
                 }
