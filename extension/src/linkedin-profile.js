@@ -466,47 +466,54 @@
 
     (async () => {
       try {
-        // ── Approach 1: Voyager API ──
-        console.log("[SR] Trying Voyager API for mutual connections…");
-        const voyagerMutuals = await fetchMutualsViaVoyager(linkedinId);
-        if (voyagerMutuals && voyagerMutuals.length > 0) {
-          console.log(`[SR] Voyager: ${voyagerMutuals.length} mutuals — sending to backend`);
-          SR.showToast(`Found ${voyagerMutuals.length} mutual connections — syncing`);
-          sendMutualData(targetPerson, voyagerMutuals, voyagerMutuals.length);
-          return;
+        // ── Step 1: Wait for the mutual connections section to render ──
+        // LinkedIn lazy-loads this section. Wait up to 10s for it.
+        SR.showToast("Looking for mutual connections…");
+        let mutualLink = null;
+        for (let i = 0; i < 10; i++) {
+          await new Promise(r => setTimeout(r, 1000));
+          mutualLink = findMutualConnectionsLink();
+          if (mutualLink) break;
         }
 
-        // ── Approach 2: Wait for DOM to render mutual section ──
-        console.log("[SR] Voyager: no results. Waiting for DOM…");
-        SR.showToast("Scanning page for mutual connections…");
-        const domMutuals = await scrapeMutualsFromRenderedDom(linkedinId);
-        if (domMutuals && domMutuals.length > 0) {
-          console.log(`[SR] DOM: ${domMutuals.length} mutuals — sending to backend`);
-          SR.showToast(`Found ${domMutuals.length} mutual connections — syncing`);
-          sendMutualData(targetPerson, domMutuals, domMutuals.length);
-          return;
+        // ── Step 2: Try Voyager API using URN from the link or page ──
+        // This is fast and doesn't navigate away from the page
+        try {
+          const voyagerMutuals = await fetchMutualsViaVoyager(linkedinId);
+          if (voyagerMutuals && voyagerMutuals.length > 0) {
+            console.log(`[SR] Voyager: ${voyagerMutuals.length} mutuals`);
+            SR.showToast(`Found ${voyagerMutuals.length} mutual connections — syncing`);
+            sendMutualData(targetPerson, voyagerMutuals, voyagerMutuals.length);
+            return;
+          }
+        } catch (e) {
+          console.log("[SR] Voyager approach failed:", e.message);
         }
 
-        // ── Approach 3: Click the mutual connections link (last resort) ──
-        const mutualLink = findMutualConnectionsLink();
+        // ── Step 3: Click through to search results (the proven approach) ──
+        // This navigates away from the profile page. The search results page
+        // will trigger scrapeMutualSearchResults() via initForPage → sr_mutual_target.
         if (mutualLink) {
-          SR.showToast("Opening mutual connections page…");
+          SR.showToast("Opening mutual connections list…");
+          console.log("[SR] Clicking mutual connections link → search results page");
           chrome.storage.local.set({ sr_mutual_target: targetPerson }, () => {
-            try {
-              mutualLink.click();
-              console.log("[SR] Clicked mutual connections link (last resort)");
-            } catch (e) {
-              console.warn("[SR] Failed to click mutual link:", e);
-            }
+            mutualLink.click();
           });
           return;
         }
 
-        console.log("[SR] No mutual connections found via any method");
+        // ── Step 4: Check visible mutuals from DOM as last resort ──
+        const visibleMutuals = scrapeVisibleMutuals();
+        if (visibleMutuals.length > 0) {
+          SR.showToast(`Found ${visibleMutuals.length} mutual connections — syncing`);
+          sendMutualData(targetPerson, visibleMutuals, visibleMutuals.length);
+          return;
+        }
+
+        console.log("[SR] No mutual connections found");
         SR.showToast("No mutual connections found for " + (targetName || "this profile"));
       } catch (e) {
         console.error("[SR] scrapeMutualConnections error:", e);
-        SR.showToast("Error scanning mutuals: " + e.message);
       } finally {
         SR._mutualScrapeInProgress = false;
       }

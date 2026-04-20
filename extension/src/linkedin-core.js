@@ -382,15 +382,26 @@ window.SR = window.SR || {};
       setTimeout(() => SR.captureCompanyIntel?.(), 2000);
     }
 
+    // Search page: check if we arrived here from a mutual connections click-through
+    // (sr_mutual_target set in storage = we navigated from a profile's "mutual connections" link)
+    if (pageType === "search") {
+      try {
+        chrome.storage.local.get("sr_mutual_target", (data) => {
+          if (data.sr_mutual_target) {
+            console.log("[SR] sr_mutual_target found — scraping mutual search results");
+            SR.showToast("Scraping mutual connections from search results…");
+            setTimeout(() => SR.scrapeMutualSearchResults?.(), 2000);
+          }
+        });
+      } catch {}
+    }
+
     // Profile: auto-scrape + ALWAYS try mutual connections
-    // Don't gate on degree detection — it's fragile and LinkedIn changes
-    // the DOM constantly. Just try mutuals on every profile visit; the
-    // Voyager API returns empty if there are none.
     if (pageType === "profile") {
       SR.waitForProfileName?.().then(() => {
         SR.scrapeProfile?.().then(() => {
           const degree = SR._lastScrapedDegree;
-          // If we KNOW it's 1st degree, skip mutual scraping (we already have a direct path)
+          // If we KNOW it's 1st degree, skip mutual scraping
           if (degree === 1) {
             console.log("[SR] 1st degree profile — skipping mutual scraping");
             return;
