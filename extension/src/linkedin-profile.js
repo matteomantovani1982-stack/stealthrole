@@ -23,7 +23,7 @@
   };
 
   function getProfileName() {
-    // LinkedIn frequently changes DOM classes. Try many selectors.
+    // Strategy 1: CSS selectors (LinkedIn changes these frequently)
     const selectors = [
       "h1.text-heading-xlarge",
       ".pv-text-details__left-panel h1",
@@ -44,27 +44,51 @@
         }
       } catch {}
     }
-    // Fallback: og:title meta tag (always has the name on profile pages)
+    // Strategy 2: og:title meta tag
     const ogTitle = document.querySelector('meta[property="og:title"]');
     if (ogTitle) {
       const content = ogTitle.getAttribute("content") || "";
-      // og:title = "Firstname Lastname - Title | LinkedIn"
       const dashIdx = content.indexOf(" - ");
       const name = dashIdx > 0 ? content.substring(0, dashIdx).trim() : content.replace(/\s*\|.*$/, "").trim();
       if (name.length > 1 && name.length < 80 && !/linkedin/i.test(name)) return name;
     }
-    // Fallback: document.title
+    // Strategy 3: document.title — handles both "Name - Title | LinkedIn" and "Name | LinkedIn"
     const title = document.title || "";
-    if (title.includes(" | LinkedIn")) {
+    if (title.includes("LinkedIn")) {
+      // Try "Name - Title | LinkedIn" first
       const dashIdx = title.indexOf(" - ");
-      const name = dashIdx > 0 ? title.substring(0, dashIdx).trim() : "";
-      if (name.length > 1 && name.length < 80) return name;
+      if (dashIdx > 0) {
+        const name = title.substring(0, dashIdx).trim();
+        if (name.length > 1 && name.length < 80 && !/linkedin/i.test(name)) return name;
+      }
+      // Try "Name | LinkedIn" format
+      const pipeIdx = title.indexOf(" | ");
+      if (pipeIdx > 0) {
+        const name = title.substring(0, pipeIdx).trim();
+        if (name.length > 1 && name.length < 80 && !/linkedin/i.test(name)) return name;
+      }
     }
+    // Strategy 4: Parse from <main> textContent — LinkedIn 2025+ renders name as first text
+    // Pattern: "  Name· 1st· 2nd..." or "  Name· 2nd..."
+    const mainEl = document.querySelector("main");
+    if (mainEl) {
+      const mainText = (mainEl.textContent || "").trim();
+      // Name is the first text before "·" or degree marker
+      const dotMatch = mainText.match(/^(.+?)(?:\s*·|\s*(?:1st|2nd|3rd)\b)/);
+      if (dotMatch) {
+        const name = dotMatch[1].trim();
+        if (name.length > 1 && name.length < 80 && !/linkedin/i.test(name)) {
+          console.log(`[SR] getProfileName: extracted from <main> text: '${name}'`);
+          return name;
+        }
+      }
+    }
+    console.log("[SR] getProfileName: ALL methods failed");
     return "";
   }
 
   function getProfileHeadline() {
-    // LinkedIn headline selectors
+    // Strategy 1: CSS selectors
     const selectors = [
       ".text-body-medium",
       ".pv-text-details__left-panel .text-body-medium",
@@ -80,20 +104,46 @@
         }
       } catch {}
     }
-    // Fallback: og:title → extract title portion after name
+    // Strategy 2: og:title meta → "Name - Headline | LinkedIn"
     const ogTitle = document.querySelector('meta[property="og:title"]');
     if (ogTitle) {
       const content = ogTitle.getAttribute("content") || "";
-      // "Name - Headline | LinkedIn"
       const dashIdx = content.indexOf(" - ");
       if (dashIdx > 0) {
         const headline = content.substring(dashIdx + 3).replace(/\s*\|.*$/, "").trim();
         if (headline.length > 1) return headline;
       }
     }
-    // Fallback: meta description
+    // Strategy 3: document.title → "Name - Headline | LinkedIn"
+    const title = document.title || "";
+    const titleDash = title.indexOf(" - ");
+    if (titleDash > 0) {
+      const headline = title.substring(titleDash + 3).replace(/\s*\|.*$/, "").trim();
+      if (headline.length > 1 && !/linkedin/i.test(headline)) return headline;
+    }
+    // Strategy 4: Parse from <main> textContent
+    // Pattern: "Name· 1st· 2ndHeadlineSchool/Location..."
+    // The headline sits between degree markers and the school/location line
+    const mainEl = document.querySelector("main");
+    if (mainEl) {
+      const mainText = (mainEl.textContent || "").trim();
+      // After name and degree markers, headline comes next
+      // "Richard McKeon· 1st· 2ndVP of Marketing | Scaling Global Event Platforms..."
+      const degreeMatch = mainText.match(/(?:1st|2nd|3rd)\s*(?:·\s*(?:1st|2nd|3rd)\s*)*(.+?)(?:(?:University|School|College|Institute|\d{1,3}(?:,\d{3})*\s*followers|Contact info|·\s*Contact))/i);
+      if (degreeMatch) {
+        const headline = degreeMatch[1].trim();
+        if (headline.length > 3 && headline.length < 300) {
+          console.log(`[SR] getProfileHeadline: extracted from <main> text: '${headline}'`);
+          return headline;
+        }
+      }
+    }
+    // Strategy 5: meta description
     const meta = document.querySelector('meta[name="description"]');
-    if (meta) return (meta.getAttribute("content") || "").trim().slice(0, 200);
+    if (meta) {
+      const desc = (meta.getAttribute("content") || "").trim().slice(0, 200);
+      if (desc.length > 1) return desc;
+    }
     return "";
   }
 
@@ -135,10 +185,18 @@
   }
 
   function getCompanyFromPage() {
-    // 1. Experience section: first company link
+    // 1. Experience section: company links — but filter out activity feed noise
+    // Activity feed links contain timestamps like "2w •", "3d •", newlines with time markers
     for (const link of document.querySelectorAll("a[href*='/company/']")) {
       const text = (link.innerText || link.textContent || "").trim();
-      if (text.length > 1 && text.length < 60 && !/follow/i.test(text) && !/linkedin/i.test(text) && !/see all/i.test(text)) {
+      // Skip activity feed items (contain time markers), follow buttons, etc.
+      if (text.length < 2 || text.length > 60) continue;
+      if (/follow/i.test(text) || /linkedin/i.test(text) || /see all/i.test(text)) continue;
+      if (/\d+[dwmhys]\s*[·•]/.test(text)) continue; // "2w •", "3d •" = activity feed
+      if (text.includes("\n")) continue; // Multi-line = likely activity feed
+      // Check if this link is inside an experience/about section, not feed
+      const section = link.closest("section, [class*='experience'], [class*='pvs-list']");
+      if (section) {
         return text;
       }
     }
@@ -146,9 +204,12 @@
     const headline = getProfileHeadline();
     if (headline) {
       const atMatch = headline.match(/\bat\s+(.+?)(?:\s*[|·•,]|$)/i);
-      if (atMatch) return atMatch[1].trim();
+      if (atMatch) {
+        const company = atMatch[1].trim();
+        if (company.length > 1 && company.length < 60) return company;
+      }
     }
-    // 3. Parse from og:title: "Name - Title at Company | LinkedIn"
+    // 3. Parse from og:title or document.title: "Name - Title at Company | LinkedIn"
     const ogTitle = document.querySelector('meta[property="og:title"]');
     if (ogTitle) {
       const content = ogTitle.getAttribute("content") || "";
@@ -157,6 +218,14 @@
         const company = atMatch[1].replace(/\s*\|.*$/, "").trim();
         if (company.length > 1 && company.length < 60) return company;
       }
+    }
+    // 4. Try company links without section check (less strict)
+    for (const link of document.querySelectorAll("a[href*='/company/']")) {
+      const text = (link.innerText || link.textContent || "").trim();
+      if (text.length < 2 || text.length > 60) continue;
+      if (/follow/i.test(text) || /linkedin/i.test(text) || /see all/i.test(text)) continue;
+      if (/\d+[dwmhys]\s*[·•]/.test(text) || text.includes("\n")) continue;
+      return text;
     }
     return "";
   }
