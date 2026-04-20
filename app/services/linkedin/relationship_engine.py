@@ -46,13 +46,39 @@ COMPANY_ALIASES = {
     "tata communications (tcts)": "tata communications",
     "mckinsey & company": "mckinsey",
     "mckinsey and company": "mckinsey",
+    "mck": "mckinsey",
     "bcg": "boston consulting group",
+    "bain & company": "bain",
+    "bain and company": "bain",
     "pwc": "pricewaterhousecoopers",
+    "pricewaterhousecoopers": "pwc",
     "ey": "ernst & young",
     "ernst young": "ernst & young",
     "jpmorgan": "jp morgan",
     "j.p. morgan": "jp morgan",
+    "jpmc": "jp morgan",
     "deloitte consulting": "deloitte",
+    # Oliver Wyman + parent group
+    "ow": "oliver wyman",
+    "oliver wyman group": "oliver wyman",
+    "marsh mclennan": "marsh & mclennan",
+    "mmc": "marsh & mclennan",
+    # Accenture / strategy houses
+    "acn": "accenture",
+    "accenture strategy": "accenture",
+    # Roland Berger
+    "rb": "roland berger",
+    "roland berger strategy consultants": "roland berger",
+    # Kearney
+    "at kearney": "kearney",
+    "a.t. kearney": "kearney",
+    # LEK
+    "lek consulting": "lek",
+    "l.e.k. consulting": "lek",
+    "l.e.k.": "lek",
+    # Strategy&
+    "strategy&": "strategy and",
+    "strategy &": "strategy and",
 }
 
 # Suffixes to strip
@@ -563,25 +589,66 @@ class RelationshipEngine:
 
         def _conn_matches_company(c: LinkedInConnection, company: str) -> bool:
             """Check if a connection currently works at the target company.
-            Checks current_company field first, then falls back to headline parsing.
+            Uses multiple strategies: current_company, headline parsing,
+            current_title, and pipe-separated headline segments.
             Excludes former employees (Ex-, Former prefix)."""
-            # Primary: current_company field
+            norm_target = normalize_company(company)
+            if not norm_target:
+                return False
+
+            # 1. Primary: current_company field
             if c.current_company:
                 if _is_former_company(c.current_company):
                     return False
                 if companies_match(c.current_company, company):
                     return True
-            # Secondary: parse headline for " at Company" or " @ Company"
+
+            # 2. Headline — try multiple extraction patterns
             headline = c.headline or ""
             if headline:
-                # Check for "Ex-" / "Former" patterns in headline
                 hl = headline.lower()
-                # Match "... at Company" or "... @ Company" but NOT "Ex-Company"
+                # Skip if entire headline starts with "ex-" or "former"
+                if _is_former_company(hl):
+                    return False
+
+                # 2a. "... at Company" or "... @ Company"
                 at_match = re.search(r'\bat\s+(.+?)(?:\s*[|·•,]|$)', hl)
                 if at_match:
                     hl_company = at_match.group(1).strip()
                     if not _is_former_company(hl_company) and companies_match(hl_company, company):
                         return True
+
+                # 2b. Split by | · • , and check each segment
+                #     Handles "Strategy Consultant | Oliver Wyman" or "Oliver Wyman · Dubai"
+                segments = re.split(r'[|·•]', headline)
+                for seg in segments:
+                    seg = seg.strip()
+                    if not seg or len(seg) < 2:
+                        continue
+                    if _is_former_company(seg):
+                        continue
+                    # Strip common prefixes like "at" "working at"
+                    cleaned = re.sub(r'^(?:at|working at|@)\s+', '', seg, flags=re.IGNORECASE).strip()
+                    if companies_match(cleaned, company):
+                        return True
+
+                # 2c. Direct mention of company name anywhere in headline
+                #     (last resort — only if the normalized company name is long enough to avoid false matches)
+                if len(norm_target) >= 5 and norm_target in normalize_company(headline):
+                    # But reject if preceded by "ex-" or "former"
+                    ex_check = re.search(r'(?:ex[\s\-]|former[\s\-])' + re.escape(norm_target), normalize_company(headline))
+                    if not ex_check:
+                        return True
+
+            # 3. current_title — sometimes contains "Title at Company"
+            title = c.current_title or ""
+            if title:
+                title_at = re.search(r'\bat\s+(.+?)(?:\s*[|·•,]|$)', title.lower())
+                if title_at:
+                    t_company = title_at.group(1).strip()
+                    if not _is_former_company(t_company) and companies_match(t_company, company):
+                        return True
+
             return False
 
         direct = []

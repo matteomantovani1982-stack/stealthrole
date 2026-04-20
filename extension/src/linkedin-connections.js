@@ -247,8 +247,21 @@
       const hl = str(headline) || "";
       let currentTitle = hl;
       let currentCompany = "";
-      const m = hl.match(/^(.+?)\s+(?:at|@)\s+(.+)$/i);
-      if (m) { currentTitle = m[1].trim(); currentCompany = m[2].trim(); }
+      // Match "Title at Company" — stop company at first | · • delimiter
+      const m = hl.match(/^(.+?)\s+(?:at|@)\s+(.+?)(?:\s*[|·•]|$)/i);
+      if (m) {
+        currentTitle = m[1].trim();
+        currentCompany = m[2].trim();
+      } else {
+        // Fallback: check pipe-separated segments for known company patterns
+        // e.g. "Strategy Consultant | Oliver Wyman | Dubai"
+        const segments = hl.split(/[|·•]/).map(s => s.trim()).filter(s => s.length > 1);
+        if (segments.length >= 2) {
+          // First segment is usually the title, second is often the company
+          currentTitle = segments[0];
+          // Don't auto-set company from segments — let backend matching handle it
+        }
+      }
       // For entityUrn-based IDs, we can't build a profile URL
       const isVanitySlug = !cleanSlug.startsWith("member_");
       results.push({
@@ -317,7 +330,7 @@
 
     let currentTitle = headlineParts[0] || "";
     let currentCompany = "";
-    const atMatch = (headlineParts[0] || "").match(/^(.+?)\s+(?:at|@)\s+(.+)$/i);
+    const atMatch = (headlineParts[0] || "").match(/^(.+?)\s+(?:at|@)\s+(.+?)(?:\s*[|·•]|$)/i);
     if (atMatch) { currentTitle = atMatch[1].trim(); currentCompany = atMatch[2].trim(); }
     else if (headlineParts.length >= 2 && headlineParts[1].length < 60) { currentCompany = headlineParts[1]; }
     return { fullName, headline, currentTitle, currentCompany };
