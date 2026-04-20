@@ -382,21 +382,30 @@ window.SR = window.SR || {};
       setTimeout(() => SR.captureCompanyIntel?.(), 2000);
     }
 
-    // Profile: auto-scrape + check for pending scan
+    // Profile: auto-scrape + auto-detect 2nd/3rd degree → scrape mutuals
     if (pageType === "profile") {
       SR.waitForProfileName?.().then(() => {
         SR.scrapeProfile?.().then(() => {
-          try {
-            chrome.storage.local.get("sr_scan_target", (data) => {
-              if (!data.sr_scan_target) return;
-              const scan = data.sr_scan_target;
-              const connectorSlug = (scan.connector_url || "").split("/in/")[1]?.replace(/\/$/, "") || "";
-              const currentSlug = window.location.pathname.split("/in/")[1]?.replace(/\/$/, "") || "";
-              if (connectorSlug && connectorSlug === currentSlug) {
-                SR.scrapeMutualConnections?.();
-              }
-            });
-          } catch {}
+          // Always try mutual scraping on 2nd/3rd degree profiles
+          // This is the key to building verified intro paths
+          const degree = SR._lastScrapedDegree;
+          if (degree && degree >= 2) {
+            console.log(`[SR] ${degree}${degree === 2 ? "nd" : "rd"} degree profile → auto-scraping mutual connections`);
+            setTimeout(() => SR.scrapeMutualConnections?.(), 1500);
+          } else {
+            // Also check if sr_scan_target was set (explicit scan from frontend)
+            try {
+              chrome.storage.local.get("sr_scan_target", (data) => {
+                if (!data.sr_scan_target) return;
+                const scan = data.sr_scan_target;
+                const connectorSlug = (scan.connector_url || "").split("/in/")[1]?.replace(/\/$/, "") || "";
+                const currentSlug = window.location.pathname.split("/in/")[1]?.replace(/\/$/, "") || "";
+                if (connectorSlug && connectorSlug === currentSlug) {
+                  SR.scrapeMutualConnections?.();
+                }
+              });
+            } catch {}
+          }
         });
       });
     }

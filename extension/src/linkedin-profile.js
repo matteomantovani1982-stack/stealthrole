@@ -91,6 +91,8 @@
       if (atMatch) currentTitle = atMatch[1].trim();
 
       console.log(`[SR] scrapeProfile: name='${fullName}' title='${currentTitle}' company='${currentCompany}' degree=${degree}`);
+      // Expose degree so linkedin-core.js can auto-trigger mutual scraping for 2nd/3rd
+      SR._lastScrapedDegree = degree;
       if (!fullName) { resolve(); return; }
 
       const strength = degree === 1 ? "strong" : degree === 2 ? "weak" : degree === 3 ? "discovered" : "visited";
@@ -191,6 +193,131 @@
 
   // ── Mutual connections ──
 
+  /**
+   * Extract the target profile's entity URN from the page.
+   * LinkedIn embeds it in several places: code tags, data attributes, or page source.
+   */
+  function extractProfileUrn() {
+    // Method 1: Look for entityUrn in code/data attributes
+    for (const code of document.querySelectorAll("code")) {
+      const text = code.textContent || "";
+      const m = text.match(/"entityUrn"\s*:\s*"(urn:li:(?:fsd_profile|fs_miniProfile|member):[^"]+)"/);
+      if (m) return m[1];
+    }
+    // Method 2: Look in any script/json data on the page
+    for (const script of document.querySelectorAll('script[type="application/ld+json"], script[type="json"]')) {
+      const text = script.textContent || "";
+      const m = text.match(/"entityUrn"\s*:\s*"(urn:li:(?:fsd_profile|fs_miniProfile|member):[^"]+)"/);
+      if (m) return m[1];
+    }
+    // Method 3: data-urn attributes
+    for (const el of document.querySelectorAll("[data-urn]")) {
+      const urn = el.getAttribute("data-urn") || "";
+      if (/urn:li:(fsd_profile|fs_miniProfile|member):/.test(urn)) return urn;
+    }
+    // Method 4: Search body HTML (last resort, limited scan)
+    const html = document.body.innerHTML.slice(0, 200000);
+    const m = html.match(/urn:li:fsd_profile:([A-Za-z0-9_-]+)/);
+    if (m) return `urn:li:fsd_profile:${m[1]}`;
+    return null;
+  }
+
+  /**
+   * Fetch mutual connections via LinkedIn Voyager API.
+   * Uses the search endpoint with connectionOf filter — much more reliable than DOM scraping.
+   */
+  async function fetchMutualsViaVoyager(profileUrn, linkedinId) {
+    const headers = SR.voyagerHeaders();
+    if (!headers) {
+      console.warn("[SR] No CSRF token — can't call Voyager for mutuals");
+      return null;
+    }
+
+    // The search API returns people who are connected to BOTH me and the target
+    // We use the connectionOf parameter with the target's profile URN
+    const encodedUrn = encodeURIComponent(profileUrn);
+    const searchUrl =
+      `https://www.linkedin.com/voyager/api/search/dash/clusters` +
+      `?decorationId=com.linkedin.voyager.dash.deco.search.SearchClusterCollection-187` +
+      `&origin=SHARED_CONNECTIONS_CANNED_SEARCH` +
+      `&q=all` +
+      `&query=(flagshipSearchIntent:SEARCH_SRP,` +
+      `queryParameters:(connectionOf:List(${encodedUrn}),network:List(F),resultType:List(PEOPLE)))` +
+      `&count=40&start=0`;
+
+    console.log("[SR] Voyager mutual search for:", profileUrn);
+
+    try {
+      const res = await SR.fetchWithTimeout(searchUrl, {
+        headers,
+        credentials: "include",
+      }, 15000);
+
+      if (!res.ok) {
+        console.warn(`[SR] Voyager mutual search returned ${res.status}`);
+        return null;
+      }
+
+      const data = await res.json();
+      const mutuals = [];
+
+      // Walk the response to extract profile info from included entities
+      const included = data.included || [];
+      const profiles = new Map();
+      for (const item of included) {
+        const urn = item.entityUrn || item["$urn"] || "";
+        if (!urn.includes("miniProfile") && !urn.includes("fsd_profile")) continue;
+        const name = [item.firstName, item.lastName].filter(Boolean).join(" ").trim();
+        if (!name) continue;
+        const publicId = item.publicIdentifier || "";
+        profiles.set(urn, {
+          name,
+          linkedin_id: publicId,
+          linkedin_url: publicId ? `https://www.linkedin.com/in/${publicId}` : "",
+          headline: item.occupation || item.headline || "",
+        });
+      }
+
+      // Also check elements array for search results
+      const elements = data.data?.searchDashClustersByAll?.elements || data.elements || [];
+      for (const cluster of elements) {
+        const items = cluster.items || [];
+        for (const item of items) {
+          const entity = item.item?.entityResult || item.entityResult || {};
+          const title = entity.title?.text || "";
+          const subtitle = entity.primarySubtitle?.text || "";
+          const navUrl = entity.navigationUrl || "";
+          if (title && navUrl.includes("/in/")) {
+            const pubId = navUrl.split("/in/")[1]?.split("?")[0]?.replace(/\/$/, "") || "";
+            if (pubId && !mutuals.find(m => m.linkedin_id === pubId)) {
+              mutuals.push({
+                name: title,
+                linkedin_id: pubId,
+                linkedin_url: `https://www.linkedin.com/in/${pubId}`,
+                headline: subtitle,
+              });
+            }
+          }
+        }
+      }
+
+      // Also add from miniProfile entities if not already present
+      for (const [, profile] of profiles) {
+        if (profile.linkedin_id && !mutuals.find(m => m.linkedin_id === profile.linkedin_id)) {
+          mutuals.push(profile);
+        }
+      }
+
+      // Filter out the target person themselves
+      const filtered = mutuals.filter(m => m.linkedin_id !== linkedinId);
+      console.log(`[SR] Voyager found ${filtered.length} mutual connections`);
+      return filtered.length > 0 ? filtered : null;
+    } catch (e) {
+      console.warn("[SR] Voyager mutual search failed:", e.message);
+      return null;
+    }
+  }
+
   SR.scrapeMutualConnections = function () {
     if (SR._mutualScrapeInProgress) {
       console.log("[SR] Mutual scrape in progress, retrying in 6 s…");
@@ -219,33 +346,53 @@
       current_company: targetCompany,
     };
 
-    // First try: scrape visible mutuals from current page
-    const visibleMutuals = scrapeVisibleMutuals();
-    if (visibleMutuals.length > 0) {
-      console.log("[SR] Found", visibleMutuals.length, "visible mutuals");
-      sendMutualData(targetPerson, visibleMutuals, visibleMutuals.length);
-      return;
-    }
-
-    // Try clicking the mutual connections link
-    const mutualLink = findMutualConnectionsLink();
-    if (!mutualLink) {
-      console.log("[SR] No mutual connections link found");
-      return;
-    }
-
     SR._mutualScrapeInProgress = true;
-    chrome.storage.local.set({ sr_mutual_target: targetPerson }, () => {
+
+    // Approach 1: Try Voyager API (most reliable)
+    (async () => {
       try {
-        mutualLink.click();
-        console.log("[SR] Clicked mutual connections link");
-        // The navigation will trigger scrapeMutualSearchResults on the new page
-        setTimeout(() => { SR._mutualScrapeInProgress = false; }, 5000);
+        const profileUrn = extractProfileUrn();
+        if (profileUrn) {
+          const voyagerMutuals = await fetchMutualsViaVoyager(profileUrn, linkedinId);
+          if (voyagerMutuals && voyagerMutuals.length > 0) {
+            console.log(`[SR] Voyager returned ${voyagerMutuals.length} mutuals — sending to backend`);
+            sendMutualData(targetPerson, voyagerMutuals, voyagerMutuals.length);
+            SR._mutualScrapeInProgress = false;
+            return;
+          }
+        }
       } catch (e) {
-        console.warn("[SR] Failed to click mutual link:", e);
-        setTimeout(() => { SR._mutualScrapeInProgress = false; }, 6000);
+        console.warn("[SR] Voyager mutual approach failed:", e.message);
       }
-    });
+
+      // Approach 2: Scrape visible mutuals from DOM
+      const visibleMutuals = scrapeVisibleMutuals();
+      if (visibleMutuals.length > 0) {
+        console.log("[SR] Found", visibleMutuals.length, "visible mutuals via DOM");
+        sendMutualData(targetPerson, visibleMutuals, visibleMutuals.length);
+        SR._mutualScrapeInProgress = false;
+        return;
+      }
+
+      // Approach 3: Click the mutual connections link (navigates away)
+      const mutualLink = findMutualConnectionsLink();
+      if (!mutualLink) {
+        console.log("[SR] No mutual connections found via any method");
+        SR._mutualScrapeInProgress = false;
+        return;
+      }
+
+      chrome.storage.local.set({ sr_mutual_target: targetPerson }, () => {
+        try {
+          mutualLink.click();
+          console.log("[SR] Clicked mutual connections link (fallback)");
+          setTimeout(() => { SR._mutualScrapeInProgress = false; }, 5000);
+        } catch (e) {
+          console.warn("[SR] Failed to click mutual link:", e);
+          SR._mutualScrapeInProgress = false;
+        }
+      });
+    })();
   };
 
   function findMutualConnectionsLink() {
