@@ -23,26 +23,73 @@
   };
 
   function getProfileName() {
-    // Primary: h1 on profile page
-    const h1 = document.querySelector("h1");
-    if (h1) {
-      const name = h1.textContent.trim();
-      if (name.length > 1 && name.length < 80) return name;
+    // LinkedIn frequently changes DOM classes. Try many selectors.
+    const selectors = [
+      "h1.text-heading-xlarge",
+      ".pv-text-details__left-panel h1",
+      "h1.break-words",
+      ".text-heading-xlarge",
+      "[data-generated-suggestion-target]",
+      "main h1",
+      "h1",
+      ".artdeco-entity-lockup__title",
+      "[aria-label*='profile'] h1",
+    ];
+    for (const sel of selectors) {
+      try {
+        const el = document.querySelector(sel);
+        if (el) {
+          const name = (el.innerText || el.textContent || "").trim().split("\n")[0].trim();
+          if (name.length > 1 && name.length < 80 && !/linkedin/i.test(name)) return name;
+        }
+      } catch {}
     }
-    // Fallback: main content name
-    for (const el of document.querySelectorAll(".text-heading-xlarge, .pv-text-details__left-panel h1, [data-generated-suggestion-target]")) {
-      const text = (el.innerText || el.textContent || "").trim();
-      if (text.length > 1 && text.length < 80) return text;
+    // Fallback: og:title meta tag (always has the name on profile pages)
+    const ogTitle = document.querySelector('meta[property="og:title"]');
+    if (ogTitle) {
+      const content = ogTitle.getAttribute("content") || "";
+      // og:title = "Firstname Lastname - Title | LinkedIn"
+      const dashIdx = content.indexOf(" - ");
+      const name = dashIdx > 0 ? content.substring(0, dashIdx).trim() : content.replace(/\s*\|.*$/, "").trim();
+      if (name.length > 1 && name.length < 80 && !/linkedin/i.test(name)) return name;
+    }
+    // Fallback: document.title
+    const title = document.title || "";
+    if (title.includes(" | LinkedIn")) {
+      const dashIdx = title.indexOf(" - ");
+      const name = dashIdx > 0 ? title.substring(0, dashIdx).trim() : "";
+      if (name.length > 1 && name.length < 80) return name;
     }
     return "";
   }
 
   function getProfileHeadline() {
-    // .text-body-medium is LinkedIn's headline class
-    const el = document.querySelector(".text-body-medium, .pv-text-details__left-panel .text-body-medium");
-    if (el) {
-      const text = el.textContent.trim().replace(/\s+/g, " ");
-      if (text.length > 1) return text;
+    // LinkedIn headline selectors
+    const selectors = [
+      ".text-body-medium",
+      ".pv-text-details__left-panel .text-body-medium",
+      ".artdeco-entity-lockup__subtitle",
+      "[data-generated-suggestion-target] + div",
+    ];
+    for (const sel of selectors) {
+      try {
+        const el = document.querySelector(sel);
+        if (el) {
+          const text = (el.innerText || el.textContent || "").trim().replace(/\s+/g, " ");
+          if (text.length > 1 && text.length < 300) return text;
+        }
+      } catch {}
+    }
+    // Fallback: og:title → extract title portion after name
+    const ogTitle = document.querySelector('meta[property="og:title"]');
+    if (ogTitle) {
+      const content = ogTitle.getAttribute("content") || "";
+      // "Name - Headline | LinkedIn"
+      const dashIdx = content.indexOf(" - ");
+      if (dashIdx > 0) {
+        const headline = content.substring(dashIdx + 3).replace(/\s*\|.*$/, "").trim();
+        if (headline.length > 1) return headline;
+      }
     }
     // Fallback: meta description
     const meta = document.querySelector('meta[name="description"]');
@@ -88,11 +135,27 @@
   }
 
   function getCompanyFromPage() {
-    // Experience section: first company link
+    // 1. Experience section: first company link
     for (const link of document.querySelectorAll("a[href*='/company/']")) {
       const text = (link.innerText || link.textContent || "").trim();
-      if (text.length > 1 && text.length < 60 && !/follow/i.test(text) && !/linkedin/i.test(text)) {
+      if (text.length > 1 && text.length < 60 && !/follow/i.test(text) && !/linkedin/i.test(text) && !/see all/i.test(text)) {
         return text;
+      }
+    }
+    // 2. Parse from headline: "Title at Company"
+    const headline = getProfileHeadline();
+    if (headline) {
+      const atMatch = headline.match(/\bat\s+(.+?)(?:\s*[|·•,]|$)/i);
+      if (atMatch) return atMatch[1].trim();
+    }
+    // 3. Parse from og:title: "Name - Title at Company | LinkedIn"
+    const ogTitle = document.querySelector('meta[property="og:title"]');
+    if (ogTitle) {
+      const content = ogTitle.getAttribute("content") || "";
+      const atMatch = content.match(/\bat\s+(.+?)(?:\s*\|.*$|$)/i);
+      if (atMatch) {
+        const company = atMatch[1].replace(/\s*\|.*$/, "").trim();
+        if (company.length > 1 && company.length < 60) return company;
       }
     }
     return "";

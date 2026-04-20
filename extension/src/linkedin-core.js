@@ -340,11 +340,11 @@ window.SR = window.SR || {};
     const pageType = SR.getPageType();
     console.log("[SR] Page init:", pageType, window.location.pathname);
 
-    // Prevent duplicate overlay buttons from prior init
-    if (document.getElementById("sr-overlay-btn")) return;
-
-    if (["connections", "profile", "messaging", "search", "job", "job-search", "company"].includes(pageType)) {
-      SR.injectOverlayButton(pageType);
+    // Inject overlay button if not already present (but DON'T return — still run page-specific logic)
+    if (!document.getElementById("sr-overlay-btn")) {
+      if (["connections", "profile", "messaging", "search", "job", "job-search", "company"].includes(pageType)) {
+        SR.injectOverlayButton(pageType);
+      }
     }
 
     // Auto-sync: if background set sr_sync_task, start the right flow
