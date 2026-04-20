@@ -10,6 +10,65 @@ window.SR = window.SR || {};
 
   console.log("%c[StealthRole v2.0.0] core loaded", "color: #7F8CFF; font-weight: bold");
 
+  // ── Pending draft injection ──
+  // When we navigate to LinkedIn messaging to pre-fill a draft, the page
+  // navigation destroys the JS context. We store the draft in chrome.storage
+  // BEFORE navigating, then pick it up here when the content script reloads.
+  if (/linkedin\.com\/messaging/.test(window.location.href)) {
+    // Check both session and local storage (write path falls back to local)
+    async function _pickUpDraft() {
+      let draft = null;
+      let storageType = "session";
+      try {
+        const data = await new Promise((resolve) =>
+          chrome.storage.session?.get?.("sr_pending_draft", resolve) || resolve(null)
+        );
+        if (data?.sr_pending_draft) draft = data.sr_pending_draft;
+      } catch {}
+      if (!draft) {
+        try {
+          const data = await new Promise((resolve) =>
+            chrome.storage.local.get("sr_pending_draft", resolve)
+          );
+          if (data?.sr_pending_draft) { draft = data.sr_pending_draft; storageType = "local"; }
+        } catch {}
+      }
+      if (!draft) return;
+      const { draftText, timestamp } = draft;
+      // Ignore drafts older than 30 seconds (stale)
+      if (!draftText || Date.now() - (timestamp || 0) > 30000) {
+        try { chrome.storage.session?.remove?.("sr_pending_draft"); } catch {}
+        try { chrome.storage.local.remove("sr_pending_draft"); } catch {}
+        return;
+      }
+      console.log(`[SR] found pending draft in ${storageType} (${draftText.length} chars), waiting for compose input…`);
+      try { chrome.storage.session?.remove?.("sr_pending_draft"); } catch {}
+      try { chrome.storage.local.remove("sr_pending_draft"); } catch {}
+
+      // Wait for the compose input to appear
+      let input = null;
+      for (let attempt = 0; attempt < 40; attempt++) {
+        await new Promise(r => setTimeout(r, 500));
+        input = document.querySelector(
+          'div.msg-form__contenteditable[contenteditable="true"], ' +
+          'div[role="textbox"][contenteditable="true"], ' +
+          'div.msg-form__msg-content-container--scrollable div[contenteditable="true"]'
+        );
+        if (input) break;
+      }
+      if (!input) {
+        console.warn("[SR] compose input not found after 20s — draft NOT injected");
+        return;
+      }
+      input.focus();
+      input.innerHTML = "";
+      document.execCommand("insertText", false, draftText);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      console.log(`[SR] draft pre-filled (${draftText.length} chars). User can review and send.`);
+    }
+    _pickUpDraft();
+  }
+
   // ── API call: background service-worker first, direct fetch fallback ──
 
   SR.apiCall = function (path, options, callback) {
@@ -386,8 +445,9 @@ window.SR = window.SR || {};
     }
 
     // ── Send message via LinkedIn ──
-    // Opens the conversation in LinkedIn messaging and pre-fills the draft.
-    // The user reviews and clicks Send themselves.
+    // Stores the draft in chrome.storage.session, then navigates to LinkedIn
+    // messaging. The content script picks up the pending draft on reload
+    // (see "Pending draft injection" block at top of this file).
     if (msg.type === "SEND_LINKEDIN_MESSAGE") {
       (async () => {
         try {
@@ -397,69 +457,48 @@ window.SR = window.SR || {};
             return;
           }
 
+          // Store draft BEFORE navigating — navigation destroys this JS context
+          try {
+            await chrome.storage.session.set({
+              sr_pending_draft: { draftText, timestamp: Date.now() },
+            });
+            console.log(`[SR] stored pending draft (${draftText.length} chars)`);
+          } catch (e) {
+            // session storage may not be available in older Chrome — fall back to local
+            await chrome.storage.local.set({
+              sr_pending_draft: { draftText, timestamp: Date.now() },
+            });
+            console.log(`[SR] stored pending draft in local storage (${draftText.length} chars)`);
+          }
+
+          let targetUrl = null;
+
           if (linkedinUrl) {
-            // ── Profile URL mode: open their profile and click the Message button ──
-            // Extract the public ID from the LinkedIn URL
-            // e.g. "https://www.linkedin.com/in/johndoe/" → "johndoe"
             const pubIdMatch = linkedinUrl.match(/linkedin\.com\/in\/([^/?]+)/);
             if (!pubIdMatch) {
-              // Fallback: just open the URL
               window.open(linkedinUrl, "_blank");
               sendResponse({ ok: true, fallback: true });
               return;
             }
-
-            // Navigate to messaging overlay for this person
-            // LinkedIn supports direct messaging URL: /messaging/compose/?recipient=PUBLIC_ID
-            // But more reliably, we navigate to their profile and click Message
+            targetUrl = `https://www.linkedin.com/messaging/compose/?recipient=${pubIdMatch[1]}`;
             console.log(`[SR] opening messaging for profile: ${pubIdMatch[1]}`);
 
-            // Use LinkedIn's messaging compose URL with the profile URL
-            const composeUrl = `https://www.linkedin.com/messaging/compose/?recipient=${pubIdMatch[1]}`;
-            window.location.href = composeUrl;
-
           } else if (conversationUrn) {
-            // ── Conversation URN mode: open existing thread ──
             let threadId = conversationUrn;
             threadId = threadId.replace(/^urn:li:(?:fs|fsd|msg)_conversation:/, "");
             threadId = threadId.replace(/^thread:/, "");
-
-            const msgUrl = `https://www.linkedin.com/messaging/thread/${encodeURIComponent(threadId)}/`;
-            console.log(`[SR] opening LinkedIn conversation: ${msgUrl}`);
-            window.location.href = msgUrl;
+            targetUrl = `https://www.linkedin.com/messaging/thread/${encodeURIComponent(threadId)}/`;
+            console.log(`[SR] opening LinkedIn conversation: ${targetUrl}`);
 
           } else {
             sendResponse({ ok: false, error: "Need either conversationUrn or linkedinUrl" });
             return;
           }
 
-          // Wait for the message input to appear
-          let input = null;
-          for (let attempt = 0; attempt < 30; attempt++) {
-            await new Promise(r => setTimeout(r, 500));
-            // LinkedIn uses a contenteditable div for the message composer
-            input = document.querySelector(
-              'div.msg-form__contenteditable[contenteditable="true"], ' +
-              'div[role="textbox"][contenteditable="true"], ' +
-              'div.msg-form__msg-content-container--scrollable div[contenteditable="true"]'
-            );
-            if (input) break;
-          }
-
-          if (!input) {
-            console.warn("[SR] could not find LinkedIn message input after 15s");
-            sendResponse({ ok: false, error: "Could not find message input — page may not have loaded" });
-            return;
-          }
-
-          // Focus and paste the draft text
-          input.focus();
-          input.innerHTML = "";
-          document.execCommand("insertText", false, draftText);
-          input.dispatchEvent(new Event("input", { bubbles: true }));
-
-          console.log(`[SR] draft pre-filled (${draftText.length} chars). User can review and send.`);
           sendResponse({ ok: true });
+          // Navigate — this kills the current JS context.
+          // The pending draft injection at the top of this file handles the rest.
+          window.location.href = targetUrl;
         } catch (e) {
           console.error("[SR] send message error:", e);
           sendResponse({ ok: false, error: e.message });

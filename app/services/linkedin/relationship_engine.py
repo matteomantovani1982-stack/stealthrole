@@ -607,17 +607,52 @@ class RelationshipEngine:
             # Also index by slug form (extension stores fake IDs as "first-last")
             slug = re.sub(r'[^a-z0-9]', '-', name_lower).strip('-')
             conn_by_first_last[slug] = c
+            # Index by first+last only (handles middle names/initials)
+            parts = name_lower.split()
+            if len(parts) >= 2:
+                fl_key = parts[0] + " " + parts[-1]
+                if fl_key not in conn_by_first_last:
+                    conn_by_first_last[fl_key] = c
+
+        def _normalize_name(name: str) -> str:
+            """Strip suffixes like MBA, PhD, PMP, etc. and normalize."""
+            n = name.lower().strip()
+            # Remove common credential suffixes
+            n = re.sub(r',?\s*(?:mba|phd|pmp|cfa|cpa|md|pe|esq|jr\.?|sr\.?|ii|iii|iv)\.?\s*$', '', n, flags=re.IGNORECASE).strip()
+            # Remove content in parentheses
+            n = re.sub(r'\([^)]*\)', '', n).strip()
+            # Collapse whitespace
+            n = re.sub(r'\s+', ' ', n)
+            return n
 
         def _find_connector(mc) -> LinkedInConnection | None:
-            """Match a mutual connection to a 1st-degree connection. Strict matching only."""
+            """Match a mutual connection to a 1st-degree connection. Uses fuzzy matching."""
             mid = (mc.mutual_linkedin_id or "").strip()
-            mname = (mc.mutual_name or "").lower().strip()
+            mname = _normalize_name(mc.mutual_name or "")
             # 1. Direct linkedin_id match (most reliable)
             if mid and mid in conn_by_id:
                 return conn_by_id[mid]
             # 2. Exact full name match
             if mname and mname in conn_by_name:
                 return conn_by_name[mname]
+            # 3. First+last name match (ignores middle names/initials)
+            if mname:
+                parts = mname.split()
+                if len(parts) >= 2:
+                    fl_key = parts[0] + " " + parts[-1]
+                    if fl_key in conn_by_first_last:
+                        return conn_by_first_last[fl_key]
+            # 4. Slug match (extension sometimes stores fake IDs as "first-last")
+            if mname:
+                slug = re.sub(r'[^a-z0-9]', '-', mname).strip('-')
+                if slug in conn_by_first_last:
+                    return conn_by_first_last[slug]
+            # 5. Substring match — if one name contains the other (handles "John Smith, MBA" vs "John Smith")
+            if mname and len(mname) >= 4:
+                for stored_name, conn in conn_by_name.items():
+                    if stored_name.startswith(mname) or mname.startswith(stored_name):
+                        if abs(len(stored_name) - len(mname)) < 15:  # guard against very short names matching long ones
+                            return conn
             return None
 
         for mc in all_mutuals:

@@ -314,8 +314,13 @@
     const seen = new Set();
     const bodyText = document.body.innerText || "";
 
+    // Use a broad character class that handles non-Latin scripts (Arabic, Chinese, etc.)
+    // \p{L} matches any Unicode letter; also allow hyphens, apostrophes, dots, spaces
+    const nameChar = "[\\p{L}\\p{M}'\\-\\.\\s]";
+    const nameRe = new RegExp(`([\\p{Lu}\\p{Lo}]${nameChar}{1,50}(?:,\\s*[\\p{Lu}\\p{Lo}]${nameChar}{1,50})*)\\s+and\\s+(\\d+)\\s+other\\s+mutual\\s+connect`, "u");
+
     // Pattern: "Name1, Name2 and N other mutual connections"
-    const pattern1 = bodyText.match(/([A-Z][a-zA-Zàèéìòùü'\- ]+(?:,\s*[A-Z][a-zA-Zàèéìòùü'\- ]+)*)\s+and\s+(\d+)\s+other\s+mutual\s+connect/);
+    const pattern1 = bodyText.match(nameRe);
     if (pattern1) {
       for (const name of pattern1[1].split(",").map((n) => n.trim()).filter((n) => n.length > 1)) {
         if (!seen.has(name)) {
@@ -326,7 +331,8 @@
     }
 
     // Pattern: "Name1 and Name2 are mutual connections"
-    const pattern3 = bodyText.match(/([A-Z][a-zA-Zàèéìòùü'\- ]+)\s+and\s+([A-Z][a-zA-Zàèéìòùü'\- ]+)\s+are\s+mutual/);
+    const nameRe2 = new RegExp(`([\\p{Lu}\\p{Lo}]${nameChar}{1,50})\\s+and\\s+([\\p{Lu}\\p{Lo}]${nameChar}{1,50})\\s+are\\s+mutual`, "u");
+    const pattern3 = bodyText.match(nameRe2);
     if (pattern3 && mutualNames.length === 0) {
       for (const name of [pattern3[1].trim(), pattern3[2].trim()]) {
         if (!seen.has(name)) {
