@@ -164,7 +164,7 @@ window.SR = window.SR || {};
     if (path.includes("/company/") && !path.includes("/jobs/")) return "company";
     if (path.includes("/in/")) return "profile";
     if (path.includes("/messaging")) return "messaging";
-    if (path.includes("/search/results/people")) return "search";
+    if (path.includes("/search/results/")) return "search";
     return "other";
   };
 

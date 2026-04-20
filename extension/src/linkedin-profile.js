@@ -496,8 +496,23 @@
         if (mutualLink) {
           SR.showToast("Opening mutual connections list…");
           console.log("[SR] Clicking mutual connections link → search results page");
+          // IMPORTANT: storage.local.set is async — we must wait for the callback
+          // to confirm the write before navigating, otherwise the data is lost.
           chrome.storage.local.set({ sr_mutual_target: targetPerson }, () => {
-            mutualLink.click();
+            console.log("[SR] sr_mutual_target saved, clicking link in 200ms");
+            // Small delay to ensure storage write is fully flushed
+            setTimeout(() => {
+              // Verify the data was actually saved
+              chrome.storage.local.get("sr_mutual_target", (check) => {
+                if (check.sr_mutual_target) {
+                  console.log("[SR] Verified sr_mutual_target in storage, navigating");
+                } else {
+                  console.warn("[SR] sr_mutual_target NOT found after set — retrying");
+                  chrome.storage.local.set({ sr_mutual_target: targetPerson });
+                }
+                mutualLink.click();
+              });
+            }, 200);
           });
           return;
         }
@@ -521,18 +536,37 @@
   };
 
   function findMutualConnectionsLink() {
-    // Look for link containing "mutual" and "connection"
-    const allLinks = document.querySelectorAll("a[href*='facetConnectionOf'], a[href*='mutual'], a[href*='shared']");
-    for (const link of allLinks) {
-      if (link.offsetParent !== null) return link;
+    // 1. Best: href-based selectors (most reliable)
+    const hrefSelectors = [
+      "a[href*='facetConnectionOf']",
+      "a[href*='facetNetwork'][href*='F']",  // LinkedIn sometimes uses network facet
+      "a[href*='mutual']",
+      "a[href*='shared']",
+    ];
+    for (const sel of hrefSelectors) {
+      const links = document.querySelectorAll(sel);
+      for (const link of links) {
+        if (link.offsetParent !== null) {
+          console.log("[SR] Found mutual link via href:", link.href?.substring(0, 80));
+          return link;
+        }
+      }
     }
-    // Fallback: text-based search
+    // 2. Text-based search — broader patterns
     for (const el of document.querySelectorAll("a, button, span[role='link']")) {
       const text = (el.innerText || el.textContent || "").toLowerCase().trim();
-      if (text.includes("mutual") && text.includes("connection") && el.offsetParent !== null) {
+      if (el.offsetParent === null) continue;
+      // "X mutual connections" or "mutual connection" or "who you both know"
+      if (
+        (text.includes("mutual") && (text.includes("connection") || text.includes("contact"))) ||
+        (text.includes("who you") && text.includes("know")) ||
+        /\d+\s+(?:other\s+)?mutual/.test(text)
+      ) {
+        console.log("[SR] Found mutual link via text:", text.substring(0, 60));
         return el;
       }
     }
+    console.log("[SR] No mutual connections link found");
     return null;
   }
 
@@ -548,9 +582,26 @@
       console.log("[SR] scrapeMutualSearchResults for:", targetPerson.full_name);
       chrome.storage.local.remove("sr_mutual_target");
 
+      let retryCount = 0;
+      const MAX_RETRIES = 5;
+
       function scrapePage() {
         const results = SR.scrapeSearchResultCards?.() || [];
-        console.log("[SR] Mutual search page:", results.length, "results");
+        console.log("[SR] Mutual search page:", results.length, "results (retry", retryCount + ")");
+
+        // If no results yet and we haven't retried too many times, wait and retry
+        if (results.length === 0 && retryCount < MAX_RETRIES) {
+          retryCount++;
+          console.log("[SR] No results yet, retrying in 2s (attempt", retryCount, "of", MAX_RETRIES + ")");
+          setTimeout(scrapePage, 2000);
+          return;
+        }
+
+        if (results.length === 0) {
+          console.warn("[SR] No mutual search results found after", MAX_RETRIES, "retries");
+          SR.showToast("Could not find mutual connections on this page");
+          return;
+        }
 
         // Auto-scroll to load more
         function scrollDown() {
@@ -560,7 +611,7 @@
             if (moreResults.length > results.length) {
               // Found more, send all
               sendMutualData(targetPerson, moreResults, moreResults.length);
-            } else if (results.length > 0) {
+            } else {
               sendMutualData(targetPerson, results, results.length);
             }
             // Check for next page
