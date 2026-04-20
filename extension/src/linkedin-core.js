@@ -382,30 +382,23 @@ window.SR = window.SR || {};
       setTimeout(() => SR.captureCompanyIntel?.(), 2000);
     }
 
-    // Profile: auto-scrape + auto-detect 2nd/3rd degree → scrape mutuals
+    // Profile: auto-scrape + ALWAYS try mutual connections
+    // Don't gate on degree detection — it's fragile and LinkedIn changes
+    // the DOM constantly. Just try mutuals on every profile visit; the
+    // Voyager API returns empty if there are none.
     if (pageType === "profile") {
       SR.waitForProfileName?.().then(() => {
         SR.scrapeProfile?.().then(() => {
-          // Always try mutual scraping on 2nd/3rd degree profiles
-          // This is the key to building verified intro paths
           const degree = SR._lastScrapedDegree;
-          if (degree && degree >= 2) {
-            console.log(`[SR] ${degree}${degree === 2 ? "nd" : "rd"} degree profile → auto-scraping mutual connections`);
-            setTimeout(() => SR.scrapeMutualConnections?.(), 1500);
-          } else {
-            // Also check if sr_scan_target was set (explicit scan from frontend)
-            try {
-              chrome.storage.local.get("sr_scan_target", (data) => {
-                if (!data.sr_scan_target) return;
-                const scan = data.sr_scan_target;
-                const connectorSlug = (scan.connector_url || "").split("/in/")[1]?.replace(/\/$/, "") || "";
-                const currentSlug = window.location.pathname.split("/in/")[1]?.replace(/\/$/, "") || "";
-                if (connectorSlug && connectorSlug === currentSlug) {
-                  SR.scrapeMutualConnections?.();
-                }
-              });
-            } catch {}
+          // If we KNOW it's 1st degree, skip mutual scraping (we already have a direct path)
+          if (degree === 1) {
+            console.log("[SR] 1st degree profile — skipping mutual scraping");
+            return;
           }
+          // For 2nd, 3rd, or UNKNOWN degree — always scrape mutuals
+          console.log(`[SR] degree=${degree ?? "unknown"} → auto-scraping mutual connections`);
+          SR.showToast("Mapping mutual connections…");
+          setTimeout(() => SR.scrapeMutualConnections?.(), 2000);
         });
       });
     }

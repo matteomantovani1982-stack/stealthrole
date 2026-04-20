@@ -51,16 +51,39 @@
   }
 
   function getConnectionDegree() {
-    // LinkedIn shows "1st", "2nd", "3rd" in a badge
-    for (const el of document.querySelectorAll(".dist-value, .distance-badge, span[class*='degree']")) {
-      const t = (el.textContent || "").trim();
-      const m = t.match(/(\d)/);
-      if (m) return parseInt(m[1], 10);
+    // LinkedIn shows "1st", "2nd", "3rd" in various badge formats
+    // Try multiple selector strategies since LinkedIn changes these often
+    const degreeSelectors = [
+      ".dist-value",
+      ".distance-badge",
+      "span[class*='degree']",
+      // Modern LinkedIn (2025+) uses these
+      "span.pv-text-details__separator + span",
+      ".pv-top-card--list span",
+      "[data-test-distance-badge]",
+      ".pvs-profile-actions span",
+    ];
+    for (const sel of degreeSelectors) {
+      for (const el of document.querySelectorAll(sel)) {
+        const t = (el.textContent || "").trim();
+        if (/^[123](st|nd|rd)$/i.test(t)) return parseInt(t[0], 10);
+        const m = t.match(/(\d)\s*(?:st|nd|rd)/i);
+        if (m) return parseInt(m[1], 10);
+      }
     }
-    const bodyText = document.body.innerText || "";
-    if (/\b1st\b/.test(bodyText)) return 1;
-    if (/\b2nd\b/.test(bodyText)) return 2;
-    if (/\b3rd\b/.test(bodyText)) return 3;
+    // Broader scan: any small element containing just "1st", "2nd", "3rd"
+    for (const el of document.querySelectorAll("span, div, li")) {
+      const t = (el.textContent || "").trim();
+      if (t.length > 10) continue; // skip large text blocks
+      if (/^[123]\s*(?:st|nd|rd)$/i.test(t)) return parseInt(t[0], 10);
+    }
+    // Last resort: search aria-labels and title attributes
+    for (const el of document.querySelectorAll("[aria-label], [title]")) {
+      const label = (el.getAttribute("aria-label") || el.getAttribute("title") || "").toLowerCase();
+      if (label.includes("1st degree")) return 1;
+      if (label.includes("2nd degree")) return 2;
+      if (label.includes("3rd degree")) return 3;
+    }
     return null;
   }
 
@@ -194,28 +217,57 @@
   // ── Mutual connections ──
 
   /**
-   * Extract the target profile's entity URN from the page.
-   * LinkedIn embeds it in several places: code tags, data attributes, or page source.
+   * Fetch the profile's entity URN via Voyager API.
+   * Uses the public slug (linkedinId) to get the full profile data.
    */
-  function extractProfileUrn() {
-    // Method 1: Look for entityUrn in code/data attributes
+  async function fetchProfileUrn(linkedinId) {
+    const headers = SR.voyagerHeaders();
+    if (!headers) return null;
+    try {
+      // This endpoint resolves a public identifier to a full profile with entityUrn
+      const url = `https://www.linkedin.com/voyager/api/identity/dash/profiles?q=memberIdentity&memberIdentity=${encodeURIComponent(linkedinId)}&decorationId=com.linkedin.voyager.dash.deco.identity.profile.WebTopCardCore-18`;
+      const res = await SR.fetchWithTimeout(url, { headers, credentials: "include" }, 10000);
+      if (!res.ok) {
+        console.warn(`[SR] Profile URN fetch returned ${res.status}`);
+        return null;
+      }
+      const data = await res.json();
+      // Walk included entities for the profile URN
+      for (const item of (data.included || [])) {
+        const urn = item.entityUrn || "";
+        if (urn.includes("fsd_profile:") || urn.includes("fs_miniProfile:")) {
+          console.log("[SR] resolved profile URN:", urn);
+          return urn;
+        }
+      }
+      // Also try the elements array
+      for (const el of (data.elements || [])) {
+        const urn = el.entityUrn || el["*profile"] || "";
+        if (urn.includes("fsd_profile:") || urn.includes("fs_miniProfile:")) return urn;
+      }
+      return null;
+    } catch (e) {
+      console.warn("[SR] Profile URN fetch failed:", e.message);
+      return null;
+    }
+  }
+
+  /**
+   * Extract the target profile's entity URN from the page DOM (fallback).
+   */
+  function extractProfileUrnFromDom() {
+    // code tags often contain serialized JSON with entityUrn
     for (const code of document.querySelectorAll("code")) {
       const text = code.textContent || "";
       const m = text.match(/"entityUrn"\s*:\s*"(urn:li:(?:fsd_profile|fs_miniProfile|member):[^"]+)"/);
       if (m) return m[1];
     }
-    // Method 2: Look in any script/json data on the page
-    for (const script of document.querySelectorAll('script[type="application/ld+json"], script[type="json"]')) {
-      const text = script.textContent || "";
-      const m = text.match(/"entityUrn"\s*:\s*"(urn:li:(?:fsd_profile|fs_miniProfile|member):[^"]+)"/);
-      if (m) return m[1];
-    }
-    // Method 3: data-urn attributes
+    // data-urn attributes
     for (const el of document.querySelectorAll("[data-urn]")) {
       const urn = el.getAttribute("data-urn") || "";
       if (/urn:li:(fsd_profile|fs_miniProfile|member):/.test(urn)) return urn;
     }
-    // Method 4: Search body HTML (last resort, limited scan)
+    // Scan first 200KB of HTML
     const html = document.body.innerHTML.slice(0, 200000);
     const m = html.match(/urn:li:fsd_profile:([A-Za-z0-9_-]+)/);
     if (m) return `urn:li:fsd_profile:${m[1]}`;
@@ -224,98 +276,110 @@
 
   /**
    * Fetch mutual connections via LinkedIn Voyager API.
-   * Uses the search endpoint with connectionOf filter — much more reliable than DOM scraping.
+   * Strategy: resolve the profile URN, then search for my 1st-degree connections
+   * who are also connected to that profile (= mutual connections).
    */
-  async function fetchMutualsViaVoyager(profileUrn, linkedinId) {
+  async function fetchMutualsViaVoyager(linkedinId) {
     const headers = SR.voyagerHeaders();
     if (!headers) {
       console.warn("[SR] No CSRF token — can't call Voyager for mutuals");
       return null;
     }
 
-    // The search API returns people who are connected to BOTH me and the target
-    // We use the connectionOf parameter with the target's profile URN
-    const encodedUrn = encodeURIComponent(profileUrn);
-    const searchUrl =
-      `https://www.linkedin.com/voyager/api/search/dash/clusters` +
-      `?decorationId=com.linkedin.voyager.dash.deco.search.SearchClusterCollection-187` +
-      `&origin=SHARED_CONNECTIONS_CANNED_SEARCH` +
-      `&q=all` +
-      `&query=(flagshipSearchIntent:SEARCH_SRP,` +
-      `queryParameters:(connectionOf:List(${encodedUrn}),network:List(F),resultType:List(PEOPLE)))` +
-      `&count=40&start=0`;
+    // Step 1: Get the profile URN (API first, DOM fallback)
+    let profileUrn = await fetchProfileUrn(linkedinId);
+    if (!profileUrn) {
+      profileUrn = extractProfileUrnFromDom();
+    }
+    if (!profileUrn) {
+      console.warn("[SR] Could not resolve profile URN for", linkedinId);
+      return null;
+    }
+
+    // Step 2: Search for mutual connections using connectionOf filter
+    // Try multiple URL formats — LinkedIn has changed these over time
+    const urls = [
+      // Format 1: Search clusters (most common in 2024-2026)
+      `https://www.linkedin.com/voyager/api/search/dash/clusters?q=all&origin=SHARED_CONNECTIONS_CANNED_SEARCH&query=(flagshipSearchIntent:SEARCH_SRP,queryParameters:(connectionOf:List(${encodeURIComponent(profileUrn)}),network:List(F),resultType:List(PEOPLE)))&count=49&start=0`,
+      // Format 2: Without flagshipSearchIntent
+      `https://www.linkedin.com/voyager/api/search/dash/clusters?q=all&origin=SHARED_CONNECTIONS_CANNED_SEARCH&query=(queryParameters:(connectionOf:List(${encodeURIComponent(profileUrn)}),network:List(F),resultType:List(PEOPLE)))&count=49&start=0`,
+      // Format 3: Legacy relationships endpoint
+      `https://www.linkedin.com/voyager/api/relationships/dash/connections?q=sharedConnections&sharedConnectionProfile=${encodeURIComponent(profileUrn)}&count=49&start=0`,
+    ];
 
     console.log("[SR] Voyager mutual search for:", profileUrn);
 
-    try {
-      const res = await SR.fetchWithTimeout(searchUrl, {
-        headers,
-        credentials: "include",
-      }, 15000);
+    for (const searchUrl of urls) {
+      try {
+        const res = await SR.fetchWithTimeout(searchUrl, {
+          headers,
+          credentials: "include",
+        }, 12000);
 
-      if (!res.ok) {
-        console.warn(`[SR] Voyager mutual search returned ${res.status}`);
-        return null;
-      }
+        if (!res.ok) {
+          console.log(`[SR] Voyager mutual URL returned ${res.status}, trying next…`);
+          continue;
+        }
 
-      const data = await res.json();
-      const mutuals = [];
+        const data = await res.json();
+        const mutuals = [];
 
-      // Walk the response to extract profile info from included entities
-      const included = data.included || [];
-      const profiles = new Map();
-      for (const item of included) {
-        const urn = item.entityUrn || item["$urn"] || "";
-        if (!urn.includes("miniProfile") && !urn.includes("fsd_profile")) continue;
-        const name = [item.firstName, item.lastName].filter(Boolean).join(" ").trim();
-        if (!name) continue;
-        const publicId = item.publicIdentifier || "";
-        profiles.set(urn, {
-          name,
-          linkedin_id: publicId,
-          linkedin_url: publicId ? `https://www.linkedin.com/in/${publicId}` : "",
-          headline: item.occupation || item.headline || "",
-        });
-      }
+        // Extract profiles from the "included" array (LinkedIn normalized response format)
+        const included = data.included || [];
+        for (const item of included) {
+          const urn = item.entityUrn || item["$urn"] || "";
+          if (!urn.includes("miniProfile") && !urn.includes("fsd_profile")) continue;
+          const name = [item.firstName, item.lastName].filter(Boolean).join(" ").trim();
+          if (!name) continue;
+          const publicId = item.publicIdentifier || "";
+          if (!publicId) continue;
+          // Skip the target person
+          if (publicId === linkedinId) continue;
+          if (!mutuals.find(m => m.linkedin_id === publicId)) {
+            mutuals.push({
+              name,
+              linkedin_id: publicId,
+              linkedin_url: `https://www.linkedin.com/in/${publicId}`,
+              headline: item.occupation || item.headline || "",
+            });
+          }
+        }
 
-      // Also check elements array for search results
-      const elements = data.data?.searchDashClustersByAll?.elements || data.elements || [];
-      for (const cluster of elements) {
-        const items = cluster.items || [];
-        for (const item of items) {
-          const entity = item.item?.entityResult || item.entityResult || {};
-          const title = entity.title?.text || "";
-          const subtitle = entity.primarySubtitle?.text || "";
-          const navUrl = entity.navigationUrl || "";
-          if (title && navUrl.includes("/in/")) {
-            const pubId = navUrl.split("/in/")[1]?.split("?")[0]?.replace(/\/$/, "") || "";
-            if (pubId && !mutuals.find(m => m.linkedin_id === pubId)) {
-              mutuals.push({
-                name: title,
-                linkedin_id: pubId,
-                linkedin_url: `https://www.linkedin.com/in/${pubId}`,
-                headline: subtitle,
-              });
+        // Also extract from elements/clusters (search response format)
+        const elements = data.data?.searchDashClustersByAll?.elements || data.elements || [];
+        for (const cluster of elements) {
+          const items = cluster.items || [];
+          for (const item of items) {
+            const entity = item.item?.entityResult || item.entityResult || {};
+            const title = entity.title?.text || "";
+            const navUrl = entity.navigationUrl || "";
+            const subtitle = entity.primarySubtitle?.text || "";
+            if (title && navUrl.includes("/in/")) {
+              const pubId = navUrl.split("/in/")[1]?.split("?")[0]?.replace(/\/$/, "") || "";
+              if (pubId && pubId !== linkedinId && !mutuals.find(m => m.linkedin_id === pubId)) {
+                mutuals.push({
+                  name: title,
+                  linkedin_id: pubId,
+                  linkedin_url: `https://www.linkedin.com/in/${pubId}`,
+                  headline: subtitle,
+                });
+              }
             }
           }
         }
-      }
 
-      // Also add from miniProfile entities if not already present
-      for (const [, profile] of profiles) {
-        if (profile.linkedin_id && !mutuals.find(m => m.linkedin_id === profile.linkedin_id)) {
-          mutuals.push(profile);
+        if (mutuals.length > 0) {
+          console.log(`[SR] Voyager found ${mutuals.length} mutual connections`);
+          return mutuals;
         }
+        console.log("[SR] Voyager returned OK but 0 mutuals from this URL, trying next…");
+      } catch (e) {
+        console.warn("[SR] Voyager mutual search failed:", e.message);
       }
-
-      // Filter out the target person themselves
-      const filtered = mutuals.filter(m => m.linkedin_id !== linkedinId);
-      console.log(`[SR] Voyager found ${filtered.length} mutual connections`);
-      return filtered.length > 0 ? filtered : null;
-    } catch (e) {
-      console.warn("[SR] Voyager mutual search failed:", e.message);
-      return null;
     }
+
+    console.log("[SR] All Voyager URLs exhausted — no mutuals found via API");
+    return null;
   }
 
   SR.scrapeMutualConnections = function () {
@@ -348,27 +412,28 @@
 
     SR._mutualScrapeInProgress = true;
 
-    // Approach 1: Try Voyager API (most reliable)
     (async () => {
+      // Approach 1: Try Voyager API (most reliable)
       try {
-        const profileUrn = extractProfileUrn();
-        if (profileUrn) {
-          const voyagerMutuals = await fetchMutualsViaVoyager(profileUrn, linkedinId);
-          if (voyagerMutuals && voyagerMutuals.length > 0) {
-            console.log(`[SR] Voyager returned ${voyagerMutuals.length} mutuals — sending to backend`);
-            sendMutualData(targetPerson, voyagerMutuals, voyagerMutuals.length);
-            SR._mutualScrapeInProgress = false;
-            return;
-          }
+        console.log("[SR] Trying Voyager API for mutual connections…");
+        const voyagerMutuals = await fetchMutualsViaVoyager(linkedinId);
+        if (voyagerMutuals && voyagerMutuals.length > 0) {
+          console.log(`[SR] Voyager returned ${voyagerMutuals.length} mutuals — sending to backend`);
+          SR.showToast(`Found ${voyagerMutuals.length} mutual connections — syncing to StealthRole`);
+          sendMutualData(targetPerson, voyagerMutuals, voyagerMutuals.length);
+          SR._mutualScrapeInProgress = false;
+          return;
         }
       } catch (e) {
         console.warn("[SR] Voyager mutual approach failed:", e.message);
       }
 
       // Approach 2: Scrape visible mutuals from DOM
+      console.log("[SR] Voyager didn't return results, trying DOM scraping…");
       const visibleMutuals = scrapeVisibleMutuals();
       if (visibleMutuals.length > 0) {
         console.log("[SR] Found", visibleMutuals.length, "visible mutuals via DOM");
+        SR.showToast(`Found ${visibleMutuals.length} mutual connections via page — syncing`);
         sendMutualData(targetPerson, visibleMutuals, visibleMutuals.length);
         SR._mutualScrapeInProgress = false;
         return;
@@ -378,10 +443,12 @@
       const mutualLink = findMutualConnectionsLink();
       if (!mutualLink) {
         console.log("[SR] No mutual connections found via any method");
+        SR.showToast("No mutual connections found for " + (targetName || "this profile"));
         SR._mutualScrapeInProgress = false;
         return;
       }
 
+      SR.showToast("Opening mutual connections page…");
       chrome.storage.local.set({ sr_mutual_target: targetPerson }, () => {
         try {
           mutualLink.click();
