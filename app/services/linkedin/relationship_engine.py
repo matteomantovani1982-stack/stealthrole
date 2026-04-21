@@ -83,13 +83,18 @@ COMPANY_ALIASES = {
     "mashreq": "mashreq bank",
     "mashreq bank psc": "mashreq bank",
     "mashreqbank": "mashreq bank",
+    "mashreq neo": "mashreq bank",
+    "mashreq global": "mashreq bank",
+    "mashreq capital": "mashreq bank",
+    "mashreq al islami": "mashreq bank",
+    "mashreq securities": "mashreq bank",
 }
 
 # Suffixes to strip
 COMPANY_SUFFIXES = [
     "inc", "inc.", "ltd", "ltd.", "llc", "llp", "plc", "corp", "corp.",
     "corporation", "company", "co", "co.", "group", "holdings", "international",
-    "pvt", "private", "limited", "gmbh", "sa", "s.a.", "ag",
+    "pvt", "private", "limited", "gmbh", "sa", "s.a.", "ag", "psc", "pjsc", "fzc", "fze", "fzco",
 ]
 
 
@@ -605,6 +610,18 @@ class RelationshipEngine:
                 if _is_former_company(c.current_company):
                     return False
                 if companies_match(c.current_company, company):
+                    # Double-check headline for "Ex-" / "Former" — LinkedIn sometimes
+                    # stores company name without the prefix in current_company field
+                    # while the headline clearly says "Ex-Company"
+                    headline = c.headline or ""
+                    if headline:
+                        hl_lower = headline.lower()
+                        for seg in re.split(r'[|·•,]', hl_lower):
+                            seg_stripped = seg.strip()
+                            seg_norm = normalize_company(seg_stripped)
+                            if norm_target in seg_norm or seg_norm in norm_target:
+                                if _is_former_company(seg_stripped):
+                                    return False
                     return True
 
             # 2. Headline — try multiple extraction patterns
