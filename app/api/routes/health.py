@@ -25,6 +25,7 @@ async def health_check() -> dict:
         "app": settings.app_name,
         "version": settings.app_version,
         "env": settings.app_env,
+        "deploy_marker": "2026-04-21-v2-seniority-fix",
         "timestamp": datetime.now(UTC).isoformat(),
     }
 
