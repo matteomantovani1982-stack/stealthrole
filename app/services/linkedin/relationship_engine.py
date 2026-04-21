@@ -859,8 +859,8 @@ class RelationshipEngine:
         # Cap at 50 to match LinkedIn's visible mutual count
         if real_paths:
             real_paths = real_paths[:50]
-            # Attach a personalized intro message to ALL displayed paths (up to 10)
-            for p in real_paths[:10]:
+            # Attach a personalized intro message to ALL displayed paths
+            for p in real_paths:
                 target_name = p["target"]["name"] or f"your contact at {company}"
                 target_title = p["target"].get("title") or "employee"
                 connector_first = p["connector"]["name"].split()[0] if p["connector"]["name"] else "there"

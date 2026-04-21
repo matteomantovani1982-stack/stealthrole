@@ -340,6 +340,20 @@ class LinkedInService:
         if not target.get("linkedin_id") or not mutuals:
             return {"stored": 0, "target": target.get("full_name", "")}
 
+        # Backfill target_company if extension didn't extract it
+        target_company = target.get("current_company", "")
+        if not target_company and target.get("linkedin_id"):
+            # Try to find the target in the user's connections table
+            target_conn = (await self.db.execute(
+                select(LinkedInConnection).where(
+                    LinkedInConnection.user_id == user_id,
+                    LinkedInConnection.linkedin_id == target["linkedin_id"],
+                )
+            )).scalars().first()
+            if target_conn and target_conn.current_company:
+                target_company = target_conn.current_company
+                target["current_company"] = target_company
+
         # Build lookup of user's 1st-degree connections
         all_conns = (await self.db.execute(
             select(LinkedInConnection).where(LinkedInConnection.user_id == user_id)

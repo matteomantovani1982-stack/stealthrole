@@ -181,35 +181,56 @@
       if (label.includes("2nd degree")) return 2;
       if (label.includes("3rd degree")) return 3;
     }
+    // Fallback: parse from <main> text — LinkedIn 2025+ embeds "· 1st" / "· 2nd" in text
+    const mainEl = document.querySelector("main");
+    if (mainEl) {
+      const mainText = (mainEl.textContent || "").substring(0, 300);
+      if (/·\s*1st\b/i.test(mainText)) return 1;
+      if (/·\s*2nd\b/i.test(mainText)) return 2;
+      if (/·\s*3rd\b/i.test(mainText)) return 3;
+    }
     return null;
   }
 
   function getCompanyFromPage() {
-    // 1. Experience section: company links — but filter out activity feed noise
-    // Activity feed links contain timestamps like "2w •", "3d •", newlines with time markers
-    for (const link of document.querySelectorAll("a[href*='/company/']")) {
-      const text = (link.innerText || link.textContent || "").trim();
-      // Skip activity feed items (contain time markers), follow buttons, etc.
-      if (text.length < 2 || text.length > 60) continue;
-      if (/follow/i.test(text) || /linkedin/i.test(text) || /see all/i.test(text)) continue;
-      if (/\d+[dwmhys]\s*[·•]/.test(text)) continue; // "2w •", "3d •" = activity feed
-      if (text.includes("\n")) continue; // Multi-line = likely activity feed
-      // Check if this link is inside an experience/about section, not feed
-      const section = link.closest("section, [class*='experience'], [class*='pvs-list']");
-      if (section) {
-        return text;
-      }
-    }
-    // 2. Parse from headline: "Title at Company"
+    // 1. Parse from headline first — most reliable on modern LinkedIn
     const headline = getProfileHeadline();
     if (headline) {
+      // 1a. "Title at Company" pattern
       const atMatch = headline.match(/\bat\s+(.+?)(?:\s*[|·•,]|$)/i);
       if (atMatch) {
         const company = atMatch[1].trim();
         if (company.length > 1 && company.length < 60) return company;
       }
+      // 1b. Pipe-separated: "Title | Company | Location" or "Title | Company"
+      const segments = headline.split(/[|·•]/).map(s => s.trim()).filter(s => s.length > 1);
+      if (segments.length >= 2) {
+        // Skip segments that look like titles (contain common title words)
+        const titleWords = /\b(manager|director|vp|ceo|coo|cfo|head|lead|senior|specialist|analyst|engineer|consultant|partner|founder|president)\b/i;
+        for (let i = 1; i < segments.length; i++) {
+          const seg = segments[i];
+          // A company segment usually doesn't contain title words or location-only patterns
+          if (seg.length > 1 && seg.length < 60 && !titleWords.test(seg) && !/^\d/.test(seg)) {
+            return seg;
+          }
+        }
+        // If all segments look like titles, try second segment as company anyway
+        if (segments[1].length > 1 && segments[1].length < 60) {
+          return segments[1];
+        }
+      }
     }
-    // 3. Parse from og:title or document.title: "Name - Title at Company | LinkedIn"
+    // 2. Experience section: company links — filter activity feed noise
+    for (const link of document.querySelectorAll("a[href*='/company/']")) {
+      const text = (link.innerText || link.textContent || "").trim();
+      if (text.length < 2 || text.length > 60) continue;
+      if (/follow/i.test(text) || /linkedin/i.test(text) || /see all/i.test(text)) continue;
+      if (/\d+[dwmhys]\s*[·•]/.test(text)) continue;
+      if (text.includes("\n")) continue;
+      const section = link.closest("section, [class*='experience'], [class*='pvs-list']");
+      if (section) return text;
+    }
+    // 3. Parse from og:title or document.title
     const ogTitle = document.querySelector('meta[property="og:title"]');
     if (ogTitle) {
       const content = ogTitle.getAttribute("content") || "";
@@ -219,7 +240,7 @@
         if (company.length > 1 && company.length < 60) return company;
       }
     }
-    // 4. Try company links without section check (less strict)
+    // 4. Company links without section check (less strict)
     for (const link of document.querySelectorAll("a[href*='/company/']")) {
       const text = (link.innerText || link.textContent || "").trim();
       if (text.length < 2 || text.length > 60) continue;
