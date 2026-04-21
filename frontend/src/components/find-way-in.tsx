@@ -248,7 +248,7 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
                 Intro paths via your network · {introPaths.length}
               </div>
               <div className="space-y-3">
-                {introPaths.slice(0, 10).map((p: any, i: number) => {
+                {introPaths.map((p: any, i: number) => {
                   const targetDisplayName = p.target?.name || `someone at ${company}`;
                   const targetTitle = p.target?.title || "";
                   return (

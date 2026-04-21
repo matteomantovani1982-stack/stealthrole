@@ -560,9 +560,9 @@ class RelationshipEngine:
             is_partner = bool(re.search(r'\bpartner\b', t)) and 'partnership' not in t
             if is_partner or any(k in t for k in ["ceo", "coo", "cfo", "cto", "cio", "cpo", "chro", "chief", "founder", "co-founder", "president", "managing director", "managing partner", "general manager"]):
                 return (4, "C_SUITE")
-            if any(k in t for k in ["vp", "vice president", " director", "head of", "svp", "evp", "group director", "regional director"]):
+            if any(k in t for k in ["vp", "vice president", "head of", "svp", "evp", "group director", "regional director"]) or re.search(r'\bdirector\b', t):
                 return (3, "VP_DIRECTOR")
-            if any(k in t for k in [" manager", "lead", "principal", "senior manager", "team lead", "supervisor", "department head"]):
+            if re.search(r'\bmanager\b', t) or any(k in t for k in ["lead", "principal", "senior manager", "team lead", "supervisor", "department head"]):
                 return (2, "MANAGER")
             return (1, "IC")
 
@@ -938,11 +938,11 @@ class RelationshipEngine:
             "discover_targets": discover_targets,
             "network_brokers": network_brokers,  # always [] — kept for response shape
             "total_connections": len(all_conns),
-            "direct_contacts": direct[:10],  # 1st-degree, recruiter-free, sorted by seniority
+            "direct_contacts": direct[:50],  # 1st-degree, recruiter-free, sorted by seniority
             "total_direct": len(direct),
-            "recruiter_contacts": recruiter_contacts[:10],  # separate bucket
+            "recruiter_contacts": recruiter_contacts[:25],  # separate bucket
             "total_recruiters": len(recruiter_contacts),
-            "visited_targets": visited_targets[:5],
+            "visited_targets": visited_targets[:20],
             "total_visited": len(visited_targets),
             "recommended_action": recommended,
         }
@@ -1197,7 +1197,7 @@ RULES:
             return []
 
         all_conns = await self._get_all_connections(user_id)
-        matches = [c for c in all_conns if c.current_company and companies_match(c.current_company, app.company)]
+        matches = [c for c in all_conns if c.current_company and companies_match(c.current_company, app.company) and not _is_former_company(c.current_company)]
 
         created = []
         for conn in matches:

@@ -601,7 +601,7 @@
 
     // Use cached profile data from scrapeProfile (DOM may have changed since then)
     const cached = SR._lastScrapedProfile || {};
-    const isSameProfile = cached.linkedinId === linkedinId;
+    const isSameProfile = linkedinId && cached.linkedinId && cached.linkedinId === linkedinId;
     const targetName = isSameProfile && cached.fullName ? cached.fullName : getProfileName();
     const targetHeadline = isSameProfile && cached.headline ? cached.headline : getProfileHeadline();
     const targetCompany = isSameProfile && cached.currentCompany ? cached.currentCompany : getCompanyFromPage();
