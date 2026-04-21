@@ -79,6 +79,10 @@ COMPANY_ALIASES = {
     # Strategy&
     "strategy&": "strategy and",
     "strategy &": "strategy and",
+    # UAE banks
+    "mashreq": "mashreq bank",
+    "mashreq bank psc": "mashreq bank",
+    "mashreqbank": "mashreq bank",
 }
 
 # Suffixes to strip
@@ -635,9 +639,19 @@ class RelationshipEngine:
                 # 2c. Direct mention of company name anywhere in headline
                 #     (last resort — only if the normalized company name is long enough to avoid false matches)
                 if len(norm_target) >= 5 and norm_target in normalize_company(headline):
-                    # But reject if preceded by "ex-" or "former"
-                    ex_check = re.search(r'(?:ex[\s\-]|former[\s\-])' + re.escape(norm_target), normalize_company(headline))
-                    if not ex_check:
+                    # Check ORIGINAL headline (not normalized!) for "ex-" / "former" before company name
+                    # normalize_company strips "Ex-" prefix, so the ex-check must use the raw text
+                    hl_lower = headline.lower()
+                    # Also check each segment that contains the company for former status
+                    is_former = False
+                    for seg in re.split(r'[|·•]', hl_lower):
+                        seg_stripped = seg.strip()
+                        seg_norm = normalize_company(seg_stripped)
+                        if norm_target in seg_norm or seg_norm in norm_target:
+                            if _is_former_company(seg_stripped):
+                                is_former = True
+                                break
+                    if not is_former:
                         return True
 
             # 3. current_title — sometimes contains "Title at Company"
