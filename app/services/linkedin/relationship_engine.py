@@ -948,6 +948,33 @@ class RelationshipEngine:
         # Empty array kept for response shape backward-compat.
         network_brokers: list = []
 
+        # ── DEBUG: find connections that mention the company but didn't match ──
+        matched_ids = {d.get("connection_id") for d in direct}
+        matched_ids |= {d.get("connection_id") for d in recruiter_contacts}
+        matched_ids |= {d.get("connection_id") for d in visited_targets}
+        company_words = [w for w in normalize_company(company).split() if len(w) >= 3]
+        near_misses = []
+        for c in all_conns:
+            cid = str(c.id)
+            if cid in matched_ids:
+                continue
+            haystack = " ".join([
+                c.current_company or "",
+                c.headline or "",
+                c.current_title or "",
+                c.full_name or "",
+            ]).lower()
+            if any(w in haystack for w in company_words):
+                near_misses.append({
+                    "name": c.full_name,
+                    "current_company": c.current_company,
+                    "headline": (c.headline or "")[:120],
+                    "current_title": c.current_title,
+                    "relationship_strength": c.relationship_strength,
+                    "linkedin_id": c.linkedin_id,
+                    "_why_excluded": "did not pass _conn_matches_company()",
+                })
+
         return {
             "company": company,
             "role": role,
@@ -964,6 +991,9 @@ class RelationshipEngine:
             "visited_targets": visited_targets[:20],
             "total_visited": len(visited_targets),
             "recommended_action": recommended,
+            "_debug_near_misses": near_misses[:20],
+            "_debug_total_connections": len(all_conns),
+            "_debug_company_words": company_words,
         }
 
     async def _find_people_to_discover(self, company: str, role: str | None) -> list[dict]:

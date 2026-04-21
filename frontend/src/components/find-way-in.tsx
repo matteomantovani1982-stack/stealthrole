@@ -146,6 +146,20 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
       )}
       {open && !loading && result && (
         <div className="mt-3 space-y-2 animate-in fade-in slide-in-from-top-2 duration-300">
+          {/* ═══ DEBUG: near misses — connections that mention company but didn't match ═══ */}
+          {(result as any)?._debug_near_misses?.length > 0 && (
+            <div className="rounded-lg p-3 border border-orange-500/30 bg-orange-500/5">
+              <div className="text-[10px] font-bold text-orange-400 uppercase mb-1">
+                DEBUG: Near misses ({(result as any)._debug_near_misses.length}) — connections mentioning &quot;{company}&quot; but NOT matched
+              </div>
+              <div className="text-[9px] text-orange-300/70 mb-2">Total connections in DB: {(result as any)._debug_total_connections}</div>
+              {(result as any)._debug_near_misses.map((m: any, i: number) => (
+                <div key={i} className="text-[10px] text-orange-300/90 font-mono py-0.5 border-t border-orange-500/10">
+                  <strong>{m.name}</strong> | company=&quot;{m.current_company}&quot; | headline=&quot;{m.headline}&quot; | strength={m.relationship_strength}
+                </div>
+              ))}
+            </div>
+          )}
           {/* ═══ Scan progress banner (extension) ═══ */}
           {scanProgress && (
             <div className="rounded-lg p-3 border border-violet-500/30" style={{ background: "rgba(139,92,246,0.12)" }}>
