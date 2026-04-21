@@ -256,7 +256,7 @@
   SR.scrapeProfile = function () {
     return new Promise((resolve) => {
       const url = window.location.href.split("?")[0];
-      const linkedinId = url.split("/in/")[1]?.replace(/\/$/, "") || "";
+      const linkedinId = (url.match(/\/in\/([^/?#]+)/) || [])[1]?.replace(/\/$/, "") || "";
       const fullName = getProfileName();
       const headline = getProfileHeadline();
       const degree = getConnectionDegree();
@@ -271,7 +271,7 @@
       SR._lastScrapedProfile = { linkedinId, fullName, headline, currentTitle, currentCompany, url };
       // Expose degree so linkedin-core.js can auto-trigger mutual scraping for 2nd/3rd
       SR._lastScrapedDegree = degree;
-      if (!fullName) { resolve(); return; }
+      if (!fullName || !linkedinId) { console.warn("[SR] scrapeProfile: missing name or ID, skipping API call"); resolve(); return; }
 
       const strength = degree === 1 ? "strong" : degree === 2 ? "weak" : degree === 3 ? "discovered" : "visited";
       const payload = {
@@ -596,7 +596,7 @@
       return;
     }
     const url = window.location.href.split("?")[0];
-    const linkedinId = url.split("/in/")[1]?.replace(/\/$/, "") || "";
+    const linkedinId = (url.match(/\/in\/([^/?#]+)/) || [])[1]?.replace(/\/$/, "") || "";
     if (!linkedinId) return;
 
     // Use cached profile data from scrapeProfile (DOM may have changed since then)

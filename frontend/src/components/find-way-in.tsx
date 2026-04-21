@@ -37,8 +37,16 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
         headers: { "Content-Type": "application/json", ...headers },
         body: JSON.stringify({ company, role }),
       });
-      if (res.ok) setResult(await res.json());
-    } catch {}
+      if (res.ok) {
+        const data = await res.json();
+        console.log("[SR] find-way-in response:", JSON.stringify(data.direct_contacts?.slice(0, 3), null, 2));
+        setResult(data);
+      } else {
+        console.error("[SR] find-way-in failed:", res.status, await res.text().catch(() => ""));
+      }
+    } catch (err) {
+      console.error("[SR] find-way-in error:", err);
+    }
     setLoading(false);
   }
 
@@ -203,6 +211,7 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
                             <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/10 text-[#8B92B0] font-medium">1st</span>
                           </div>
                           <div className="text-[11px] text-[#6B7194]">{c.title}{c.company ? ` · ${c.company}` : ""}</div>
+                          {c._debug_title_used && <div className="text-[9px] text-orange-400/80 font-mono">tier={c.seniority_tier} from=&quot;{c._debug_title_used}&quot;</div>}
                         </div>
                         {c.message ? (
                           <button
