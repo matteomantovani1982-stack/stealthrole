@@ -25,7 +25,7 @@ async def health_check() -> dict:
         "app": settings.app_name,
         "version": settings.app_version,
         "env": settings.app_env,
-        "deploy_marker": "2026-04-21-v2-seniority-fix",
+        "deploy_marker": "2026-04-22-v4-discover-people",
         "timestamp": datetime.now(UTC).isoformat(),
     }
 
@@ -106,3 +106,55 @@ async def deep_check() -> dict:
         "checks": checks,
         "timestamp": datetime.now(UTC).isoformat(),
     }
+
+
+@router.delete("/reset-user-data", summary="Wipe all data for a user (dev/testing)")
+async def reset_user_data(
+    email: str,
+    confirm: str = "",
+):
+    """Delete all application data for a user. Requires confirm=YES."""
+    if confirm != "YES":
+        return {"error": "Pass ?confirm=YES to actually delete"}
+
+    from app.db.session import AsyncSessionLocal
+    from app.models.user import User
+
+    async with AsyncSessionLocal() as session:
+        # Find user
+        from sqlalchemy import select, delete
+        result = await session.execute(select(User).where(User.email == email))
+        user = result.scalar_one_or_none()
+        if not user:
+            return {"error": f"User {email} not found"}
+
+        uid = str(user.id)
+
+        # Delete all user data (order matters for foreign keys)
+        tables_to_clear = [
+            "warm_intros", "mutual_connections", "application_timeline",
+            "application_events", "interview_rounds", "compensation_benchmarks",
+            "scout_results", "hidden_signals", "saved_jobs",
+            "linkedin_conversations", "linkedin_messages",
+            "linkedin_connections", "applications",
+        ]
+
+        deleted = {}
+        for table in tables_to_clear:
+            try:
+                r = await session.execute(
+                    text(f"DELETE FROM {table} WHERE user_id = :uid"),
+                    {"uid": uid},
+                )
+                deleted[table] = r.rowcount
+            except Exception as e:
+                deleted[table] = f"error: {str(e)}"
+
+        await session.commit()
+
+        return {
+            "status": "wiped",
+            "user_id": uid,
+            "email": email,
+            "deleted": deleted,
+        }

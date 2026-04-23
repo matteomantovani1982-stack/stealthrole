@@ -134,19 +134,17 @@ def companies_match(a: str, b: str) -> bool:
     # Exact match after normalization
     if na == nb:
         return True
-    # One contains the other (for "Amazon" matching "Amazon Web Services")
-    if na in nb or nb in na:
+    # Containment: one contains the other (e.g. "Amazon" in "Amazon Web Services")
+    # MUST require the shorter string to be at least 5 chars to avoid
+    # false positives like "bank" matching "Mashreq Bank"
+    shorter, longer = (na, nb) if len(na) <= len(nb) else (nb, na)
+    if len(shorter) >= 5 and shorter in longer:
         return True
     # First word match (handles "Careem" matching "Careem Networks")
     if na.split() and nb.split():
-        # Lowered min length from 4 to 3 so "noon" (4), "kfc" (3) match
         first_a = na.split()[0]
         first_b = nb.split()[0]
-        if first_a == first_b and len(first_a) >= 3:
-            return True
-    # Substring match on full normalized strings (for "noon" vs "noon middle east")
-    if len(na) >= 3 and len(nb) >= 3:
-        if na in nb or nb in na:
+        if first_a == first_b and len(first_a) >= 4:
             return True
     return False
 
@@ -182,11 +180,21 @@ def detect_seniority(title: str) -> int:
     if not title:
         return 0
     tl = title.lower()
-    if any(k in tl for k in ["ceo", "coo", "cfo", "cto", "cmo", "founder", "president", "managing director"]):
+    # "Managing Director" MUST come before both VP and general director checks
+    if "managing director" in tl:
+        return 100
+    # VP check MUST come before "president" — "Vice President" contains "president"
+    if any(k in tl for k in ["vice president", "svp", "evp"]) or re.search(r'\bvp\b', tl):
+        return 80
+    # C-suite: use word boundaries for short abbreviations to avoid
+    # "cto" matching "director", "coo" matching "scooter", etc.
+    if any(re.search(r'\b' + k + r'\b', tl) for k in ["ceo", "coo", "cfo", "cto", "cmo"]):
+        return 100
+    if any(k in tl for k in ["founder", "president", "chief"]):
         return 100
     # "partner" needs word boundary to avoid matching "partnerships"
     is_partner = bool(re.search(r'\bpartner\b', tl)) and 'partnership' not in tl
-    if is_partner or any(k in tl for k in ["vp", "vice president", "svp", "evp"]):
+    if is_partner:
         return 80
     if any(k in tl for k in ["director", "head of"]):
         return 70
@@ -387,19 +395,97 @@ def _suggest_intro_angle(conn: LinkedInConnection, target_role: str | None) -> s
 class RelationshipEngine:
     def __init__(self, db: AsyncSession):
         self.db = db
+        self._company_intel_cache: dict[str, str] = {}
 
-    def _ai_intro_message(
+    # ── Company intel gathering ──────────────────────────────────────────
+
+    def _gather_company_intel(self, company: str) -> str:
+        """
+        Gather quick signals about a company via Serper: recent news,
+        funding, growth, strategic moves. Returns a short summary string
+        for use as icebreaker context in messages. Cached per company
+        within this request and in Redis for 24h.
+        """
+        if company in self._company_intel_cache:
+            return self._company_intel_cache[company]
+
+        # Check Redis cache first
+        import hashlib
+        cache_key = f"company_intel:{hashlib.sha256(company.lower().encode()).hexdigest()[:12]}"
+        try:
+            import redis
+            from app.config import settings as _s
+            r = redis.Redis.from_url(_s.redis_url, decode_responses=True)
+            cached = r.get(cache_key)
+            if cached:
+                self._company_intel_cache[company] = cached
+                return cached
+        except Exception:
+            r = None
+
+        # Gather via Serper
+        intel_lines = []
+        try:
+            from app.config import settings
+            if not settings.serper_api_key:
+                return ""
+            import httpx
+            client = httpx.Client(timeout=6)
+            queries = [
+                f"{company} recent news 2026",
+                f"{company} expansion growth hiring 2026",
+            ]
+            seen_snippets = set()
+            for q in queries:
+                try:
+                    resp = client.post(
+                        "https://google.serper.dev/search",
+                        headers={"X-API-KEY": settings.serper_api_key, "Content-Type": "application/json"},
+                        json={"q": q, "num": 3},
+                    )
+                    if resp.status_code == 200:
+                        for r_item in resp.json().get("organic", []):
+                            snippet = r_item.get("snippet", "").strip()
+                            if snippet and snippet not in seen_snippets:
+                                seen_snippets.add(snippet)
+                                intel_lines.append(snippet)
+                except Exception:
+                    continue
+            client.close()
+        except Exception:
+            pass
+
+        intel = " | ".join(intel_lines[:4]) if intel_lines else ""
+        self._company_intel_cache[company] = intel
+
+        # Cache in Redis for 24h
+        if r and intel:
+            try:
+                r.setex(cache_key, 86400, intel)
+            except Exception:
+                pass
+
+        return intel
+
+    # ── Personalized message generation ──────────────────────────────────
+
+    def _craft_message(
         self,
-        mutual_name: str,
-        target_name: str,
-        target_title: str,
+        recipient_name: str,
+        recipient_title: str,
+        recipient_headline: str,
         company: str,
-        role: str,
+        role: str | None,
+        company_intel: str,
+        message_type: str = "direct",  # "direct" | "intro_request"
+        # For intro_request only:
+        connector_name: str = "",
     ) -> str:
         """
-        Generate a personalized LinkedIn message asking a mutual connection
-        for an intro to a target person. Uses Claude Haiku (cheap). Cached
-        in Redis for 7 days per (mutual, target, company, role) tuple.
+        Generate a hyper-personalized LinkedIn message using Claude.
+        message_type:
+          - "direct": You're messaging someone AT the target company
+          - "intro_request": You're asking your connection to intro you to someone
         """
         import hashlib
         cache_key = None
@@ -408,74 +494,128 @@ class RelationshipEngine:
             from app.config import settings as _s
             r = redis.Redis.from_url(_s.redis_url, decode_responses=True)
             key_hash = hashlib.sha256(
-                f"{mutual_name}|{target_name}|{target_title}|{company}|{role}".encode()
+                f"{message_type}|{recipient_name}|{recipient_title}|{company}|{role}|{connector_name}".encode()
             ).hexdigest()[:16]
-            cache_key = f"intro_msg:{key_hash}"
+            cache_key = f"msg:{key_hash}"
             cached = r.get(cache_key)
             if cached:
                 return cached
         except Exception:
             r = None
 
-        # Call Haiku (cheap, ~150 tokens)
         try:
             from app.services.llm.client import ClaudeClient
             from app.services.llm.router import LLMTask
 
-            mutual_first = mutual_name.split()[0] if mutual_name else "there"
-            target_first = target_name.split()[0] if target_name else "them"
+            first_name = recipient_name.split()[0] if recipient_name else "there"
 
-            system_prompt = (
-                "You are drafting a short, warm, professional LinkedIn message. "
-                "The user is asking their mutual connection for an introduction to someone "
-                "at a target company. Keep it under 80 words. Warm but professional. "
-                "Be SPECIFIC: mention the target person's name and title, the company, "
-                "and the specific role. Show you did your research. "
-                "End with 'No pressure at all!' "
-                "Do NOT use generic openers like 'Hope you're doing well' or 'I hope this message finds you well'. "
-                "Do NOT include subject lines or placeholder brackets. "
-                "Return ONLY the message body."
-            )
-
-            user_prompt = (
-                f"Mutual connection (the person I'm writing TO): {mutual_name}\n"
-                f"Target person (who I want to be introduced to): {target_name}, {target_title}, at {company}\n"
-                f"Role I am pursuing: {role}\n\n"
-                f"Write a personalized message from me to {mutual_first}, asking them to introduce me to "
-                f"{target_first} at {company}. Mention why {target_first}'s role ({target_title}) "
-                f"is relevant to my pursuit of the {role} position."
-            )
+            if message_type == "intro_request":
+                # Asking YOUR connection to introduce you to someone at the company
+                system_prompt = (
+                    "You write LinkedIn DMs that get replies. Your style:\n"
+                    "- Open with something SPECIFIC about the person you're writing to — "
+                    "their role, something from their headline, a shared context. Never 'Hope you're well.'\n"
+                    "- State what you want in ONE clear sentence.\n"
+                    "- Make it easy to say yes — offer to send a blurb they can forward.\n"
+                    "- Under 60 words. No fluff. No buzzwords.\n"
+                    "- End with 'No pressure at all!' \n"
+                    "- Return ONLY the message body. No subject line, no brackets, no placeholders."
+                )
+                user_prompt = (
+                    f"Write a message to {recipient_name} ({recipient_title}).\n"
+                    f"Their headline: {recipient_headline}\n"
+                    f"I want them to introduce me to {connector_name} at {company}.\n"
+                    f"Role I'm pursuing: {role or 'senior role'}\n"
+                    f"Company intel for icebreaker: {company_intel or 'none available'}\n\n"
+                    f"The message should feel like it was written ONLY for {first_name}. "
+                    f"Reference something specific about their background from the headline."
+                )
+            else:
+                # Direct message to someone AT the target company
+                system_prompt = (
+                    "You write LinkedIn DMs that get replies. Your style:\n"
+                    "- Open with an icebreaker that references something SPECIFIC — the person's "
+                    "role, their company's recent move, or something from their headline. "
+                    "Never 'Hope you're well' or 'I came across your profile.'\n"
+                    "- Connect your ask to THEIR specific situation — why talking to YOU "
+                    "is relevant to what THEY do.\n"
+                    "- One clear ask: 15 min call, quick question, or specific insight you want.\n"
+                    "- Under 60 words. Confident, peer-to-peer tone. Not needy.\n"
+                    "- Return ONLY the message body. No subject line, no brackets, no placeholders."
+                )
+                user_prompt = (
+                    f"Write a message to {recipient_name}.\n"
+                    f"Their title: {recipient_title}\n"
+                    f"Their headline: {recipient_headline}\n"
+                    f"Company: {company}\n"
+                    f"Role I'm pursuing: {role or 'senior role'}\n"
+                    f"Company intel for icebreaker: {company_intel or 'none available'}\n\n"
+                    f"The message should feel like it was written ONLY for {first_name}. "
+                    f"Reference their specific role at {company} and tie it to why I'd be "
+                    f"a relevant person for them to talk to."
+                )
 
             client = ClaudeClient(task=LLMTask.CLASSIFICATION, max_tokens=200)
             raw, _ = client.call_text(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                temperature=0.6,
+                temperature=0.7,
             )
             message = raw.strip()
-            # Strip any leading/trailing quote marks
             if message.startswith('"') and message.endswith('"'):
                 message = message[1:-1]
 
             # Cache for 7 days
-            if r and cache_key:
+            if r and cache_key and message:
                 try:
                     r.setex(cache_key, 7 * 86400, message)
                 except Exception:
                     pass
 
             return message
-        except Exception:
-            # Fallback template
-            mutual_first = mutual_name.split()[0] if mutual_name else "there"
-            target_first = target_name.split()[0] if target_name else "them"
+        except Exception as e:
+            logger.warning("craft_message_failed", error=str(e), type=message_type)
+            # Fallback — still better than fully generic
+            first = recipient_name.split()[0] if recipient_name else "there"
+            if message_type == "intro_request":
+                return (
+                    f"Hi {first}, I noticed you're connected with {connector_name} at {company}. "
+                    f"I'm exploring a {role or 'senior role'} there and {connector_name.split()[0] if connector_name else 'they'} "
+                    f"would be a great person to get perspective from. "
+                    f"Would you be open to a quick intro? Happy to send a blurb you can forward. "
+                    f"No pressure at all!"
+                )
             return (
-                f"Hi {mutual_first}, I saw you're connected with {target_name} "
-                f"({target_title}) at {company}. I'm exploring a {role} opportunity there and think "
-                f"{target_first} would be a great person to speak with. Would you be comfortable "
-                f"making a quick intro? Happy to send you a short bio to forward. "
-                f"No pressure at all."
+                f"Hi {first}, your work as {recipient_title} at {company} caught my attention. "
+                f"I'm exploring a {role or 'senior role'} opportunity there and your perspective "
+                f"on the team would be invaluable. Quick 15-min call this week? "
+                f"Happy to share context on what I bring to the table."
             )
+
+    def _ai_intro_message(
+        self,
+        mutual_name: str,
+        target_name: str,
+        target_title: str,
+        company: str,
+        role: str,
+        company_intel: str = "",
+        mutual_headline: str = "",
+    ) -> str:
+        """
+        Generate a personalized LinkedIn message asking a mutual connection
+        for an intro to a target person. Delegates to _craft_message.
+        """
+        return self._craft_message(
+            recipient_name=mutual_name,
+            recipient_title="",
+            recipient_headline=mutual_headline,
+            company=company,
+            role=role,
+            company_intel=company_intel,
+            message_type="intro_request",
+            connector_name=f"{target_name} ({target_title})",
+        )
 
     async def _get_all_connections(self, user_id: str) -> list[LinkedInConnection]:
         """Load all connections for a user."""
@@ -552,6 +692,9 @@ class RelationshipEngine:
         """
         all_conns = await self._get_all_connections(user_id)
 
+        # Gather company intel for message personalization (cached, fast)
+        company_intel = self._gather_company_intel(company)
+
         # Step 1: Direct contacts at target company
         # SENIORITY TIERS — ranked top to bottom:
         #   C_SUITE (4) → VP_DIRECTOR (3) → MANAGER (2) → IC (1) → RECRUITER (0)
@@ -561,12 +704,18 @@ class RelationshipEngine:
             t = (title or "").lower()
             if any(k in t for k in ["recruiter", "talent acquisition", "talent partner", "headhunter", "head hunter", "human resources", "people operations", "people partner", "staffing", "executive search", "search consultant", "resourcing", "recruitment"]):
                 return (0, "RECRUITER")
+            # "Managing Director/Partner" MUST come before general director check
+            if any(k in t for k in ["managing director", "managing partner", "general manager"]):
+                return (4, "C_SUITE")
+            # VP/SVP/EVP check MUST come before C_SUITE — "Vice President" contains
+            # "president" which would otherwise match C_SUITE
+            if any(k in t for k in ["vice president", "vp ", "svp", "evp"]) or t.startswith("vp") or any(k in t for k in ["head of", "group director", "regional director"]) or re.search(r'\bdirector\b', t):
+                return (3, "VP_DIRECTOR")
             # "partner" needs word-boundary check to avoid matching "partnerships"
             is_partner = bool(re.search(r'\bpartner\b', t)) and 'partnership' not in t
-            if is_partner or any(k in t for k in ["ceo", "coo", "cfo", "cto", "cio", "cpo", "chro", "chief", "founder", "co-founder", "president", "managing director", "managing partner", "general manager"]):
+            # C-suite: use word boundaries for short abbreviations
+            if is_partner or any(re.search(r'\b' + k + r'\b', t) for k in ["ceo", "coo", "cfo", "cto", "cio", "cpo", "chro"]) or any(k in t for k in ["chief", "founder", "co-founder", "president"]):
                 return (4, "C_SUITE")
-            if any(k in t for k in ["vp", "vice president", "head of", "svp", "evp", "group director", "regional director"]) or re.search(r'\bdirector\b', t):
-                return (3, "VP_DIRECTOR")
             if re.search(r'\bmanager\b', t) or any(k in t for k in ["lead", "principal", "senior manager", "team lead", "supervisor", "department head"]):
                 return (2, "MANAGER")
             return (1, "IC")
@@ -690,6 +839,16 @@ class RelationshipEngine:
                 is_visited = c.relationship_strength == "visited"
                 tier_rank, tier_name = _seniority_tier(c.current_title or c.headline or "")
                 first_name = (c.full_name or "there").split()[0]
+                # Generate personalized message using LLM + company intel
+                msg = self._craft_message(
+                    recipient_name=c.full_name,
+                    recipient_title=c.current_title or "",
+                    recipient_headline=c.headline or "",
+                    company=company,
+                    role=role,
+                    company_intel=company_intel,
+                    message_type="direct",
+                )
                 entry = {
                     "name": c.full_name,
                     "title": c.current_title or "",
@@ -703,15 +862,20 @@ class RelationshipEngine:
                     "_debug_title_used": c.current_title or c.headline or "(empty)",
                     "relevance_score": rank_connection(c, role),
                     "intro_angle": _suggest_intro_angle(c, role),
-                    "message": _seniority_message(first_name, company, role, tier_name, c.current_title or c.headline or ""),
+                    "message": msg,
                     "connection_id": str(c.id),
                     "is_visited_profile": is_visited,
                 }
                 if is_visited:
                     entry["intro_angle"] = _suggest_cold_outreach_angle(c, company, role)
-                    entry["message"] = _generate_cold_outreach(
-                        c.full_name, company, role,
-                        title=c.current_title, is_recruiter=(tier_name == "RECRUITER"),
+                    entry["message"] = self._craft_message(
+                        recipient_name=c.full_name,
+                        recipient_title=c.current_title or "",
+                        recipient_headline=c.headline or "",
+                        company=company,
+                        role=role,
+                        company_intel=company_intel,
+                        message_type="direct",
                     )
                     visited_targets.append(entry)
                 elif tier_name == "RECRUITER":
@@ -889,36 +1053,43 @@ class RelationshipEngine:
         backup_paths = []
 
         # ONLY use verified paths — no AI guessing
+        # Filter out paths with no target person info — these produce garbage LLM messages
+        real_paths = [p for p in real_paths if p["target"].get("name") and p["target"]["name"].strip()]
         # Cap at 50 to match LinkedIn's visible mutual count
         if real_paths:
             real_paths = real_paths[:50]
             # Attach a personalized intro message to ALL displayed paths
             for p in real_paths:
-                target_name = p["target"]["name"] or f"your contact at {company}"
+                target_name = p["target"]["name"]
                 target_title = p["target"].get("title") or "employee"
-                connector_first = p["connector"]["name"].split()[0] if p["connector"]["name"] else "there"
+                connector_name = p["connector"]["name"]
+                # Look up connector's headline for personalization
+                connector_headline = ""
+                connector_obj = conn_by_name.get(connector_name.lower().strip())
+                if connector_obj:
+                    connector_headline = connector_obj.headline or ""
                 try:
                     msg = self._ai_intro_message(
-                        mutual_name=p["connector"]["name"],
+                        mutual_name=connector_name,
                         target_name=target_name,
                         target_title=target_title,
                         company=company,
                         role=role or "senior role",
+                        company_intel=company_intel,
+                        mutual_headline=connector_headline,
                     )
-                    # Ensure non-empty message (LLM sometimes returns empty)
                     if msg and msg.strip():
                         p["intro_message"] = msg
                     else:
                         raise ValueError("empty message")
                 except Exception:
-                    # Fallback to template if LLM fails or returns empty
-                    target_first = target_name.split()[0] if target_name else "them"
+                    connector_first = connector_name.split()[0] if connector_name else "there"
                     p["intro_message"] = (
-                        f"Hi {connector_first}, I'd love to connect with {target_name} "
-                        f"({target_title}) at {company}. I know you're connected with the team "
-                        f"there, and I'd be grateful if you could introduce me to the right person. "
-                        f"Your insight into their culture and mission would be invaluable as I explore "
-                        f"this next step. No pressure at all!"
+                        f"Hi {connector_first}, I noticed you're connected with {target_name} "
+                        f"({target_title}) at {company}. I'm exploring a {role or 'senior role'} "
+                        f"there and {target_name.split()[0]}'s perspective would be really valuable. "
+                        f"Would you be open to a quick intro? Happy to send a blurb you can forward. "
+                        f"No pressure at all!"
                     )
             best_path = real_paths[0]
             backup_paths = real_paths[1:]
@@ -937,10 +1108,9 @@ class RelationshipEngine:
         else:
             recommended = f"No verified paths yet. Use the StealthRole extension: search LinkedIn for people at {company}, visit their profiles, and the extension will map your connections automatically."
 
-        # Find real people at the company to suggest visiting their profiles
-        discover_targets = []
-        if not real_paths and not direct and not visited_targets:
-            discover_targets = await self._find_people_to_discover(company, role)
+        # ALWAYS find key people at the target company — the core value prop.
+        # Cross-reference with user's connections to show degree + path.
+        discover_targets = await self._find_key_people(company, role, all_conns, company_intel)
 
         # No more "network brokers" fallback. Surfacing random recruiters and
         # senior people from unrelated companies confused users — they expected
@@ -952,7 +1122,11 @@ class RelationshipEngine:
         matched_ids = {d.get("connection_id") for d in direct}
         matched_ids |= {d.get("connection_id") for d in recruiter_contacts}
         matched_ids |= {d.get("connection_id") for d in visited_targets}
-        company_words = [w for w in normalize_company(company).split() if len(w) >= 3]
+        # Filter out generic industry words that cause massive false positives in near-miss search
+        _generic_words = {"bank", "group", "capital", "global", "international", "consulting",
+                          "services", "solutions", "technology", "digital", "management", "partners",
+                          "financial", "investment", "advisory", "holdings", "ventures", "systems"}
+        company_words = [w for w in normalize_company(company).split() if len(w) >= 4 and w not in _generic_words]
         near_misses = []
         for c in all_conns:
             cid = str(c.id)
@@ -996,22 +1170,36 @@ class RelationshipEngine:
             "_debug_company_words": company_words,
         }
 
-    async def _find_people_to_discover(self, company: str, role: str | None) -> list[dict]:
-        """Use Serper to find real people at the target company on LinkedIn."""
+    async def _find_key_people(
+        self, company: str, role: str | None,
+        all_conns: list[LinkedInConnection],
+        company_intel: str,
+    ) -> list[dict]:
+        """
+        ALWAYS search for the key people at the target company that the user
+        should talk to. Cross-reference each with the user's network to show:
+          - degree: "1st" (direct connection), "2nd" (reachable via intro), "3rd" (cold)
+          - For 1st: crafted direct message
+          - For 2nd: which connection can intro + crafted intro request
+          - For 3rd: just name them as target
+        """
         from app.config import settings
         import httpx
 
         if not settings.serper_api_key:
             return []
 
+        # Build search queries targeting the RIGHT people for this role
         role_str = role or "VP Director Head"
         queries = [
             f"site:linkedin.com/in {company} {role_str}",
-            f"site:linkedin.com/in {company} recruiter talent acquisition",
+            f"site:linkedin.com/in {company} recruiter talent acquisition hiring",
+            f"site:linkedin.com/in {company} VP Director Head strategy",
+            f"site:linkedin.com/in {company} HR people operations",
         ]
 
-        results = []
-        seen = set()
+        raw_people = []
+        seen_urls = set()
 
         async with httpx.AsyncClient(timeout=8) as client:
             for q in queries:
@@ -1023,29 +1211,167 @@ class RelationshipEngine:
                     )
                     if resp.status_code != 200:
                         continue
-                    for r in resp.json().get("organic", []):
-                        url = r.get("link", "")
-                        if "/in/" not in url or url in seen:
+                    for r_item in resp.json().get("organic", []):
+                        url = r_item.get("link", "")
+                        if "/in/" not in url or url in seen_urls:
                             continue
-                        seen.add(url)
-                        title = r.get("title", "")
-                        # LinkedIn titles are like "Name - Title - Company | LinkedIn"
-                        parts = [p.strip() for p in title.split(" - ") if p.strip()]
+                        seen_urls.add(url)
+                        title_raw = r_item.get("title", "")
+                        # LinkedIn titles: "Name - Title - Company | LinkedIn"
+                        parts = [p.strip() for p in title_raw.split(" - ") if p.strip()]
                         name = parts[0] if parts else ""
                         person_title = parts[1] if len(parts) > 1 else ""
-                        # Skip if it's a company page or generic
+                        # Clean up: remove "| LinkedIn" from title
+                        if person_title:
+                            person_title = re.sub(r'\s*\|?\s*LinkedIn\s*$', '', person_title).strip()
                         if not name or len(name) < 3 or "linkedin" in name.lower():
                             continue
-                        results.append({
+                        raw_people.append({
                             "name": name,
                             "title": person_title,
                             "linkedin_url": url.split("?")[0],
-                            "snippet": r.get("snippet", "")[:200],
+                            "snippet": r_item.get("snippet", "")[:200],
                         })
                 except Exception:
                     continue
 
-        return results[:6]
+        if not raw_people:
+            return []
+
+        # ── Cross-reference with user's network ──
+        # Build lookup indexes from connections
+        conn_by_name: dict[str, LinkedInConnection] = {}
+        conn_by_url: dict[str, LinkedInConnection] = {}
+        for c in all_conns:
+            name_key = c.full_name.lower().strip()
+            conn_by_name[name_key] = c
+            if c.linkedin_url:
+                # Normalize URL for matching
+                url_clean = c.linkedin_url.rstrip("/").lower()
+                conn_by_url[url_clean] = c
+
+        # Check mutual connections for 2nd-degree paths
+        from app.models.mutual_connection import MutualConnection
+        mutual_results = await self.db.execute(
+            select(MutualConnection).where(
+                MutualConnection.user_id == all_conns[0].user_id if all_conns else "",
+            )
+        )
+        all_mutuals = list(mutual_results.scalars().all())
+        # Index mutuals by target URL/name for quick lookup
+        mutual_by_target_url: dict[str, list] = defaultdict(list)
+        mutual_by_target_name: dict[str, list] = defaultdict(list)
+        for mc in all_mutuals:
+            if mc.target_linkedin_url:
+                url_clean = mc.target_linkedin_url.rstrip("/").lower()
+                mutual_by_target_url[url_clean].append(mc)
+            if mc.target_name:
+                mutual_by_target_name[mc.target_name.lower().strip()].append(mc)
+
+        # Deduplicate against direct_contacts already shown
+        direct_names = set()
+        direct_urls = set()
+        # We'll check against the direct contacts built earlier — pass them via all_conns matching
+        for c in all_conns:
+            if c.current_company and companies_match(c.current_company, company):
+                direct_names.add(c.full_name.lower().strip())
+                if c.linkedin_url:
+                    direct_urls.add(c.linkedin_url.rstrip("/").lower())
+
+        results = []
+        for person in raw_people:
+            p_name = person["name"]
+            p_title = person["title"]
+            p_url = person["linkedin_url"].rstrip("/").lower()
+            p_name_lower = p_name.lower().strip()
+
+            # Skip if already shown as direct contact
+            if p_name_lower in direct_names or p_url in direct_urls:
+                continue
+
+            # Determine degree of connection
+            degree = "3rd"
+            connection_path = None
+            message = ""
+
+            # Check 1st degree: is this person in user's connections?
+            conn = conn_by_url.get(p_url) or conn_by_name.get(p_name_lower)
+            if conn:
+                degree = "1st"
+                message = self._craft_message(
+                    recipient_name=p_name,
+                    recipient_title=p_title,
+                    recipient_headline=person.get("snippet", ""),
+                    company=company,
+                    role=role,
+                    company_intel=company_intel,
+                    message_type="direct",
+                )
+            else:
+                # Check 2nd degree: do we have a mutual connection path?
+                mutuals = mutual_by_target_url.get(p_url, []) or mutual_by_target_name.get(p_name_lower, [])
+                if mutuals:
+                    mc = mutuals[0]
+                    # Find the connector in user's connections
+                    connector_name = mc.mutual_name or ""
+                    connector = conn_by_name.get(connector_name.lower().strip())
+                    if connector:
+                        degree = "2nd"
+                        connection_path = {
+                            "connector_name": connector.full_name,
+                            "connector_title": connector.current_title or "",
+                            "connector_url": connector.linkedin_url or "",
+                        }
+                        message = self._craft_message(
+                            recipient_name=connector.full_name,
+                            recipient_title=connector.current_title or "",
+                            recipient_headline=connector.headline or "",
+                            company=company,
+                            role=role,
+                            company_intel=company_intel,
+                            message_type="intro_request",
+                            connector_name=f"{p_name} ({p_title})",
+                        )
+
+            # For 3rd degree — no message, just name them
+            if degree == "3rd":
+                message = ""
+
+            results.append({
+                "name": p_name,
+                "title": p_title,
+                "linkedin_url": person["linkedin_url"],
+                "snippet": person.get("snippet", ""),
+                "degree": degree,
+                "connection_path": connection_path,
+                "message": message,
+                "why_relevant": self._explain_relevance(p_title, role, company),
+            })
+
+        # Sort: 1st degree first, then 2nd, then 3rd. Within each, prioritize seniority.
+        degree_order = {"1st": 0, "2nd": 1, "3rd": 2}
+        results.sort(key=lambda x: (degree_order.get(x["degree"], 3), -detect_seniority(x["title"])))
+
+        return results[:15]
+
+    def _explain_relevance(self, person_title: str, target_role: str | None, company: str) -> str:
+        """Short explanation of why this person is worth talking to."""
+        title_lower = (person_title or "").lower()
+        role_lower = (target_role or "").lower()
+
+        if any(k in title_lower for k in ["recruiter", "talent", "hiring", "people operations", "hr "]):
+            return f"Handles hiring at {company} — direct path to open roles"
+        if detect_seniority(person_title) >= 80:
+            return f"Senior leader at {company} — can influence hiring decisions"
+        if detect_seniority(person_title) >= 60:
+            return f"Director-level at {company} — likely involved in hiring for this area"
+        if target_role and detect_domain(role_lower) == detect_domain(title_lower) and detect_domain(title_lower) != "general":
+            return f"Same function as your target role — strong referral potential"
+        return f"Works at {company} — insider perspective on team and culture"
+
+    async def _find_people_to_discover(self, company: str, role: str | None) -> list[dict]:
+        """Legacy wrapper — delegates to _find_key_people."""
+        return []
 
     async def _claude_find_paths(
         self, company: str, role: str | None,

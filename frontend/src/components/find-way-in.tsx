@@ -437,34 +437,67 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
             </div>
           )}
 
-          {/* Discover targets — people to visit on LinkedIn */}
-          {discover_targets.length > 0 && !best_path && (
+          {/* Key people to contact — ALWAYS shown, with degree + paths */}
+          {discover_targets.length > 0 && (
             <div className="rounded-lg p-3 border border-violet-500/20" style={{ background: "rgba(139,92,246,0.06)" }}>
-              <div className="text-[10px] font-medium text-violet-400 uppercase mb-1">Visit These Profiles to Map Your Paths</div>
-              <div className="text-[11px] text-[#6B7194] mb-2">
-                Open each profile with the StealthRole extension active. It will scan mutual connections automatically. Then come back and hit <strong className="text-violet-400">Refresh paths</strong> above.
-              </div>
-              <div className="space-y-1.5">
-                {discover_targets.map((person: any, i: number) => (
-                  <a key={i} href={person.linkedin_url} target="_blank" rel="noopener" className="flex items-center gap-2.5 p-2.5 rounded-lg bg-white/[0.04] hover:bg-violet-500/10 border border-transparent hover:border-violet-500/20 transition-all">
-                    <div className="w-8 h-8 rounded-full bg-violet-500/15 text-violet-400 flex items-center justify-center text-[11px] font-bold shrink-0">
-                      {person.name?.[0]?.toUpperCase() || "?"}
+              <div className="text-[10px] font-medium text-violet-400 uppercase mb-2">People you should contact at {company} · {discover_targets.length} found</div>
+              <div className="space-y-2">
+                {discover_targets.map((person: any, i: number) => {
+                  const degreeColor = person.degree === "1st" ? "text-emerald-400" : person.degree === "2nd" ? "text-amber-400" : "text-gray-400";
+                  const degreeBg = person.degree === "1st" ? "bg-emerald-500/15" : person.degree === "2nd" ? "bg-amber-500/15" : "bg-gray-500/15";
+                  return (
+                    <div key={i} className="p-2.5 rounded-lg bg-white/[0.04] border border-white/5">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-full bg-violet-500/15 text-violet-400 flex items-center justify-center text-[11px] font-bold shrink-0">
+                          {person.name?.[0]?.toUpperCase() || "?"}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <a href={person.linkedin_url} target="_blank" rel="noopener" className="text-[12px] font-semibold text-[#7F8CFF] underline decoration-[#7F8CFF]/40 hover:text-white">{person.name}</a>
+                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${degreeBg} ${degreeColor}`}>{person.degree}</span>
+                          </div>
+                          {person.title && <div className="text-[11px] text-[#6B7194]">{person.title}</div>}
+                          {person.why_relevant && <div className="text-[10px] text-violet-300/70 mt-0.5">{person.why_relevant}</div>}
+                        </div>
+                      </div>
+                      {/* 2nd degree: show the connection path */}
+                      {person.degree === "2nd" && person.connection_path && (
+                        <div className="mt-1.5 text-[10px] text-amber-300/80 pl-10">
+                          via <strong>{person.connection_path.connector_name}</strong> ({person.connection_path.connector_title})
+                        </div>
+                      )}
+                      {/* Message for 1st and 2nd degree */}
+                      {person.message && (
+                        <div className="mt-2 pl-10">
+                          <div className="text-[11px] text-[#c4c9e0] bg-white/[0.03] rounded p-2 border border-white/5 leading-relaxed">{person.message}</div>
+                          <div className="flex gap-2 mt-1.5">
+                            <a
+                              href={person.degree === "2nd" && person.connection_path?.connector_url ? person.connection_path.connector_url : person.linkedin_url}
+                              target="_blank" rel="noopener"
+                              className="text-[10px] font-semibold text-[#4d8ef5] hover:text-white transition-colors"
+                            >
+                              {person.degree === "2nd" ? `Send to ${person.connection_path?.connector_name?.split(" ")[0] || "connector"} on LinkedIn` : "Send on LinkedIn"}
+                            </a>
+                            <button
+                              onClick={() => { navigator.clipboard.writeText(person.message); setCopiedIdx(1000 + i); setTimeout(() => setCopiedIdx(null), 1500); }}
+                              className="text-[10px] text-[#6B7194] hover:text-white transition-colors"
+                            >
+                              {copiedIdx === 1000 + i ? "Copied!" : "Copy"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      {/* 3rd degree: just show profile link */}
+                      {person.degree === "3rd" && (
+                        <div className="mt-1.5 pl-10">
+                          <a href={person.linkedin_url} target="_blank" rel="noopener" className="text-[10px] text-violet-400 hover:text-white">
+                            View profile on LinkedIn →
+                          </a>
+                        </div>
+                      )}
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[12px] font-semibold text-[#7F8CFF] underline decoration-[#7F8CFF]/40">{person.name}</div>
-                      {person.title && <div className="text-[11px] text-[#6B7194]">{person.title}</div>}
-                    </div>
-                    <span className="text-[10px] text-violet-400 font-medium shrink-0">Visit profile →</span>
-                  </a>
-                ))}
-              </div>
-              <div className="mt-2.5 text-center">
-                <button
-                  onClick={() => findPath(true)}
-                  className="text-[11px] font-semibold text-violet-400 hover:text-white px-4 py-1.5 rounded-lg border border-violet-500/20 hover:bg-violet-500/10 transition-all"
-                >
-                  I visited profiles — refresh paths
-                </button>
+                  );
+                })}
               </div>
             </div>
           )}
