@@ -8,8 +8,10 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BACKEND="$SCRIPT_DIR/careeros"
-FRONTEND="$SCRIPT_DIR/cvlab-frontend"
+# This script lives at the repo root since the consolidation; BACKEND is the
+# script dir itself, and the active frontend is the Next.js app under frontend/.
+BACKEND="$SCRIPT_DIR"
+FRONTEND="$SCRIPT_DIR/frontend"
 COMPOSE_FILE="$BACKEND/docker/docker-compose.yml"
 
 echo ""
