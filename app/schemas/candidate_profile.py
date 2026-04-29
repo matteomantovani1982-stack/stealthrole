@@ -228,7 +228,8 @@ class JobPreferences(BaseModel):
 class CandidateProfileUpdate(BaseModel):
     """Partial update to profile-level fields."""
     headline: str | None = None
-    location: str | None = None
+    # location lives inside global_context — there is no DB column for it on
+    # CandidateProfile (see app/models/candidate_profile.py).
     global_context: str | None = None
     global_notes: str | None = None
     cv_id: uuid.UUID | None = None
@@ -242,7 +243,6 @@ class CandidateProfileResponse(BaseModel):
     version: int
     status: str
     headline: str | None
-    location: str | None = None
     global_context: str | None
     global_notes: str | None
     cv_id: uuid.UUID | None
@@ -262,7 +262,6 @@ class CandidateProfileResponse(BaseModel):
             version=profile.version,
             status=profile.status,
             headline=profile.headline,
-            location=getattr(profile, 'location', None),
             global_context=profile.global_context,
             global_notes=profile.global_notes,
             cv_id=profile.cv_id,

@@ -187,8 +187,6 @@ class ProfileService:
 
         if payload.headline is not None:
             profile.headline = payload.headline
-        if payload.location is not None:
-            profile.location = payload.location
         if payload.global_context is not None:
             profile.global_context = payload.global_context
         if payload.global_notes is not None:

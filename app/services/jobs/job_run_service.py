@@ -15,7 +15,7 @@ Responsibilities:
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.middleware.error_handler import NotFoundError, ValidationError
@@ -61,6 +61,16 @@ class JobRunService:
             cv_id=payload.cv_id,
             user_id=user_id,
         )
+
+        # Fail fast on incompatible source format. The "edit" build mode applies
+        # an EditPlan diff via python-docx (Document(BytesIO(...))), which only
+        # opens DOCX zip archives — a PDF source raises "File is not a zip file"
+        # deep in the render pipeline. See app/services/rendering/docx_renderer.py.
+        if cv.mime_type == "application/pdf" and (cv.build_mode or "edit") == "edit":
+            raise ValidationError(
+                "This CV was uploaded as a PDF. Tailoring in edit mode requires a "
+                "DOCX source — please re-upload your CV as a .docx file."
+            )
 
         # Merge plan feature flags into preferences so the LLM task can read them
         prefs = payload.preferences.model_dump()
@@ -130,16 +140,16 @@ class JobRunService:
         )
 
         # Dispatch pipeline: if CV already parsed, go straight to LLM
-        # If CV is still parsing, the parse_cv task will chain to run_llm
+        # If CV still parsing, create_run leaves status=CREATED until parse_cv
+        # dispatch_waiting_job_runs_after_cv_parse(), or get_status() resumes.
         if cv.status == CVStatus.PARSED:
             from app.workers.tasks.run_llm import run_llm_task
             task = run_llm_task.delay(str(job_run.id))
             job_run.status = JobRunStatus.RETRIEVING
             job_run.celery_task_id = task.id
         else:
-            # CV still parsing — run_llm will be triggered once parse completes
-            # In a future sprint, parse_cv.py will chain to run_llm automatically
-            # For now, the status stays CREATED until parse completes
+            # CV still parsing — run_llm is dispatched when parse completes
+            # (dispatch_waiting_job_runs_after_cv_parse) or on GET /jobs/{id} heal.
             logger.warning(
                 "job_run_created_cv_not_yet_parsed",
                 extra={"cv_status": cv.status, "job_run_id": str(job_run.id)},
@@ -162,6 +172,7 @@ class JobRunService:
             job_run_id=job_run_id,
             user_id=user_id,
         )
+        job_run = await self._maybe_resume_created_job_run(job_run, user_id)
 
         download_url: str | None = None
         if (
@@ -204,6 +215,10 @@ class JobRunService:
             reports=job_run.reports,
             failed_step=job_run.failed_step,
             error_message=job_run.error_message,
+            jd_url=job_run.jd_url,
+            company_name=job_run.company_name,
+            role_title=job_run.role_title,
+            keyword_match_score=job_run.keyword_match_score,
         )
 
     async def get_download_url(
@@ -271,6 +286,62 @@ class JobRunService:
         ]
 
     # ── Private helpers ─────────────────────────────────────────────────────
+
+    async def _maybe_resume_created_job_run(
+        self,
+        job_run: JobRun,
+        user_id: str,
+    ) -> JobRun:
+        """
+        Heal JobRuns stuck in CREATED after the CV finished parsing.
+
+        create_run does not dispatch Celery while CV.status != PARSED; until
+        parse_cv runs dispatch_waiting_job_runs_after_cv_parse(), those runs
+        stayed CREATED forever. This path fixes older rows on each status poll.
+        """
+        if job_run.status != JobRunStatus.CREATED:
+            return job_run
+
+        cv_row = await self._db.execute(
+            select(CV).where(
+                CV.id == job_run.cv_id,
+                CV.user_id == user_id,
+            )
+        )
+        cv = cv_row.scalar_one_or_none()
+        if cv is None or cv.status != CVStatus.PARSED:
+            return job_run
+
+        stmt = (
+            update(JobRun)
+            .where(
+                JobRun.id == job_run.id,
+                JobRun.user_id == user_id,
+                JobRun.status == JobRunStatus.CREATED,
+            )
+            .values(status=JobRunStatus.RETRIEVING)
+        )
+        res = await self._db.execute(stmt)
+        await self._db.commit()
+
+        if res.rowcount != 1:
+            return await self._get_run_or_404(job_run.id, user_id)
+
+        from app.workers.tasks.run_llm import run_llm_task
+
+        task = run_llm_task.delay(str(job_run.id))
+        await self._db.execute(
+            update(JobRun)
+            .where(JobRun.id == job_run.id)
+            .values(celery_task_id=task.id)
+        )
+        await self._db.commit()
+
+        logger.info(
+            "job_run_resumed_after_cv_parse",
+            extra={"job_run_id": str(job_run.id), "celery_task_id": task.id},
+        )
+        return await self._get_run_or_404(job_run.id, user_id)
 
     async def _get_cv_or_error(
         self,

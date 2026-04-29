@@ -20,6 +20,7 @@ import asyncio
 import io
 import json
 import logging
+import os
 import re
 import uuid
 from functools import partial
@@ -31,7 +32,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import delete, select
 
-from app.config import settings
+from app.config import settings, should_skip_anthropic_api
 from app.dependencies import CurrentUserId, DB
 from app.models.candidate_profile import CandidateProfile, ExperienceEntry, ProfileStatus
 from app.models.cv import CV
@@ -41,6 +42,11 @@ logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["Profile Import"])
 
 TIMEOUT = 15.0
+
+
+def _demo_mode_active() -> bool:
+    """True → skip Anthropic for profile extraction (see config.should_skip_anthropic_api)."""
+    return should_skip_anthropic_api()
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -105,6 +111,119 @@ class ApplyImportRequest(BaseModel):
     overwrite_existing: bool = False
 
 
+def _demo_imported_profile_from_text(
+    text: str,
+    raw_source: str,
+    *,
+    linkedin_url: str = "",
+) -> ImportedProfile:
+    """
+    When DEMO_MODE=true, skip Anthropic entirely (no API credits / billing).
+
+    Heuristically splits parser-style CV text into sections and skills so the UI
+    is populated from the real upload (not empty placeholders). For full AI
+    parsing, set DEMO_MODE=false with Anthropic credits.
+    """
+    t = (text or "").strip()
+    lines = [ln.strip() for ln in t.splitlines() if ln.strip()]
+    full_name = "Demo candidate"
+    headline = (
+        "Profile imported (demo mode — heuristic layout from your document)"
+    )
+    if lines:
+        first = lines[0]
+        if "@" not in first and len(first) < 120 and len(first) > 2:
+            full_name = first
+        if len(lines) > 1 and lines[1] != first:
+            headline = lines[1][:240]
+
+    skills: list[str] = []
+    tl = t.lower()
+    for label in ("skills:", "technical skills:", "core competencies:", "skills\n"):
+        idx = tl.find(label)
+        if idx != -1:
+            chunk = t[idx : idx + 800]
+            first_line = chunk.split("\n")[0]
+            rest = first_line.split(":", 1)[-1]
+            raw_sk = re.split(r"[,;|•]| {2,}", rest)
+            skills = [s.strip() for s in raw_sk if 1 < len(s.strip()) < 80][:50]
+            if skills:
+                break
+
+    experiences: list[ImportedExperience] = []
+    sections = list(
+        re.finditer(
+            r"\[SECTION:\s*([^\]]+)\]\s*",
+            t,
+            flags=re.IGNORECASE,
+        )
+    )
+    if sections:
+        for i, m in enumerate(sections):
+            heading = (m.group(1) or "").strip()
+            start = m.end()
+            end = sections[i + 1].start() if i + 1 < len(sections) else len(t)
+            body = t[start:end].strip()[:6000]
+            if len(body) < 25:
+                continue
+            experiences.append(
+                ImportedExperience(
+                    role_title=heading[:120] or "Section",
+                    company_name="From uploaded document",
+                    start_date="",
+                    end_date="Present",
+                    location="",
+                    context="Heuristic split (DEMO_MODE — no Claude).",
+                    contribution="",
+                    outcomes="",
+                    methods="",
+                    hidden="",
+                    freeform=body,
+                )
+            )
+
+    snippet = t[:12000] if len(t) > 12000 else t
+    if not experiences:
+        experiences = [
+            ImportedExperience(
+                role_title="Full document (demo mode)",
+                company_name="Local extraction",
+                start_date="",
+                end_date="Present",
+                location="",
+                context=(
+                    "DEMO_MODE=true: content below is taken from your file; "
+                    "set DEMO_MODE=false for AI-structured extraction."
+                ),
+                contribution="",
+                outcomes="",
+                methods="",
+                hidden="",
+                freeform=snippet,
+            )
+        ]
+
+    return ImportedProfile(
+        full_name=full_name,
+        headline=headline,
+        location="",
+        email="",
+        phone="",
+        nationality="",
+        linkedin_url=linkedin_url or "",
+        summary=(
+            "Imported in demo/heuristic mode from your pasted or uploaded source. "
+            "Sections mirror [SECTION: …] blocks from the CV parser where present."
+            + (f"\n\n---\n{t[:4000]}" if t else "")
+        ),
+        skills=skills,
+        languages=[],
+        education=[],
+        experiences=experiences,
+        raw_source=raw_source,
+    )
+
+
 # ── CV text extraction ────────────────────────────────────────────────────────
 
 def _cv_to_text(parsed_content: dict) -> str:
@@ -160,6 +279,16 @@ def _call_claude_for_profile(
     Returns:
         ImportedProfile on success, None on error (errors logged and HTTPException raised)
     """
+    if _demo_mode_active():
+        logger.warning(
+            "claude_profile_skipped_demo_mode",
+            hint="Extraction should use _demo_imported_profile_from_text before calling this",
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="DEMO_MODE is on: profile extraction must not call Anthropic. Restart the API after changing DEMO_MODE.",
+        )
+
     if not settings.anthropic_api_key or settings.anthropic_api_key == "PASTE_YOUR_ANTHROPIC_KEY_HERE":
         raise HTTPException(
             status_code=501,
@@ -216,6 +345,11 @@ def _call_claude_for_profile(
 
 def _extract_profile_with_claude(cv_text: str) -> ImportedProfile:
     """Send CV text to Claude, get back structured profile JSON."""
+    if _demo_mode_active():
+        p = _demo_imported_profile_from_text(cv_text, "cv")
+        logger.info("extract_cv_demo_mode", experiences=len(p.experiences))
+        return p
+
     prompt = f"""You are an expert CV parser and career analyst. Your job is to extract EVERYTHING from this CV — leave nothing out.
 
 CV TEXT (full document — extract EVERYTHING, do not skip any section):
@@ -359,6 +493,13 @@ def _scrape_linkedin_via_serper(linkedin_url: str) -> str:
 
 def _extract_profile_from_linkedin(linkedin_url: str, scraped_text: str) -> ImportedProfile:
     """Send scraped LinkedIn data to Claude for structuring."""
+    if _demo_mode_active():
+        p = _demo_imported_profile_from_text(
+            scraped_text, "linkedin", linkedin_url=linkedin_url
+        )
+        logger.info("extract_linkedin_demo_mode", experiences=len(p.experiences))
+        return p
+
     prompt = f"""You are an expert LinkedIn profile analyst and career researcher. Extract EVERYTHING from this LinkedIn profile data.
 
 LINKEDIN URL: {linkedin_url}
@@ -624,11 +765,10 @@ async def apply_import(
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
 
-    # Update profile-level fields
+    # Update profile-level fields. NOTE: location lives inside global_context
+    # below — there is no DB column for it on CandidateProfile.
     if imp.headline:
         profile.headline = imp.headline
-    if imp.location:
-        profile.location = imp.location
 
     # Mark profile as active once we have real data
     if imp.experiences or imp.headline:
@@ -646,10 +786,10 @@ async def apply_import(
         ctx["skills"] = imp.skills
     if imp.languages:
         ctx["languages"] = imp.languages
-    if imp.education:
-        ctx["education"] = imp.education
     if imp.full_name:
         ctx["full_name"] = imp.full_name
+    if imp.location:
+        ctx["location"] = imp.location
     if imp.linkedin_url:
         ctx["linkedin_url"] = imp.linkedin_url
     if imp.email:
@@ -700,7 +840,8 @@ async def apply_import(
         db.add(entry)
         experiences_added += 1
 
-    await db.commit()
+    # Request-scope session commits in app/db/session.py:get_db_session.
+    await db.flush()
 
     logger.info("apply_import_done", experiences_added=experiences_added)
     return {
