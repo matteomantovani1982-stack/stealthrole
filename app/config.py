@@ -152,6 +152,14 @@ class Settings(BaseSettings):
             )
         return v
 
+    @field_validator("s3_endpoint_url", mode="before")
+    @classmethod
+    def empty_s3_endpoint_is_none(cls, v: str | None) -> str | None:
+        """Treat empty string as None (= use AWS default endpoint)."""
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
 
 def should_skip_anthropic_api() -> bool:
     """

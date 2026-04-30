@@ -12,8 +12,6 @@
 # Update (rolling):
 #   docker compose -f docker/docker-compose.prod.yml --env-file .env.production up -d --no-deps api
 
-version: "3.9"
-
 x-app-env: &app-env
   APP_ENV: production
   DATABASE_URL: ${DATABASE_URL}
@@ -31,6 +29,7 @@ x-app-env: &app-env
   S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
   S3_BUCKET_NAME: ${S3_BUCKET_NAME:-cvlab-production}
   S3_REGION: ${S3_REGION:-us-east-1}
+  S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
   SMTP_HOST: ${SMTP_HOST}
   SMTP_USER: ${SMTP_USER}
   SMTP_PASSWORD: ${SMTP_PASSWORD}
