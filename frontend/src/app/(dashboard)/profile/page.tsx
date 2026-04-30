@@ -261,15 +261,17 @@ export default function ProfilePage() {
   async function handleSavePersonal() {
     setSectionSaving("personal");
     try {
+      // CandidateProfile has no `location` column — store it inside global_context
+      // alongside the other personal fields. Backend silently drops top-level
+      // `location` since the K1 cleanup; previous PATCHes persisted nothing.
       await saveGlobalContextFields({
         full_name: personalDraft.full_name,
         email: personalDraft.email,
         phone: personalDraft.phone,
         nationality: personalDraft.nationality,
         linkedin_url: personalDraft.linkedin_url,
+        location: personalDraft.location,
       });
-      // location is a profile-level field
-      await saveProfileFields({ location: personalDraft.location });
       setEditingPersonal(false);
       setMessage("Personal details saved!");
     } catch (err: unknown) { setMessage(err instanceof Error ? err.message : "Save failed"); }
