@@ -53,16 +53,47 @@
       });
     });
 
-    // Fallback: get names from profile links
+    // Fallback: get names from profile links — but ONLY if those links are
+    // inside the search-results container. Without that scope we sweep up
+    // "People you may know", "Recent searches", header widgets, footer
+    // suggestions, and button text like "Connect" / "Open" / "View profile".
+    // Those then get stored as MutualConnection rows and pollute Way In.
     if (results.length === 0) {
-      document.querySelectorAll("a[href*='/in/']").forEach((link) => {
+      const resultsContainer = document.querySelector(
+        ".search-results-container, " +
+        ".reusable-search__entity-result-list, " +
+        "[role='main'] .scaffold-finite-scroll, " +
+        "main"
+      );
+      const scope = resultsContainer || document;
+
+      // Heuristic: a real person name is 2+ words OR contains an uppercase letter
+      // and isn't an obvious UI string. This filters "Open" / "Connect" / "View".
+      const looksLikeName = (s) => {
+        if (!s) return false;
+        const t = s.trim();
+        if (t.length < 3 || t.length > 60) return false;
+        const lower = t.toLowerCase();
+        // UI strings to reject
+        const uiNoise = [
+          "linkedin", "view profile", "view all", "see all", "connect", "follow",
+          "message", "open", "more", "contact info", "send inmail", "premium",
+          "show more", "show less", "people you may know", "recent searches",
+        ];
+        if (uiNoise.some((bad) => lower === bad || lower.startsWith(bad + " "))) return false;
+        // Must contain at least one uppercase letter (real names are capitalized)
+        if (!/[A-Z\u00C0-\u024F\u0400-\u04FF\u0530-\u058F\u0590-\u05FF\u0600-\u06FF\u4E00-\u9FFF]/.test(t)) return false;
+        return true;
+      };
+
+      scope.querySelectorAll("a[href*='/in/']").forEach((link) => {
         const text = (link.innerText || link.textContent || "").trim().split("\n")[0].trim();
-        if (text && text.length >= 2 && text.length < 60 && !seen.has(text) && !text.toLowerCase().includes("linkedin")) {
-          seen.add(text);
-          const href = link.href?.split("?")[0] || "";
-          const lid = href.split("/in/")[1]?.replace(/\/$/, "") || "";
-          results.push({ name: text, linkedin_id: lid, linkedin_url: href });
-        }
+        if (!looksLikeName(text) || seen.has(text)) return;
+        seen.add(text);
+        const href = link.href?.split("?")[0] || "";
+        const lid = href.split("/in/")[1]?.replace(/\/$/, "") || "";
+        if (!lid) return; // require a real linkedin_id slug
+        results.push({ name: text, linkedin_id: lid, linkedin_url: href });
       });
     }
 

@@ -175,7 +175,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
       try {
         // Find an open LinkedIn tab
-        const tabs = await chrome.tabs.query({ url: "https://www.linkedin.com/*" });
+        const tabs = await chrome.tabs.query({
+          url: [
+            "https://www.linkedin.com/*",
+            "https://linkedin.com/*",
+            "https://*.linkedin.com/*",
+          ],
+        });
         if (tabs.length === 0) {
           // Open a new LinkedIn tab
           const tab = await chrome.tabs.create({ url: "https://www.linkedin.com/messaging/" });

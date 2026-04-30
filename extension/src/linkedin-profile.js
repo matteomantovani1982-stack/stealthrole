@@ -88,19 +88,30 @@
   }
 
   function getProfileHeadline() {
-    // Strategy 1: CSS selectors
+    // Strategy 1: CSS selectors. Use innerText (not textContent) so that
+    // separate DOM elements aren't fused into a single string. textContent
+    // turns "Director of Operations" + "NEOM" into "Director of OperationsNEOM"
+    // which then breaks downstream company extraction.
     const selectors = [
-      ".text-body-medium",
+      // Modern LinkedIn 2024-2025 — headline lives in the top-card lockup
+      ".pv-text-details__left-panel .text-body-medium.break-words",
       ".pv-text-details__left-panel .text-body-medium",
       ".artdeco-entity-lockup__subtitle",
+      ".text-body-medium.break-words",
+      ".text-body-medium",
       "[data-generated-suggestion-target] + div",
     ];
     for (const sel of selectors) {
       try {
         const el = document.querySelector(sel);
         if (el) {
-          const text = (el.innerText || el.textContent || "").trim().replace(/\s+/g, " ");
-          if (text.length > 1 && text.length < 300) return text;
+          // innerText preserves layout-induced whitespace between block-level
+          // descendants, which textContent does not.
+          const raw = (el.innerText || el.textContent || "").trim();
+          const text = raw.replace(/\s+/g, " ");
+          if (text.length > 1 && text.length < 300 && !/^\d+\s+(?:connections?|followers?)/i.test(text)) {
+            return text;
+          }
         }
       } catch {}
     }
@@ -121,19 +132,45 @@
       const headline = title.substring(titleDash + 3).replace(/\s*\|.*$/, "").trim();
       if (headline.length > 1 && !/linkedin/i.test(headline)) return headline;
     }
-    // Strategy 4: Parse from <main> textContent
-    // Pattern: "Name· 1st· 2ndHeadlineSchool/Location..."
-    // The headline sits between degree markers and the school/location line
+    // Strategy 4: Parse from <main>. Use innerText so that separate
+    // experience-row elements get a newline between them — that's what lets
+    // us isolate the headline from the company/school/location lines below.
     const mainEl = document.querySelector("main");
     if (mainEl) {
+      const mainTextRaw = (mainEl.innerText || mainEl.textContent || "").trim();
+      // The headline is on its own line, right after the degree marker line.
+      const lines = mainTextRaw
+        .split(/\n+/)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      // Find the first line that contains "1st"/"2nd"/"3rd" — the headline
+      // line is usually 1–3 lines after it (skipping pronouns / "She/Her" etc).
+      const degreeIdx = lines.findIndex((l) => /\b(?:1st|2nd|3rd)\b/i.test(l));
+      if (degreeIdx >= 0) {
+        for (let i = degreeIdx + 1; i < Math.min(degreeIdx + 6, lines.length); i++) {
+          const candidate = lines[i].replace(/\s+/g, " ").trim();
+          if (candidate.length < 4 || candidate.length > 300) continue;
+          // Skip lines that look like pronouns, location, follower count, contact info
+          if (/^\(?(?:she|he|they)\/(?:her|him|them)\)?$/i.test(candidate)) continue;
+          if (/^\d{1,3}(?:,\d{3})*\s+(?:followers?|connections?|mutual)/i.test(candidate)) continue;
+          if (/^contact info$/i.test(candidate)) continue;
+          if (/^(?:university|school|college|institute)/i.test(candidate)) continue;
+          if (/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*,\s+[A-Z]/.test(candidate) && !/[|·•]/.test(candidate)) {
+            // Looks like "City, Country, Region" line
+            continue;
+          }
+          console.log(`[SR] getProfileHeadline: extracted from <main> innerText: '${candidate}'`);
+          return candidate;
+        }
+      }
+      // Last-ditch fallback: the OLD broken text-scan, kept only because some
+      // exotic profiles render entirely without newlines. Mark it clearly.
       const mainText = (mainEl.textContent || "").trim();
-      // After name and degree markers, headline comes next
-      // "Richard McKeon· 1st· 2ndVP of Marketing | Scaling Global Event Platforms..."
       const degreeMatch = mainText.match(/(?:1st|2nd|3rd)\s*(?:·\s*(?:1st|2nd|3rd)\s*)*(.+?)(?:(?:University|School|College|Institute|\d{1,3}(?:,\d{3})*\s*followers|Contact info|·\s*Contact))/i);
       if (degreeMatch) {
         const headline = degreeMatch[1].trim();
         if (headline.length > 3 && headline.length < 300) {
-          console.log(`[SR] getProfileHeadline: extracted from <main> text: '${headline}'`);
+          console.log(`[SR] getProfileHeadline: FALLBACK textContent (may be fused): '${headline}'`);
           return headline;
         }
       }
@@ -145,6 +182,31 @@
       if (desc.length > 1) return desc;
     }
     return "";
+  }
+
+  /** True when LinkedIn lists shared connections (often still shows a misleading "3rd" badge). */
+  function pageShowsMutualConnectionsHint() {
+    try {
+      const main = document.querySelector("main");
+      if (!main) return false;
+      const t = (main.innerText || main.textContent || "").toLowerCase();
+      if (/\band\s+\d+\s+other\s+mutual\s+connections?\b/.test(t)) return true;
+      if (/\d+\s+other\s+mutual\s+connections?\b/.test(t)) return true;
+      if (/\bmutual\s+connections?\b/.test(t)) {
+        if (main.querySelector('a[href*="mutual"], a[href*="Mutual"], a[href*="sharedConnections"]'))
+          return true;
+      }
+    } catch {}
+    return false;
+  }
+
+  function withMutualConnectionsDegreeFix(degree) {
+    if (degree === 1) return 1;
+    if ((degree === 3 || degree === null) && pageShowsMutualConnectionsHint()) {
+      console.log("[SR] degree: mutual connections visible on page → 2nd");
+      return 2;
+    }
+    return degree;
   }
 
   function getConnectionDegree() {
@@ -163,113 +225,276 @@
     for (const sel of degreeSelectors) {
       for (const el of document.querySelectorAll(sel)) {
         const t = (el.textContent || "").trim();
-        if (/^[123](st|nd|rd)$/i.test(t)) return parseInt(t[0], 10);
+        if (/^[123](st|nd|rd)$/i.test(t)) return withMutualConnectionsDegreeFix(parseInt(t[0], 10));
         const m = t.match(/(\d)\s*(?:st|nd|rd)/i);
-        if (m) return parseInt(m[1], 10);
+        if (m) return withMutualConnectionsDegreeFix(parseInt(m[1], 10));
       }
     }
     // Broader scan: any small element containing just "1st", "2nd", "3rd"
     for (const el of document.querySelectorAll("span, div, li")) {
       const t = (el.textContent || "").trim();
       if (t.length > 10) continue; // skip large text blocks
-      if (/^[123]\s*(?:st|nd|rd)$/i.test(t)) return parseInt(t[0], 10);
+      if (/^[123]\s*(?:st|nd|rd)$/i.test(t)) return withMutualConnectionsDegreeFix(parseInt(t[0], 10));
     }
     // Last resort: search aria-labels and title attributes
     for (const el of document.querySelectorAll("[aria-label], [title]")) {
       const label = (el.getAttribute("aria-label") || el.getAttribute("title") || "").toLowerCase();
-      if (label.includes("1st degree")) return 1;
-      if (label.includes("2nd degree")) return 2;
-      if (label.includes("3rd degree")) return 3;
+      if (label.includes("1st degree")) return withMutualConnectionsDegreeFix(1);
+      if (label.includes("2nd degree")) return withMutualConnectionsDegreeFix(2);
+      if (label.includes("3rd degree")) return withMutualConnectionsDegreeFix(3);
     }
     // Fallback: parse from <main> text — LinkedIn 2025+ embeds "· 1st" / "· 2nd" in text
     const mainEl = document.querySelector("main");
     if (mainEl) {
       const mainText = (mainEl.textContent || "").substring(0, 300);
-      if (/·\s*1st\b/i.test(mainText)) return 1;
-      if (/·\s*2nd\b/i.test(mainText)) return 2;
-      if (/·\s*3rd\b/i.test(mainText)) return 3;
+      if (/·\s*1st\b/i.test(mainText)) return withMutualConnectionsDegreeFix(1);
+      if (/·\s*2nd\b/i.test(mainText)) return withMutualConnectionsDegreeFix(2);
+      if (/·\s*3rd\b/i.test(mainText)) return withMutualConnectionsDegreeFix(3);
     }
-    return null;
+    return withMutualConnectionsDegreeFix(null);
   }
 
   function getCompanyFromPage() {
-    // 1. Parse from headline first — most reliable on modern LinkedIn
+    const SCHOOL_RE = /\b(university|college|institute|school|academy|polytechnic|heriot[- ]watt|insead|wharton|kellogg|cambridge|oxford)\b/i;
+    const TITLE_WORDS_RE = /\b(manager|director|vp|ceo|coo|cfo|cto|head|lead|senior|specialist|analyst|engineer|consultant|partner|founder|president|architect|designer|advisor|principal|operations|strategy)\b/i;
+    const NOISE_RE = /^(?:follow|see all|see more|see less|connect|message|premium|sponsored)$|people you may|jobs you may|recommended for you/i;
+
+    function _isPlausibleCompany(text) {
+      if (!text || text.length < 2 || text.length > 60) return false;
+      if (NOISE_RE.test(text)) return false;
+      if (SCHOOL_RE.test(text)) return false;
+      if (/\d+[dwmhys]\s*[·•]/.test(text)) return false;
+      if (text.includes("\n")) return false;
+      return true;
+    }
+
+    // 0. PRIMARY: schema.org structured data (`worksFor.name`).
+    //    LinkedIn embeds an <script type="application/ld+json"> blob that has
+    //    the canonical "Person" graph for the profile, including jobTitle and
+    //    worksFor — this is the most reliable signal because it's machine-
+    //    readable and not affected by lazy-loading the experience section.
+    //    We try this BEFORE any DOM scraping because it works even when the
+    //    user hasn't scrolled past the top card.
+    for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
+      try {
+        const json = JSON.parse(script.textContent || "");
+        // The blob may be a single Person object, an array of objects, or
+        // an @graph wrapper.
+        const candidates = Array.isArray(json) ? json : json["@graph"] || [json];
+        for (const obj of candidates) {
+          if (!obj || obj["@type"] !== "Person") continue;
+          const wf = obj.worksFor;
+          // worksFor can be an Organization object or an array of them.
+          const orgs = Array.isArray(wf) ? wf : (wf ? [wf] : []);
+          for (const org of orgs) {
+            const name = (org?.name || "").trim();
+            if (_isPlausibleCompany(name)) {
+              console.log(`[SR] getCompanyFromPage: from ld+json worksFor: '${name}'`);
+              return name;
+            }
+          }
+        }
+      } catch {}
+    }
+
+    // 0b. <code> JSON blocks. LinkedIn embeds normalized voyager models in
+    //     <code> tags. The target's Position entries carry a "companyName"
+    //     field. Find one whose surrounding entity references the target's
+    //     publicIdentifier (URL slug) and return its companyName.
+    const targetSlug = ((window.location.pathname.match(/\/in\/([^/?#]+)/) || [])[1] || "").toLowerCase();
+    if (targetSlug) {
+      for (const code of document.querySelectorAll("code")) {
+        const text = code.textContent || "";
+        if (!text || text.length < 200) continue;
+        if (!text.includes(targetSlug)) continue;
+        // Look for a "companyName":"X" field inside this block. Prefer the
+        // FIRST occurrence — LinkedIn orders positions by recency, so the
+        // first companyName near the profile entity is the current employer.
+        const m = text.match(/"companyName"\s*:\s*"([^"]{2,60})"/);
+        if (m && _isPlausibleCompany(m[1])) {
+          console.log(`[SR] getCompanyFromPage: from <code> companyName: '${m[1]}'`);
+          return m[1];
+        }
+      }
+    }
+
+    // Find the actual Experience section by anchor (modern LinkedIn pattern:
+    // <div id="experience"> followed by the section). This is much tighter
+    // than ".closest('section')" which would also match sidebar / sponsored
+    // / "People also viewed" / "Cityscape Global" ad blocks.
+    function _findExperienceSection() {
+      const anchor = document.getElementById("experience");
+      if (anchor) {
+        // The experience content is the next <section> sibling (or its closest
+        // ancestor section that contains the anchor).
+        let el = anchor.nextElementSibling;
+        while (el && el.tagName && el.tagName.toLowerCase() !== "section") {
+          el = el.nextElementSibling;
+        }
+        if (el) return el;
+        return anchor.parentElement?.closest("section") || null;
+      }
+      // Fallback: find a section whose first heading text equals "Experience".
+      for (const section of document.querySelectorAll("section")) {
+        const heading = section.querySelector("h2, .pvs-header__title, [class*='header__title']");
+        const txt = (heading?.innerText || heading?.textContent || "").trim().toLowerCase();
+        if (txt === "experience" || txt.startsWith("experience")) return section;
+      }
+      return null;
+    }
+
+    // 1. PREFERRED: /company/<slug>/ link inside the actual Experience section
+    //    (anchored by the #experience div). The CURRENT job is always the
+    //    FIRST entry in the section, so we take the first plausible link.
+    const expSection = _findExperienceSection();
+    if (expSection) {
+      for (const link of expSection.querySelectorAll("a[href*='/company/']")) {
+        const text = (link.innerText || link.textContent || "").trim().split("\n")[0].trim();
+        if (_isPlausibleCompany(text)) return text;
+      }
+    }
+
+    // 2. Headline parse — when the experience section can't give us a clean
+    //    answer, fall back to the headline. Modern LinkedIn 2024-2025
+    //    headlines use "Title | Company | Location" or "Title at Company".
+    //    Some profiles use "<Title> of <Company>" (e.g. "Sport Director of
+    //    Neom SC") — we handle that via a brand-like-noun heuristic too.
     const headline = getProfileHeadline();
     if (headline) {
-      // 1a. "Title at Company" pattern
+      // 2a. "Title at Company" pattern
       const atMatch = headline.match(/\bat\s+(.+?)(?:\s*[|·•,]|$)/i);
       if (atMatch) {
         const company = atMatch[1].trim();
-        if (company.length > 1 && company.length < 60) return company;
+        if (_isPlausibleCompany(company)) return company;
       }
-      // 1b. Pipe-separated: "Title | Company | Location" or "Title | Company"
-      const segments = headline.split(/[|·•]/).map(s => s.trim()).filter(s => s.length > 1);
+      // 2b. Pipe-separated: "Title | Company | Location"
+      const segments = headline.split(/[|·•]/).map((s) => s.trim()).filter((s) => s.length > 1);
       if (segments.length >= 2) {
-        // Skip segments that look like titles (contain common title words)
-        const titleWords = /\b(manager|director|vp|ceo|coo|cfo|head|lead|senior|specialist|analyst|engineer|consultant|partner|founder|president)\b/i;
         for (let i = 1; i < segments.length; i++) {
           const seg = segments[i];
-          // A company segment usually doesn't contain title words or location-only patterns
-          if (seg.length > 1 && seg.length < 60 && !titleWords.test(seg) && !/^\d/.test(seg)) {
-            return seg;
-          }
+          if (TITLE_WORDS_RE.test(seg)) continue;
+          if (!_isPlausibleCompany(seg)) continue;
+          if (/^\d/.test(seg)) continue;
+          return seg;
         }
-        // If all segments look like titles, try second segment as company anyway
-        if (segments[1].length > 1 && segments[1].length < 60) {
-          return segments[1];
+      }
+      // 2c. "<Title-like prefix> of <Brand>" — e.g. "Sport Director of Neom SC"
+      //     Only accept when the right-hand side is short, capitalized, and
+      //     doesn't look like a generic role descriptor ("of Marketing" is
+      //     a title fragment, "of Neom SC" is a company).
+      const firstSeg = segments[0] || headline;
+      const ofMatch = firstSeg.match(/\bof\s+([A-Z][A-Za-z0-9&.'\-\s]{1,40})$/);
+      if (ofMatch) {
+        const candidate = ofMatch[1].trim();
+        const looksLikeRole = /\b(marketing|sales|engineering|operations|product|finance|hr|people|growth|design|strategy|technology|business|content)\b/i.test(candidate);
+        if (!looksLikeRole && _isPlausibleCompany(candidate)) {
+          return candidate;
         }
       }
     }
-    // 2. Experience section: company links — filter activity feed noise
-    for (const link of document.querySelectorAll("a[href*='/company/']")) {
-      const text = (link.innerText || link.textContent || "").trim();
-      if (text.length < 2 || text.length > 60) continue;
-      if (/follow/i.test(text) || /linkedin/i.test(text) || /see all/i.test(text)) continue;
-      if (/\d+[dwmhys]\s*[·•]/.test(text)) continue;
-      if (text.includes("\n")) continue;
-      const section = link.closest("section, [class*='experience'], [class*='pvs-list']");
-      if (section) return text;
-    }
-    // 3. Parse from og:title or document.title
-    const ogTitle = document.querySelector('meta[property="og:title"]');
-    if (ogTitle) {
-      const content = ogTitle.getAttribute("content") || "";
-      const atMatch = content.match(/\bat\s+(.+?)(?:\s*\|.*$|$)/i);
+
+    // 3. og:title / document.title — multiple LinkedIn formats:
+    //    "Name - Title at Company | LinkedIn"
+    //    "Name - Title - Company | LinkedIn"        (dash separator)
+    //    "Name | LinkedIn"                          (no company info)
+    function _companyFromTitle(content) {
+      if (!content) return "";
+      // Strip the trailing " | LinkedIn"
+      const head = content.replace(/\s*\|\s*LinkedIn\s*$/i, "").trim();
+      // Pattern A: "...at Company"
+      const atMatch = head.match(/\bat\s+(.+?)$/i);
       if (atMatch) {
         const company = atMatch[1].replace(/\s*\|.*$/, "").trim();
-        if (company.length > 1 && company.length < 60) return company;
+        if (_isPlausibleCompany(company)) return company;
       }
+      // Pattern B: "Name - Title - Company"   (last dash-segment is the company)
+      //   Some profiles render with " - " separator and the company is the
+      //   final segment. Take the LAST segment if it looks like a company.
+      const dashSegments = head.split(/\s+[-–—]\s+/).map((s) => s.trim()).filter(Boolean);
+      if (dashSegments.length >= 3) {
+        const last = dashSegments[dashSegments.length - 1];
+        if (_isPlausibleCompany(last) && !TITLE_WORDS_RE.test(last)) return last;
+      }
+      // Pattern C: "Name | Company | Location" — pipe separator inside title
+      const pipeSegments = head.split(/\s*\|\s*/).map((s) => s.trim()).filter(Boolean);
+      if (pipeSegments.length >= 2) {
+        for (let i = 1; i < pipeSegments.length; i++) {
+          const seg = pipeSegments[i];
+          if (TITLE_WORDS_RE.test(seg)) continue;
+          if (_isPlausibleCompany(seg)) return seg;
+        }
+      }
+      return "";
     }
-    // 4. Company links without section check (less strict)
-    for (const link of document.querySelectorAll("a[href*='/company/']")) {
-      const text = (link.innerText || link.textContent || "").trim();
-      if (text.length < 2 || text.length > 60) continue;
-      if (/follow/i.test(text) || /linkedin/i.test(text) || /see all/i.test(text)) continue;
-      if (/\d+[dwmhys]\s*[·•]/.test(text) || text.includes("\n")) continue;
-      return text;
+
+    const ogTitleEl = document.querySelector('meta[property="og:title"]');
+    const ogTitle = ogTitleEl?.getAttribute("content") || "";
+    const fromOg = _companyFromTitle(ogTitle);
+    if (fromOg) return fromOg;
+    const fromDoc = _companyFromTitle(document.title || "");
+    if (fromDoc) return fromDoc;
+
+    // 4. Last-ditch: any /company/ link, but only inside the main profile
+    //    column — never the right rail / "People also viewed" sidebar where
+    //    sponsored ads bleed in.
+    const mainColumn = document.querySelector("main") || document.body;
+    for (const link of mainColumn.querySelectorAll("a[href*='/company/']")) {
+      if (link.closest("aside, [class*='sponsored'], [class*='right-rail'], [class*='also-viewed']")) {
+        continue;
+      }
+      const text = (link.innerText || link.textContent || "").trim().split("\n")[0].trim();
+      if (_isPlausibleCompany(text)) return text;
     }
+
     return "";
   }
 
   // ── Unified profile scraper (returns Promise) ──
 
+  // LinkedIn's experience section is lazy-loaded — it's not in the DOM on
+  // first paint. If we extract company before scrolling, getCompanyFromPage()
+  // returns "" and the connection is saved without its current employer,
+  // which then breaks Way In matching ("Terry doesn't appear at NEOM"
+  // because his connection row has company=""). Scroll once before reading.
+  async function _ensureExperienceLoaded() {
+    if (document.getElementById("experience")) return;
+    try {
+      const before = window.scrollY;
+      window.scrollTo(0, Math.min(document.body.scrollHeight, 1200));
+      // Wait for lazy section to mount
+      for (let i = 0; i < 6; i++) {
+        await new Promise((r) => setTimeout(r, 250));
+        if (document.getElementById("experience")) break;
+      }
+      try { window.scrollTo(0, before); } catch {}
+    } catch {}
+  }
+
   SR.scrapeProfile = function () {
-    return new Promise((resolve) => {
+    return new Promise(async (resolve) => {
       const url = window.location.href.split("?")[0];
       const linkedinId = (url.match(/\/in\/([^/?#]+)/) || [])[1]?.replace(/\/$/, "") || "";
       const fullName = getProfileName();
       const headline = getProfileHeadline();
       const degree = getConnectionDegree();
-      const currentCompany = getCompanyFromPage();
+      let currentCompany = getCompanyFromPage();
+
+      // If we couldn't extract a company on first try, the experience section
+      // is probably still being lazy-loaded. Force-scroll once and re-extract.
+      if (!currentCompany) {
+        await _ensureExperienceLoaded();
+        currentCompany = getCompanyFromPage();
+        if (currentCompany) {
+          console.log(`[SR] scrapeProfile: recovered company after lazy-load: '${currentCompany}'`);
+        }
+      }
 
       let currentTitle = headline;
       const atMatch = headline.match(/^(.+?)\s+(?:at|@)\s+(.+)/i);
       if (atMatch) currentTitle = atMatch[1].trim();
 
       console.log(`[SR] scrapeProfile: name='${fullName}' title='${currentTitle}' company='${currentCompany}' degree=${degree}`);
-      // Cache profile data so scrapeMutualConnections doesn't re-scrape from a changed DOM
       SR._lastScrapedProfile = { linkedinId, fullName, headline, currentTitle, currentCompany, url };
-      // Expose degree so linkedin-core.js can auto-trigger mutual scraping for 2nd/3rd
       SR._lastScrapedDegree = degree;
       if (!fullName || !linkedinId) { console.warn("[SR] scrapeProfile: missing name or ID, skipping API call"); resolve(); return; }
 
@@ -373,18 +598,54 @@
 
   /**
    * Resolve the target profile's entity URN.
-   * Tries: 1) DOM code blocks, 2) mutual link href, 3) Voyager API (multiple endpoints)
+   *
+   * IMPORTANT: A profile page contains BOTH the target's URN (in the top card,
+   * profile JSON) AND the visiting user's OWN URN (in nav, messaging widget,
+   * notifications, recent posts). The viewer's URN often appears MORE often
+   * than the target's. Naively picking the most-common URN therefore returns
+   * the SELF URN — and the Voyager mutual search becomes "your connections of
+   * yourself" which is empty. That's the root cause of "scrapes 0 mutuals".
+   *
+   * Resolution order:
+   *   1. <code> JSON entry whose publicIdentifier == the URL slug (target only)
+   *   2. mutual-connections link href (always a target-specific URN)
+   *   3. HTML scan with self URN excluded
+   *   4. Voyager identity API
    */
   async function resolveProfileUrn(linkedinId) {
-    // ── Source 1: LinkedIn embeds profile data in <code> tags ──
+    const myUrnSuffix = (SR._myProfileUrn || "").split(":").pop() || "";
+    const myPublicId = (SR._myPublicId || "").toLowerCase();
+    const targetSlug = (linkedinId || "").toLowerCase();
+
+    // ── Source 1: <code> tag JSON whose publicIdentifier matches the URL slug ──
+    // LinkedIn embeds normalized models in <code> tags. The TARGET's entry has
+    // publicIdentifier == the slug from /in/<slug>. Anchor on that to skip
+    // the viewer's own profile JSON which is also embedded.
     for (const code of document.querySelectorAll("code")) {
       const text = code.textContent || "";
-      // Look for the target's mini profile or fsd_profile URN
-      const m = text.match(/"publicIdentifier"\s*:\s*"[^"]*"[^}]*"entityUrn"\s*:\s*"(urn:li:(?:fsd_profile|fs_miniProfile):[^"]+)"/) ||
-                text.match(/"entityUrn"\s*:\s*"(urn:li:fsd_profile:[^"]+)"/);
-      if (m) {
-        console.log("[SR] URN from <code> tag:", m[1]);
-        return m[1];
+      if (!text || text.length < 100) continue;
+
+      // Match a JSON object that contains BOTH publicIdentifier=<slug> AND
+      // an entityUrn for that same record. \s\S* allows other fields between.
+      const slugRe = new RegExp(
+        `"publicIdentifier"\\s*:\\s*"${targetSlug.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}"[\\s\\S]{0,2000}?"entityUrn"\\s*:\\s*"(urn:li:(?:fsd_profile|fs_miniProfile):[^"]+)"`,
+        "i",
+      );
+      const slugMatch = text.match(slugRe);
+      if (slugMatch && !slugMatch[1].endsWith(myUrnSuffix)) {
+        console.log("[SR] URN from <code> publicIdentifier match:", slugMatch[1]);
+        return slugMatch[1];
+      }
+
+      // Reverse order: entityUrn before publicIdentifier
+      const slugReRev = new RegExp(
+        `"entityUrn"\\s*:\\s*"(urn:li:(?:fsd_profile|fs_miniProfile):[^"]+)"[\\s\\S]{0,2000}?"publicIdentifier"\\s*:\\s*"${targetSlug.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}"`,
+        "i",
+      );
+      const slugMatchRev = text.match(slugReRev);
+      if (slugMatchRev && !slugMatchRev[1].endsWith(myUrnSuffix)) {
+        console.log("[SR] URN from <code> publicIdentifier match (reverse):", slugMatchRev[1]);
+        return slugMatchRev[1];
       }
     }
 
@@ -396,24 +657,26 @@
                 href.match(/(?:facetConnectionOf|connectionOf)=\[?"?([A-Za-z0-9_:-]+)"?\]?/);
       if (m) {
         console.log("[SR] URN from mutual link:", m[1]);
-        return m[1]; // This is the raw profile ID like "ACoAAAxxxxxx"
+        return m[1]; // raw profile ID like "ACoAAAxxxxxx"
       }
     }
 
-    // ── Source 3: Scan page HTML for any fsd_profile URN ──
+    // ── Source 3: HTML scan with self URN excluded ──
     const bodyHtml = document.documentElement.innerHTML.slice(0, 500000);
     const allUrns = [...bodyHtml.matchAll(/urn:li:fsd_profile:([A-Za-z0-9_-]+)/g)];
-    // The target's URN is usually the most frequent non-self one
     if (allUrns.length > 0) {
-      // Find the most common URN (likely the target)
       const counts = {};
-      for (const m of allUrns) { counts[m[1]] = (counts[m[1]] || 0) + 1; }
+      for (const m of allUrns) {
+        if (myUrnSuffix && m[1] === myUrnSuffix) continue; // skip self
+        counts[m[1]] = (counts[m[1]] || 0) + 1;
+      }
       const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
       if (sorted.length > 0) {
         const urn = `urn:li:fsd_profile:${sorted[0][0]}`;
-        console.log("[SR] URN from HTML scan:", urn, `(appeared ${sorted[0][1]}x)`);
+        console.log(`[SR] URN from HTML scan (self excluded): ${urn} (appeared ${sorted[0][1]}x, ${sorted.length} candidates)`);
         return urn;
       }
+      console.warn("[SR] HTML scan: only self URN found, no candidates");
     }
 
     // ── Source 4: Voyager API — try multiple endpoints ──
@@ -459,9 +722,20 @@
       return null;
     }
 
+    // CRITICAL: ensure SR._myProfileUrn is populated before resolving.
+    // Otherwise resolveProfileUrn can't exclude the visiting user's own URN
+    // and may return self → Voyager search returns nothing useful.
+    if (!SR._myProfileUrn && SR.fetchMyProfile) {
+      try { await SR.fetchMyProfile(); } catch {}
+    }
+
     SR.showToast("Resolving profile…");
     const profileUrn = await resolveProfileUrn(linkedinId);
-    if (!profileUrn) return null;
+    if (!profileUrn) {
+      console.warn("[SR mutuals] resolveProfileUrn returned null for", linkedinId);
+      return null;
+    }
+    console.log("[SR mutuals] Resolved target URN:", profileUrn, "(self URN:", SR._myProfileUrn || "unknown", ")");
 
     // The URN might be a full URN or just the raw ID (from facetConnectionOf link)
     // Make sure we have the raw ID for the search query
@@ -625,49 +899,74 @@
     SR._mutualScrapeInProgress = true;
 
     (async () => {
+      const t0 = Date.now();
+      const trace = (...args) => console.log(`[SR mutuals +${Date.now() - t0}ms]`, ...args);
       try {
+        // ── Step 0: Force-load the lazy section ──
+        // The "X mutual connections" link is in the right rail (or under "About")
+        // and LinkedIn doesn't render it until you scroll past the top card.
+        // Without this, findMutualConnectionsLink() polls a non-existent link
+        // for 10s and gives up. Scroll once, wait, scroll back.
+        trace("step 0: scrolling to surface lazy-loaded mutual section");
+        try {
+          window.scrollTo({ top: Math.floor(document.body.scrollHeight * 0.4), behavior: "instant" });
+          await new Promise(r => setTimeout(r, 800));
+          window.scrollTo({ top: Math.floor(document.body.scrollHeight * 0.7), behavior: "instant" });
+          await new Promise(r => setTimeout(r, 800));
+          window.scrollTo({ top: 0, behavior: "instant" });
+        } catch {}
+
         // ── Step 1: Wait for the mutual connections section to render ──
-        // LinkedIn lazy-loads this section. Wait up to 10s for it.
         SR.showToast("Looking for mutual connections…");
         let mutualLink = null;
         for (let i = 0; i < 10; i++) {
           await new Promise(r => setTimeout(r, 1000));
           mutualLink = findMutualConnectionsLink();
-          if (mutualLink) break;
+          if (mutualLink) {
+            trace(`step 1: mutual link found after ${i + 1}s →`, mutualLink.href?.substring(0, 80));
+            break;
+          }
         }
+        if (!mutualLink) trace("step 1: NO mutual link found after 10s polling");
 
         // ── Step 2: Try Voyager API using URN from the link or page ──
-        // This is fast and doesn't navigate away from the page
+        // Fast and doesn't navigate. Will try multiple URN sources internally.
+        trace("step 2: trying Voyager API");
         try {
           const voyagerMutuals = await fetchMutualsViaVoyager(linkedinId);
           if (voyagerMutuals && voyagerMutuals.length > 0) {
-            console.log(`[SR] Voyager: ${voyagerMutuals.length} mutuals`);
+            trace(`step 2: Voyager returned ${voyagerMutuals.length} mutuals`);
             SR.showToast(`Found ${voyagerMutuals.length} mutual connections — syncing`);
             sendMutualData(targetPerson, voyagerMutuals, voyagerMutuals.length);
             return;
           }
+          trace("step 2: Voyager returned 0 mutuals");
         } catch (e) {
-          console.log("[SR] Voyager approach failed:", e.message);
+          trace("step 2: Voyager threw:", e.message);
         }
 
-        // ── Step 3: Click through to search results (the proven approach) ──
-        // This navigates away from the profile page. The search results page
-        // will trigger scrapeMutualSearchResults() via initForPage → sr_mutual_target.
+        // ── Step 3: Click through to search results ──
+        // Navigates away. The search results page triggers scrapeMutualSearchResults()
+        // via initForPage → sr_mutual_target. We attach the expected count and
+        // visible names parsed from the profile link text so the search-results
+        // scraper can cap output at the real mutual count instead of including
+        // "People you may also know" recommendations from below the fold.
         if (mutualLink) {
+          const linkText = (mutualLink.innerText || mutualLink.textContent || "").trim();
+          const meta = parseMutualLinkMeta(linkText);
+          targetPerson.expected_mutual_count = meta.expectedCount;
+          targetPerson.visible_mutual_names = meta.visibleNames;
+          trace(`step 3: clicking mutual link → expected_count=${meta.expectedCount} visible=${meta.visibleNames.join(", ") || "(none)"}`);
           SR.showToast("Opening mutual connections list…");
-          console.log("[SR] Clicking mutual connections link → search results page");
-          // IMPORTANT: storage.local.set is async — we must wait for the callback
-          // to confirm the write before navigating, otherwise the data is lost.
+          // storage.local.set is async — wait for the callback before navigating.
           chrome.storage.local.set({ sr_mutual_target: targetPerson }, () => {
-            console.log("[SR] sr_mutual_target saved, clicking link in 200ms");
-            // Small delay to ensure storage write is fully flushed
+            trace("step 3: sr_mutual_target saved, clicking link in 200ms");
             setTimeout(() => {
-              // Verify the data was actually saved
               chrome.storage.local.get("sr_mutual_target", (check) => {
                 if (check.sr_mutual_target) {
-                  console.log("[SR] Verified sr_mutual_target in storage, navigating");
+                  trace("step 3: verified sr_mutual_target in storage, navigating");
                 } else {
-                  console.warn("[SR] sr_mutual_target NOT found after set — retrying");
+                  console.warn("[SR mutuals] sr_mutual_target NOT in storage after set — retrying once");
                   chrome.storage.local.set({ sr_mutual_target: targetPerson });
                 }
                 mutualLink.click();
@@ -677,23 +976,69 @@
           return;
         }
 
-        // ── Step 4: Check visible mutuals from DOM as last resort ──
+        // ── Step 4: Visible mutuals from DOM as last resort ──
         const visibleMutuals = scrapeVisibleMutuals();
         if (visibleMutuals.length > 0) {
+          trace(`step 4: scraped ${visibleMutuals.length} visible mutual names from DOM`);
           SR.showToast(`Found ${visibleMutuals.length} mutual connections — syncing`);
           sendMutualData(targetPerson, visibleMutuals, visibleMutuals.length);
           return;
         }
 
-        console.log("[SR] No mutual connections found");
+        trace("ALL strategies failed → 0 mutuals");
+        console.warn(
+          "[SR mutuals] Diagnosis: profile=", targetName,
+          " | link found=", !!mutualLink,
+          " | self URN known=", !!SR._myProfileUrn,
+          " | visible mutual text patterns=", scrapeVisibleMutuals().length,
+          " — if you see this often, paste this whole log block to the dev",
+        );
         SR.showToast("No mutual connections found for " + (targetName || "this profile"));
       } catch (e) {
-        console.error("[SR] scrapeMutualConnections error:", e);
+        console.error("[SR mutuals] uncaught error:", e);
       } finally {
         SR._mutualScrapeInProgress = false;
       }
     })();
   };
+
+  /**
+   * Parse "Foo, Bar and N other mutual connections" or
+   * "Foo and Bar are mutual connections" into a structured count + name list.
+   * The count from this text is the GROUND TRUTH for how many mutuals exist —
+   * the search-results page that opens when you click the link almost always
+   * pads the list with "People you may also know" recommendations underneath
+   * the actual mutuals (LinkedIn 2024-2025 change). Without the count, we
+   * over-collect those recommendations as fake mutual rows.
+   */
+  function parseMutualLinkMeta(text) {
+    if (!text) return { expectedCount: 0, visibleNames: [] };
+    const t = text.trim();
+    // "Foo, Bar and N other mutual connection(s)"
+    const mOther = t.match(/^(.+?)\s+and\s+(\d+)\s+other\s+mutual\s+connect/i);
+    if (mOther) {
+      const named = mOther[1].split(/\s*,\s*|\s+and\s+/).map((s) => s.trim()).filter(Boolean);
+      return { expectedCount: named.length + parseInt(mOther[2], 10), visibleNames: named };
+    }
+    // "Foo and Bar are mutual connections"
+    const mAre = t.match(/^(.+?)\s+(?:and|,)\s+(.+?)\s+are\s+mutual/i);
+    if (mAre) {
+      return { expectedCount: 2, visibleNames: [mAre[1].trim(), mAre[2].trim()] };
+    }
+    // "Foo is a mutual connection"
+    const mIs = t.match(/^(.+?)\s+is\s+a?\s*mutual/i);
+    if (mIs) {
+      return { expectedCount: 1, visibleNames: [mIs[1].trim()] };
+    }
+    // "N mutual connections" with no names
+    const mN = t.match(/^(\d+)\s+mutual\s+connect/i);
+    if (mN) {
+      return { expectedCount: parseInt(mN[1], 10), visibleNames: [] };
+    }
+    return { expectedCount: 0, visibleNames: [] };
+  }
+  // Expose for the search-results scraper.
+  SR.parseMutualLinkMeta = parseMutualLinkMeta;
 
   function findMutualConnectionsLink() {
     // 1. Best: href-based selectors (most reliable)
@@ -716,7 +1061,6 @@
     for (const el of document.querySelectorAll("a, button, span[role='link']")) {
       const text = (el.innerText || el.textContent || "").toLowerCase().trim();
       if (el.offsetParent === null) continue;
-      // "X mutual connections" or "mutual connection" or "who you both know"
       if (
         (text.includes("mutual") && (text.includes("connection") || text.includes("contact"))) ||
         (text.includes("who you") && text.includes("know")) ||
@@ -744,13 +1088,53 @@
 
       let retryCount = 0;
       const MAX_RETRIES = 5;
+      const expectedCount = Number(targetPerson.expected_mutual_count) || 0;
+      const visibleNames = (targetPerson.visible_mutual_names || []).map((n) => n.toLowerCase().trim()).filter(Boolean);
+
+      // Cap output at the actual mutual count from the profile-page link text.
+      // Without this cap LinkedIn's "People you may also know" recommendations
+      // (rendered below the real mutuals on the search page) get scraped too
+      // and saved as fake MutualConnection rows. The link-text count is
+      // authoritative ("Filip, Nadeer and 1 other mutual connection" → 3),
+      // so we cap at exactly that — no buffer, no floor.
+      function applyMutualCap(rawResults) {
+        if (!rawResults?.length) return [];
+        // Always trust visible-name matches first — those are confirmed mutuals
+        // from the profile page. Then fill remaining slots from the search list.
+        const out = [];
+        const seen = new Set();
+        const matchesVisible = (name) => {
+          if (!visibleNames.length) return false;
+          const lower = (name || "").toLowerCase();
+          return visibleNames.some((v) => lower.includes(v) || lower.startsWith(v.split(" ")[0] || ""));
+        };
+        for (const r of rawResults) {
+          if (!matchesVisible(r.name)) continue;
+          const key = (r.linkedin_id || r.name || "").toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push(r);
+        }
+        const cap = expectedCount > 0 ? expectedCount : rawResults.length;
+        for (const r of rawResults) {
+          if (out.length >= cap) break;
+          const key = (r.linkedin_id || r.name || "").toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push(r);
+        }
+        return out;
+      }
 
       function scrapePage() {
-        const results = SR.scrapeSearchResultCards?.() || [];
-        console.log("[SR] Mutual search page:", results.length, "results (retry", retryCount + ")");
+        const rawResults = SR.scrapeSearchResultCards?.() || [];
+        const results = applyMutualCap(rawResults);
+        console.log(
+          "[SR] Mutual search page:", rawResults.length, "raw →", results.length,
+          "kept (expected:", expectedCount, ", retry", retryCount + ")"
+        );
 
-        // If no results yet and we haven't retried too many times, wait and retry
-        if (results.length === 0 && retryCount < MAX_RETRIES) {
+        if (rawResults.length === 0 && retryCount < MAX_RETRIES) {
           retryCount++;
           console.log("[SR] No results yet, retrying in 2s (attempt", retryCount, "of", MAX_RETRIES + ")");
           setTimeout(scrapePage, 2000);
@@ -763,20 +1147,17 @@
           return;
         }
 
-        // Auto-scroll to load more
         function scrollDown() {
           try { window.scrollTo(0, document.body.scrollHeight); } catch {}
           setTimeout(() => {
-            const moreResults = SR.scrapeSearchResultCards?.() || [];
-            if (moreResults.length > results.length) {
-              // Found more, send all
-              sendMutualData(targetPerson, moreResults, moreResults.length);
-            } else {
-              sendMutualData(targetPerson, results, results.length);
-            }
-            // Check for next page
+            const moreRaw = SR.scrapeSearchResultCards?.() || [];
+            const more = applyMutualCap(moreRaw);
+            const finalResults = more.length > results.length ? more : results;
+            sendMutualData(targetPerson, finalResults, finalResults.length);
+            // Pagination only matters if we still have headroom under the cap.
+            const cap = expectedCount > 0 ? expectedCount : 100;
             const nextBtn = findNextPageButton();
-            if (nextBtn && results.length < 100) {
+            if (nextBtn && finalResults.length < cap && finalResults.length < 100) {
               try { nextBtn.click(); setTimeout(scrapePage, 3000); } catch {}
             }
           }, 2000);

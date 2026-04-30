@@ -94,15 +94,27 @@ window.SR = window.SR || {};
 
   SR.directFetch = async function (path, options = {}) {
     try {
-      const stored = await chrome.storage.local.get("sr_token");
-      const token = stored.sr_token;
+      const apiBase = await getApiBase();
+      const stored = await chrome.storage.local.get(["sr_token", "sr_tokens_by_base"]);
+      // Prefer the token captured for this exact API base, fall back to generic.
+      const tokenForBase =
+        stored.sr_tokens_by_base && typeof stored.sr_tokens_by_base === "object"
+          ? stored.sr_tokens_by_base[apiBase]
+          : null;
+      const token = tokenForBase || stored.sr_token;
       if (!token) return { ok: false, error: "Not logged in — open StealthRole popup to log in" };
-      const res = await fetch(CONFIG.API_BASE + path, {
+      const res = await fetch(apiBase + path, {
         method: options.method || "GET",
         headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
         body: options.body || undefined,
       });
-      if (res.status === 401) return { ok: false, error: "Session expired — open StealthRole popup to log in" };
+      if (res.status === 401) {
+        console.warn(
+          `[SR] 401 (directFetch) from ${apiBase}${path}  token_prefix=${token.slice(0, 16)}…  ` +
+          `(if base=localhost but token=prod, reload localhost:3000 to capture local token)`,
+        );
+        return { ok: false, error: "Session expired — open StealthRole popup to log in" };
+      }
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         return { ok: false, error: body.detail || "API error " + res.status };
@@ -158,7 +170,12 @@ window.SR = window.SR || {};
 
   SR.getPageType = function () {
     const path = window.location.pathname;
+    // Primary list URL + regional / product variants (path must stay specific enough
+    // to avoid matching generic "My Network" hubs).
     if (path.includes("/mynetwork/invite-connect/connections")) return "connections";
+    if (path.includes("/mynetwork/") && /(^|\/)(invite-connect\/)?connections(\/|$|\?)/.test(path)) {
+      return "connections";
+    }
     if (path.includes("/jobs/view/") || path.includes("/jobs/collections/")) return "job";
     if (path.includes("/jobs/search/")) return "job-search";
     if (path.includes("/company/") && !path.includes("/jobs/")) return "company";
@@ -250,6 +267,15 @@ window.SR = window.SR || {};
 
   SR.injectOverlayButton = function (type) {
     if (document.getElementById("sr-overlay-btn")) return;
+    const mount =
+      document.body ||
+      document.documentElement ||
+      null;
+    if (!mount) {
+      console.warn("[SR] injectOverlayButton: no body yet — retrying");
+      setTimeout(() => SR.injectOverlayButton(type), 300);
+      return;
+    }
     const btn = document.createElement("button");
     btn.id = "sr-overlay-btn";
     btn.className = "sr-overlay-btn";
@@ -263,8 +289,9 @@ window.SR = window.SR || {};
       company: "🔍 Company Intel",
     };
     btn.textContent = labels[type] || "StealthRole";
+    btn.setAttribute("data-sr-page-type", type);
     btn.addEventListener("click", () => SR.handleOverlayClick(type));
-    document.body.appendChild(btn);
+    mount.appendChild(btn);
 
     if (type === "connections" || type === "messaging") {
       const syncBtn = document.createElement("button");
@@ -284,13 +311,26 @@ window.SR = window.SR || {};
           }
         });
       });
-      document.body.appendChild(syncBtn);
+      mount.appendChild(syncBtn);
     }
   };
 
   SR.handleOverlayClick = function (type) {
     if (type === "connections") SR.scrapeConnectionsManual?.();
-    else if (type === "profile") { SR.scrapeProfile?.(); SR.scrapeMutualConnections?.(); }
+    else if (type === "profile") {
+      // 1st-degree → skip mutuals (you message them directly; scraping pollutes DB).
+      // 2nd / 3rd / unknown → always scrape mutuals when possible: LinkedIn often
+      // shows a "3rd" badge while listing "X and N other mutual connections"
+      // (real 2nd). Skipping mutuals on 3rd broke Way In / SR degree for those profiles.
+      Promise.resolve(SR.scrapeProfile?.()).then(() => {
+        const degree = SR._lastScrapedDegree;
+        if (degree === 1) {
+          console.log("[SR] overlay save: 1st degree — skipping mutual scraping");
+          return;
+        }
+        SR.scrapeMutualConnections?.();
+      });
+    }
     else if (type === "messaging") SR.autoScrapeMessages?.();
     else if (type === "search") SR.handleSearchScrape?.();
     else if (type === "job") SR.captureJob?.();
@@ -396,17 +436,16 @@ window.SR = window.SR || {};
       } catch {}
     }
 
-    // Profile: auto-scrape + ALWAYS try mutual connections
+    // Profile: auto-scrape profile, then scrape mutuals for everyone except 1st.
+    // (LinkedIn may badge someone "3rd" while showing mutual connections — we still need that data.)
     if (pageType === "profile") {
       SR.waitForProfileName?.().then(() => {
         SR.scrapeProfile?.().then(() => {
           const degree = SR._lastScrapedDegree;
-          // If we KNOW it's 1st degree, skip mutual scraping
           if (degree === 1) {
-            console.log("[SR] 1st degree profile — skipping mutual scraping");
+            console.log("[SR] 1st degree profile — skipping mutual scraping (you can message directly)");
             return;
           }
-          // For 2nd, 3rd, or UNKNOWN degree — always scrape mutuals
           console.log(`[SR] degree=${degree ?? "unknown"} → auto-scraping mutual connections`);
           SR.showToast("Mapping mutual connections…");
           setTimeout(() => SR.scrapeMutualConnections?.(), 2000);
@@ -434,8 +473,20 @@ window.SR = window.SR || {};
     _navDebounceTimer = setTimeout(() => SR.initForPage(), 1500);
   }
 
-  const urlObserver = new MutationObserver(onUrlChange);
-  urlObserver.observe(document.body, { childList: true, subtree: true });
+  function attachSpaNavigationObserver() {
+    try {
+      const root = document.body;
+      if (!root) {
+        requestAnimationFrame(attachSpaNavigationObserver);
+        return;
+      }
+      const urlObserver = new MutationObserver(onUrlChange);
+      urlObserver.observe(root, { childList: true, subtree: true });
+    } catch (e) {
+      console.warn("[SR] SPA navigation observer failed:", e);
+    }
+  }
+
   window.addEventListener("popstate", () => setTimeout(onUrlChange, 300));
 
   // ── Message listener from popup / background ──
@@ -443,8 +494,14 @@ window.SR = window.SR || {};
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === "IMPORT_CONNECTIONS") {
       if (SR.getPageType() === "profile") {
-        SR.scrapeProfile?.();
-        SR.scrapeMutualConnections?.();
+        Promise.resolve(SR.scrapeProfile?.()).then(() => {
+          const degree = SR._lastScrapedDegree;
+          if (degree === 1) {
+            console.log("[SR] import: 1st-degree — skipping mutuals");
+          } else {
+            SR.scrapeMutualConnections?.();
+          }
+        });
       } else {
         SR.scrapeConnectionsManual?.();
       }
@@ -586,7 +643,18 @@ window.SR = window.SR || {};
     return null;
   };
 
-  // ── Boot ──
-  setTimeout(() => SR.initForPage(), 800);
-  setTimeout(() => SR.initForPage(), 3000);
+  // ── Boot (runs before SPA observer so a thrown observer never blocks inject) ──
+  function runInitSafe() {
+    try {
+      SR.initForPage();
+    } catch (e) {
+      console.error("[SR] initForPage error:", e);
+    }
+  }
+  setTimeout(runInitSafe, 0);
+  setTimeout(runInitSafe, 800);
+  setTimeout(runInitSafe, 3000);
+  setTimeout(runInitSafe, 8000);
+
+  attachSpaNavigationObserver();
 })();
