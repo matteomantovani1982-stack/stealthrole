@@ -12,12 +12,16 @@ Routes:
   GET    /api/v1/relationships/stats               Pipeline stats for dashboard
 """
 
+import traceback
 import uuid
 
+import structlog
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
 from app.dependencies import DB, CurrentUserId
+from app.models.application import Application
 from app.schemas.relationship import (
     CompanyMapResponse,
     PipelineResponse,
@@ -27,6 +31,8 @@ from app.schemas.relationship import (
     WarmIntroResponse,
 )
 from app.services.linkedin.relationship_engine import RelationshipEngine
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/relationships", tags=["Relationship Engine"])
 
@@ -176,18 +182,65 @@ async def find_way_in(
     The killer feature: finds direct contacts and warm intro paths.
     Cross-references LinkedIn connections with target company and role.
     """
-    engine = _svc(db)
-    result = await engine.find_way_in(
-        user_id=user_id,
-        company=payload.company,
-        role=payload.role,
-    )
+    # The entire route body is wrapped so ANY exception (db lookup, engine
+    # init, intel gathering, ranking, message synthesis) is captured with a
+    # full traceback in the api logs and surfaced to the client as a useful
+    # error message instead of the FastAPI default "Internal Server Error".
+    company = payload.company
+    role = payload.role
+    try:
+        engine = _svc(db)
 
-    # Auto-identify if we have an application
-    if payload.application_id:
-        try:
-            await engine.auto_identify_intros(user_id=user_id, application_id=payload.application_id)
-        except Exception:
-            pass
+        # If application context is provided, use it as source of truth to
+        # avoid cross-application bleed from stale pack metadata.
+        if payload.application_id:
+            app_result = await db.execute(
+                select(Application).where(
+                    Application.id == payload.application_id,
+                    Application.user_id == user_id,
+                )
+            )
+            app = app_result.scalar_one_or_none()
+            if app:
+                company = app.company or company
+                role = app.role or role
 
-    return result
+        result = await engine.find_way_in(
+            user_id=user_id,
+            company=company,
+            role=role,
+        )
+
+        # Auto-identify if we have an application — best-effort, never fatal.
+        if payload.application_id:
+            try:
+                await engine.auto_identify_intros(
+                    user_id=user_id, application_id=payload.application_id,
+                )
+            except Exception as auto_err:
+                logger.warning(
+                    "find_way_in_auto_identify_failed",
+                    user_id=str(user_id),
+                    application_id=str(payload.application_id),
+                    error=str(auto_err),
+                )
+
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        tb = traceback.format_exc()
+        logger.error(
+            "find_way_in_failed",
+            user_id=str(user_id),
+            company=company,
+            role=role,
+            application_id=str(payload.application_id) if payload.application_id else None,
+            error=str(e),
+            error_type=type(e).__name__,
+            traceback=tb,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"find-way-in failed: {type(e).__name__}: {e}",
+        )

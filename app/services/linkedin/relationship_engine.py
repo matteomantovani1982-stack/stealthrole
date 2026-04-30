@@ -12,6 +12,7 @@ Key capabilities:
 """
 
 import re
+import unicodedata
 import uuid
 from datetime import UTC, datetime
 from collections import defaultdict
@@ -104,6 +105,20 @@ def _is_former_company(name: str) -> bool:
     return bool(re.match(r'^(ex[\s\-]|former[\s\-]|previously[\s\-]|prev[\s\-]|fka[\s\-])', n))
 
 
+def normalize_text(text: str) -> str:
+    """Lowercase + strip punctuation + collapse whitespace.
+
+    Used by the Way In discovery pipeline for token matching against
+    candidate titles, snippets, and search queries.
+    """
+    if not text:
+        return ""
+    n = text.lower()
+    n = re.sub(r"[^\w\s&]", " ", n)
+    n = re.sub(r"\s+", " ", n).strip()
+    return n
+
+
 def normalize_company(name: str) -> str:
     """Normalize company name for matching."""
     if not name:
@@ -125,6 +140,92 @@ def normalize_company(name: str) -> str:
     return n
 
 
+def strip_linkedin_display_noise(text: str) -> str:
+    """Remove bidi / invisible chars LinkedIn embeds around display names (e.g. RTL marks)."""
+    if not text:
+        return ""
+    s = unicodedata.normalize("NFKC", text)
+    for ch in (
+        "\u200e",
+        "\u200f",
+        "\u202a",
+        "\u202b",
+        "\u202c",
+        "\u202d",
+        "\u202e",
+        "\u2066",
+        "\u2067",
+        "\u2068",
+        "\u2069",
+        "\ufeff",
+    ):
+        s = s.replace(ch, "")
+    return s.strip()
+
+
+def normalize_person_name(name: str) -> str:
+    """Strip credentials and parentheticals for mutual / connector name matching."""
+    n = strip_linkedin_display_noise(name or "")
+    n = n.lower().strip()
+    if not n:
+        return ""
+    n = re.sub(
+        r",?\s*(?:mba|phd|pmp|cfa|cpa|md|pe|esq|jr\.?|sr\.?|ii|iii|iv)\.?\s*$",
+        "",
+        n,
+        flags=re.IGNORECASE,
+    ).strip()
+    n = re.sub(r"\([^)]*\)", "", n).strip()
+    n = re.sub(r"\s+", " ", n)
+    return n
+
+
+def linkedin_profile_slug_from_url(url: str) -> str:
+    """Public /in/{slug} segment, lowercased (matches across www / country TLD)."""
+    if not url or "/in/" not in url.lower():
+        return ""
+    part = url.lower().split("/in/", 1)[-1]
+    return part.split("?")[0].strip("/")
+
+
+def match_connector_from_mutual(
+    mc,
+    conn_by_id: dict[str, LinkedInConnection],
+    conn_by_name: dict[str, LinkedInConnection],
+    conn_by_first_last: dict[str, LinkedInConnection],
+    conn_by_slug: dict[str, LinkedInConnection],
+) -> LinkedInConnection | None:
+    """Resolve mutual's connector name/id to one of the user's 1st-degree connections."""
+    mid = (getattr(mc, "mutual_linkedin_id", None) or "").strip()
+    mname = normalize_person_name(getattr(mc, "mutual_name", None) or "")
+    if mid and mid in conn_by_id:
+        return conn_by_id[mid]
+    if mid:
+        key = mid.lower()
+        if key in conn_by_slug:
+            return conn_by_slug[key]
+    if mname and mname in conn_by_name:
+        return conn_by_name[mname]
+    if mname:
+        parts = mname.split()
+        if len(parts) >= 2:
+            fl_key = f"{parts[0]} {parts[-1]}"
+            if fl_key in conn_by_first_last:
+                return conn_by_first_last[fl_key]
+        slug = re.sub(r"[^a-z0-9]", "-", mname).strip("-")
+        if slug:
+            if slug in conn_by_slug:
+                return conn_by_slug[slug]
+            if slug in conn_by_first_last:
+                return conn_by_first_last[slug]
+    if mname and len(mname) >= 4:
+        for stored_name, conn in conn_by_name.items():
+            if stored_name.startswith(mname) or mname.startswith(stored_name):
+                if abs(len(stored_name) - len(mname)) < 15:
+                    return conn
+    return None
+
+
 def companies_match(a: str, b: str) -> bool:
     """Check if two company names refer to the same company."""
     na = normalize_company(a)
@@ -140,13 +241,57 @@ def companies_match(a: str, b: str) -> bool:
     shorter, longer = (na, nb) if len(na) <= len(nb) else (nb, na)
     if len(shorter) >= 5 and shorter in longer:
         return True
-    # First word match (handles "Careem" matching "Careem Networks")
+    # First-word fallback is useful for real brand prefixes, but can create
+    # bad matches for generic words like "digital", "professional", etc.
+    # Keep this strict to avoid false positives in path-in.
     if na.split() and nb.split():
         first_a = na.split()[0]
         first_b = nb.split()[0]
-        if first_a == first_b and len(first_a) >= 4:
-            return True
+        generic_first_words = {
+            "digital", "professional", "bank", "group", "capital", "global",
+            "international", "solutions", "services", "technology",
+            "technologies", "consulting", "management", "partners",
+        }
+        if first_a == first_b and len(first_a) >= 5 and first_a not in generic_first_words:
+            # Only allow first-word fallback when at least one side is effectively
+            # a single-brand token (e.g., "careem" vs "careem networks").
+            if len(na.split()) == 1 or len(nb.split()) == 1:
+                return True
     return False
+
+
+def _wayin_headline_bucket(title_norm: str, company_hint_norm: str) -> str:
+    """LinkedIn-style fields only (title line + parsed employer). Excludes snippet."""
+    return f"{title_norm} {company_hint_norm}".strip()
+
+
+def _wayin_company_tokens_in_text(company_tokens: list[str], text: str) -> int:
+    if not text or not company_tokens:
+        return 0
+    return sum(
+        1 for t in company_tokens
+        if re.search(rf"\b{re.escape(t)}\b", text)
+    )
+
+
+def _wayin_snippet_suggests_past_only_employer(
+    title_norm: str,
+    company_hint_norm: str,
+    snippet_norm: str,
+    company_norm: str,
+) -> bool:
+    """Drop Serp rows where the target company appears as a *past* job in the snippet but not in the headline."""
+    if not company_norm or not snippet_norm or company_norm not in snippet_norm:
+        return False
+    headline = _wayin_headline_bucket(title_norm, company_hint_norm)
+    if company_norm in headline:
+        return False
+    past_re = re.compile(
+        r"\b(?:ex[\s\-]|former|previously|past\s|alumni|alumnus|"
+        r"used\s+to\s+work|worked\s+at|left\s+)\b",
+        re.I,
+    )
+    return past_re.search(snippet_norm) is not None
 
 
 # ── Functional relevance ──────────────────────────────────────────────────────
@@ -173,6 +318,49 @@ def detect_domain(title: str) -> str:
         if any(kw in tl for kw in keywords):
             return domain
     return "general"
+
+
+def seniority_tier(title: str) -> tuple[int, str]:
+    """Classify a title into a seniority tier used by the Way In ranker.
+
+    Returns (rank, label) where rank is 0..4:
+        0 RECRUITER, 1 IC, 2 MANAGER, 3 VP_DIRECTOR, 4 C_SUITE
+    Order of checks matters — VP/Director must come before C_SUITE
+    because "Vice President" contains "president".
+    """
+    t = (title or "").lower()
+    # Recruiter / talent / HR
+    if any(k in t for k in [
+        "recruiter", "talent acquisition", "talent partner", "headhunter",
+        "head hunter", "human resources", "people operations", "people partner",
+        "staffing", "executive search", "search consultant", "resourcing",
+        "recruitment",
+    ]):
+        return (0, "RECRUITER")
+    # "Managing Director/Partner" / GM are C-suite-equivalent.
+    if any(k in t for k in ["managing director", "managing partner", "general manager"]):
+        return (4, "C_SUITE")
+    # VP / SVP / EVP / Director / Head of (must come before plain C_SUITE check
+    # because "Vice President" contains "president").
+    if (
+        any(k in t for k in ["vice president", "vp ", "svp", "evp"])
+        or t.startswith("vp")
+        or any(k in t for k in ["head of", "group director", "regional director"])
+        or re.search(r"\bdirector\b", t)
+    ):
+        return (3, "VP_DIRECTOR")
+    is_partner = bool(re.search(r"\bpartner\b", t)) and "partnership" not in t
+    if (
+        is_partner
+        or any(re.search(r"\b" + k + r"\b", t) for k in ["ceo", "coo", "cfo", "cto", "cio", "cpo", "chro"])
+        or any(k in t for k in ["chief", "founder", "co-founder", "president"])
+    ):
+        return (4, "C_SUITE")
+    if re.search(r"\bmanager\b", t) or any(k in t for k in [
+        "lead", "principal", "senior manager", "team lead", "supervisor", "department head",
+    ]):
+        return (2, "MANAGER")
+    return (1, "IC")
 
 
 def detect_seniority(title: str) -> int:
@@ -397,6 +585,71 @@ class RelationshipEngine:
         self.db = db
         self._company_intel_cache: dict[str, str] = {}
 
+    def _resolve_target_company(self, company: str, role: str | None, all_conns: list[LinkedInConnection]) -> str:
+        """
+        Resolve placeholder/undisclosed company labels to a concrete company when
+        the role string contains a real brand (e.g., "Revolut — GM MENA").
+        """
+        raw_company = (company or "").strip()
+        company_lower = raw_company.lower()
+        if not any(k in company_lower for k in ["undisclosed", "confidential", "stealth", "unknown"]):
+            return raw_company
+
+        role_str = (role or "").strip()
+        if not role_str:
+            return raw_company
+
+        # Common title patterns:
+        #   "<Company> — <Role>"
+        #   "<Role details> | <Company> — <Role>"
+        candidates: list[str] = []
+        if "—" in role_str:
+            candidates.append(role_str.split("—", 1)[0].strip())
+        if " - " in role_str:
+            candidates.append(role_str.split(" - ", 1)[0].strip())
+        for seg in re.split(r"[|•]", role_str):
+            s = seg.strip()
+            if not s:
+                continue
+            if "—" in s:
+                candidates.append(s.split("—", 1)[0].strip())
+            elif " - " in s:
+                candidates.append(s.split(" - ", 1)[0].strip())
+            else:
+                candidates.append(s)
+
+        def _is_plausible_company_name(name: str) -> bool:
+            n = normalize_company(name)
+            if not n:
+                return False
+            banned = {
+                "digital", "banking", "expansion", "licensed", "company",
+                "name", "undisclosed", "target", "role", "mena", "uae",
+            }
+            tokens = [t for t in n.split() if t]
+            if not tokens:
+                return False
+            if all(t in banned for t in tokens):
+                return False
+            return True
+
+        for left_candidate in candidates:
+            if not left_candidate or not _is_plausible_company_name(left_candidate):
+                continue
+            # Verify it looks real against imported network companies when possible.
+            conn_match_count = 0
+            for c in all_conns:
+                if c.current_company and companies_match(c.current_company, left_candidate):
+                    conn_match_count += 1
+                    if conn_match_count >= 1:
+                        return left_candidate
+            # If no connection match exists, still prefer explicit company-looking string.
+            norm = normalize_company(left_candidate)
+            if len(norm.split()) <= 4 and "digital banking expansion" not in norm:
+                return left_candidate
+
+        return raw_company
+
     # ── Company intel gathering ──────────────────────────────────────────
 
     def _gather_company_intel(self, company: str) -> str:
@@ -408,6 +661,13 @@ class RelationshipEngine:
         """
         if company in self._company_intel_cache:
             return self._company_intel_cache[company]
+
+        # Skip intel generation for placeholder/undisclosed company labels.
+        # Pulling web intel for these names causes misleading fabricated context.
+        company_l = (company or "").lower()
+        if any(k in company_l for k in ["undisclosed", "confidential", "stealth", "unknown"]):
+            self._company_intel_cache[company] = ""
+            return ""
 
         # Check Redis cache first
         import hashlib
@@ -498,8 +758,8 @@ class RelationshipEngine:
             ).hexdigest()[:16]
             cache_key = f"msg:{key_hash}"
             cached = r.get(cache_key)
-            if cached:
-                return cached
+            if cached and str(cached).strip():
+                return str(cached).strip()
         except Exception:
             r = None
 
@@ -512,58 +772,65 @@ class RelationshipEngine:
             if message_type == "intro_request":
                 # Asking YOUR connection to introduce you to someone at the company
                 system_prompt = (
-                    "You write LinkedIn DMs that get replies. Your style:\n"
-                    "- Open with something SPECIFIC about the person you're writing to — "
-                    "their role, something from their headline, a shared context. Never 'Hope you're well.'\n"
-                    "- State what you want in ONE clear sentence.\n"
-                    "- Make it easy to say yes — offer to send a blurb they can forward.\n"
-                    "- Under 60 words. No fluff. No buzzwords.\n"
-                    "- End with 'No pressure at all!' \n"
+                    "You write LinkedIn DMs that get replies. The user will paste this into LinkedIn.\n"
+                    "- You are writing TO your 1st-degree connection (the recipient). "
+                    "You want a warm intro TO a specific person they know at the same company.\n"
+                    "- Open with something SPECIFIC about the recipient — role, headline, or shared context. "
+                    "Never 'Hope you're well.'\n"
+                    "- Name the person you want to meet and why (role you're pursuing at that company, "
+                    "what insight would help — hiring, team, culture, process).\n"
+                    "- One clear ask: intro. Offer a 1–2 sentence blurb they can forward.\n"
+                    "- Under 70 words. No fluff, no buzzwords. Do not invent facts not in the prompt.\n"
+                    "- End with: No pressure at all!\n"
                     "- Return ONLY the message body. No subject line, no brackets, no placeholders."
                 )
                 user_prompt = (
                     f"Write a message to {recipient_name} ({recipient_title}).\n"
-                    f"Their headline: {recipient_headline}\n"
-                    f"I want them to introduce me to {connector_name} at {company}.\n"
-                    f"Role I'm pursuing: {role or 'senior role'}\n"
-                    f"Company intel for icebreaker: {company_intel or 'none available'}\n\n"
-                    f"The message should feel like it was written ONLY for {first_name}. "
-                    f"Reference something specific about their background from the headline."
+                    f"Their LinkedIn headline: {recipient_headline or 'not provided'}\n"
+                    f"Please ask them to introduce me to: {connector_name} (at {company}).\n"
+                    f"The role I'm pursuing there: {role or 'a senior role'}\n"
+                    f"Optional company news (use only if it fits naturally; otherwise skip): "
+                    f"{company_intel or 'none'}\n\n"
+                    f"Sound like a real peer asking a favour — written only for {first_name}."
                 )
             else:
                 # Direct message to someone AT the target company
                 system_prompt = (
-                    "You write LinkedIn DMs that get replies. Your style:\n"
-                    "- Open with an icebreaker that references something SPECIFIC — the person's "
-                    "role, their company's recent move, or something from their headline. "
+                    "You write LinkedIn DMs that get replies. The user will paste this into LinkedIn.\n"
+                    "- They are pursuing a specific job/opportunity at the recipient's company.\n"
+                    "- Open with something SPECIFIC — role, headline, or one concrete detail. "
                     "Never 'Hope you're well' or 'I came across your profile.'\n"
-                    "- Connect your ask to THEIR specific situation — why talking to YOU "
-                    "is relevant to what THEY do.\n"
-                    "- One clear ask: 15 min call, quick question, or specific insight you want.\n"
-                    "- Under 60 words. Confident, peer-to-peer tone. Not needy.\n"
+                    "- Tie the ask to how THEY can help you get an edge: hiring for that role, "
+                    "team priorities, culture fit, or who else to speak with.\n"
+                    "- One clear ask (short call, one question, or brief guidance).\n"
+                    "- Under 70 words. Confident, peer-to-peer. Not needy.\n"
+                    "- Do not invent employer facts; if company intel is missing, stay with role + company only.\n"
                     "- Return ONLY the message body. No subject line, no brackets, no placeholders."
                 )
                 user_prompt = (
                     f"Write a message to {recipient_name}.\n"
                     f"Their title: {recipient_title}\n"
-                    f"Their headline: {recipient_headline}\n"
-                    f"Company: {company}\n"
-                    f"Role I'm pursuing: {role or 'senior role'}\n"
-                    f"Company intel for icebreaker: {company_intel or 'none available'}\n\n"
-                    f"The message should feel like it was written ONLY for {first_name}. "
-                    f"Reference their specific role at {company} and tie it to why I'd be "
-                    f"a relevant person for them to talk to."
+                    f"Their LinkedIn headline: {recipient_headline or 'not provided'}\n"
+                    f"They work at: {company}\n"
+                    f"Role I'm pursuing there: {role or 'a senior role'}\n"
+                    f"Optional company intel (icebreaker — use only if accurate): "
+                    f"{company_intel or 'none'}\n\n"
+                    f"Make it feel written only for {first_name} — relevant to their job at {company} "
+                    f"and my goal of landing the role."
                 )
 
-            client = ClaudeClient(task=LLMTask.CLASSIFICATION, max_tokens=200)
+            client = ClaudeClient(task=LLMTask.CLASSIFICATION, max_tokens=280)
             raw, _ = client.call_text(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                temperature=0.7,
+                temperature=0.55,
             )
             message = raw.strip()
             if message.startswith('"') and message.endswith('"'):
                 message = message[1:-1]
+            message = message.strip()
+            if not message:
+                raise ValueError("empty_llm_message")
 
             # Cache for 7 days
             if r and cache_key and message:
@@ -601,6 +868,7 @@ class RelationshipEngine:
         role: str,
         company_intel: str = "",
         mutual_headline: str = "",
+        mutual_title: str = "",
     ) -> str:
         """
         Generate a personalized LinkedIn message asking a mutual connection
@@ -608,7 +876,7 @@ class RelationshipEngine:
         """
         return self._craft_message(
             recipient_name=mutual_name,
-            recipient_title="",
+            recipient_title=mutual_title or "",
             recipient_headline=mutual_headline,
             company=company,
             role=role,
@@ -691,6 +959,9 @@ class RelationshipEngine:
         Uses Claude to identify target person + best connector from your network.
         """
         all_conns = await self._get_all_connections(user_id)
+        company = self._resolve_target_company(company, role, all_conns)
+        company_lower = (company or "").lower()
+        undisclosed_company = any(k in company_lower for k in ["undisclosed", "confidential", "stealth", "unknown"])
 
         # Gather company intel for message personalization (cached, fast)
         company_intel = self._gather_company_intel(company)
@@ -701,24 +972,7 @@ class RelationshipEngine:
         # Recruiters are EXCLUDED from direct contacts (Layer 1) per product spec —
         # they belong in a separate Recruiters layer, not the warm-intro funnel.
         def _seniority_tier(title: str) -> tuple[int, str]:
-            t = (title or "").lower()
-            if any(k in t for k in ["recruiter", "talent acquisition", "talent partner", "headhunter", "head hunter", "human resources", "people operations", "people partner", "staffing", "executive search", "search consultant", "resourcing", "recruitment"]):
-                return (0, "RECRUITER")
-            # "Managing Director/Partner" MUST come before general director check
-            if any(k in t for k in ["managing director", "managing partner", "general manager"]):
-                return (4, "C_SUITE")
-            # VP/SVP/EVP check MUST come before C_SUITE — "Vice President" contains
-            # "president" which would otherwise match C_SUITE
-            if any(k in t for k in ["vice president", "vp ", "svp", "evp"]) or t.startswith("vp") or any(k in t for k in ["head of", "group director", "regional director"]) or re.search(r'\bdirector\b', t):
-                return (3, "VP_DIRECTOR")
-            # "partner" needs word-boundary check to avoid matching "partnerships"
-            is_partner = bool(re.search(r'\bpartner\b', t)) and 'partnership' not in t
-            # C-suite: use word boundaries for short abbreviations
-            if is_partner or any(re.search(r'\b' + k + r'\b', t) for k in ["ceo", "coo", "cfo", "cto", "cio", "cpo", "chro"]) or any(k in t for k in ["chief", "founder", "co-founder", "president"]):
-                return (4, "C_SUITE")
-            if re.search(r'\bmanager\b', t) or any(k in t for k in ["lead", "principal", "senior manager", "team lead", "supervisor", "department head"]):
-                return (2, "MANAGER")
-            return (1, "IC")
+            return seniority_tier(title)
 
         def _seniority_message(first_name: str, company: str, role: str | None, tier: str, contact_title: str = "") -> str:
             role_str = role or "senior role"
@@ -773,7 +1027,7 @@ class RelationshipEngine:
                                     return False
                     return True
 
-            # 2. Headline — try multiple extraction patterns
+            # 2. Headline — try explicit current-employer patterns only
             headline = c.headline or ""
             if headline:
                 hl = headline.lower()
@@ -802,24 +1056,6 @@ class RelationshipEngine:
                     if companies_match(cleaned, company):
                         return True
 
-                # 2c. Direct mention of company name anywhere in headline
-                #     (last resort — only if the normalized company name is long enough to avoid false matches)
-                if len(norm_target) >= 5 and norm_target in normalize_company(headline):
-                    # Check ORIGINAL headline (not normalized!) for "ex-" / "former" before company name
-                    # normalize_company strips "Ex-" prefix, so the ex-check must use the raw text
-                    hl_lower = headline.lower()
-                    # Also check each segment that contains the company for former status
-                    is_former = False
-                    for seg in re.split(r'[|·•]', hl_lower):
-                        seg_stripped = seg.strip()
-                        seg_norm = normalize_company(seg_stripped)
-                        if norm_target in seg_norm or seg_norm in norm_target:
-                            if _is_former_company(seg_stripped):
-                                is_former = True
-                                break
-                    if not is_former:
-                        return True
-
             # 3. current_title — sometimes contains "Title at Company"
             title = c.current_title or ""
             if title:
@@ -835,10 +1071,10 @@ class RelationshipEngine:
         recruiter_contacts = []
         visited_targets = []
         for c in all_conns:
-            if _conn_matches_company(c, company):
+            # For undisclosed/confidential targets, never force-match direct company contacts.
+            if (not undisclosed_company) and _conn_matches_company(c, company):
                 is_visited = c.relationship_strength == "visited"
                 tier_rank, tier_name = _seniority_tier(c.current_title or c.headline or "")
-                first_name = (c.full_name or "there").split()[0]
                 # Generate personalized message using LLM + company intel
                 msg = self._craft_message(
                     recipient_name=c.full_name,
@@ -859,7 +1095,6 @@ class RelationshipEngine:
                     "is_hiring_manager": tier_rank >= 3 and tier_name != "RECRUITER",
                     "seniority_tier": tier_name,
                     "_tier_rank": tier_rank,
-                    "_debug_title_used": c.current_title or c.headline or "(empty)",
                     "relevance_score": rank_connection(c, role),
                     "intro_angle": _suggest_intro_angle(c, role),
                     "message": msg,
@@ -905,12 +1140,18 @@ class RelationshipEngine:
         )
         all_mutuals = list(mutual_results.scalars().all())
 
-        # Build maps for matching mutual connectors to our 1st-degree connections
+        # Build maps for matching mutual connectors to our 1st-degree connections.
+        # Skip rows where full_name is None/empty — these come from a buggy
+        # extension scrape and would crash .lower().split()/etc. downstream.
         conn_by_id = {(c.linkedin_id or ""): c for c in all_conns if c.linkedin_id}
         conn_by_name: dict[str, LinkedInConnection] = {}
         conn_by_first_last: dict[str, LinkedInConnection] = {}
         for c in all_conns:
+            if not c.full_name:
+                continue
             name_lower = c.full_name.lower().strip()
+            if not name_lower:
+                continue
             conn_by_name[name_lower] = c
             # Also index by slug form (extension stores fake IDs as "first-last")
             slug = re.sub(r'[^a-z0-9]', '-', name_lower).strip('-')
@@ -977,11 +1218,13 @@ class RelationshipEngine:
             if company_matches or target_is_visited:
                 # Find the mutual connector in our 1st-degree connections
                 connector = _find_connector(mc)
-                if connector:
+                if connector and connector.full_name:
                     t_name = mc.target_name or ""
                     t_title = mc.target_title or ""
                     t_company = mc.target_company or company
                     t_url = mc.target_linkedin_url or ""
+                    connector_full_name = (connector.full_name or "").strip()
+                    connector_first = connector_full_name.split()[0] if connector_full_name else "your contact"
                     real_paths.append({
                         "target": {
                             "name": t_name,
@@ -991,33 +1234,30 @@ class RelationshipEngine:
                             "why_target": f"{t_name or 'Contact'} works at {t_company} as {t_title or 'employee'}"
                         },
                         "connector": {
-                            "name": connector.full_name,
+                            "name": connector_full_name,
                             "title": connector.current_title or "",
                             "company": connector.current_company or "",
                             "linkedin_url": connector.linkedin_url or "",
                             "connection_id": str(connector.id),
                         },
-                        "path": f"You → {connector.full_name} → {mc.target_name}",
-                        "reason": f"{connector.full_name} is connected to {mc.target_name} on LinkedIn — verified mutual connection",
-                        "action": f"Ask {connector.full_name.split()[0]} to introduce you to {mc.target_name} at {mc.target_company or company}",
+                        "path": f"You → {connector_full_name} → {t_name or 'contact'}",
+                        "reason": f"{connector_full_name} is connected to {t_name or 'this person'} on LinkedIn — verified mutual connection",
+                        "action": f"Ask {connector_first} to introduce you to {t_name or 'them'} at {t_company}",
                         "strength": "strong",
                         "verified": True,
                     })
 
-        # Deduplicate paths by connector — normalize names aggressively
+        # Deduplicate paths by connector — normalize names aggressively.
+        # Defensive .get(... "") in case any field is missing.
         seen_connectors = set()
         unique_paths = []
         for p in real_paths:
-            # Normalize: lowercase, strip, remove middle initials, take first+last
-            cname = p["connector"]["name"].lower().strip()
+            cname = (p.get("connector", {}).get("name") or "").lower().strip()
+            if not cname:
+                continue
             parts = cname.split()
-            # Use first + last name as key (ignores middle names/initials)
-            if len(parts) >= 2:
-                dedup_key = parts[0] + " " + parts[-1]
-            else:
-                dedup_key = cname
-            # Also dedup by connection_id if available
-            cid = p["connector"].get("connection_id", "")
+            dedup_key = (parts[0] + " " + parts[-1]) if len(parts) >= 2 else cname
+            cid = p.get("connector", {}).get("connection_id") or ""
             if dedup_key not in seen_connectors and (not cid or cid not in seen_connectors):
                 seen_connectors.add(dedup_key)
                 if cid:
@@ -1025,15 +1265,18 @@ class RelationshipEngine:
                 unique_paths.append(p)
         real_paths = unique_paths
 
-        # Sort by connector relevance
         def _path_rank(p):
-            c = conn_by_name.get(p["connector"]["name"].lower().strip())
+            n = (p.get("connector", {}).get("name") or "").lower().strip()
+            c = conn_by_name.get(n) if n else None
             return rank_connection(c, role) if c else 0
         real_paths.sort(key=_path_rank, reverse=True)
 
-        # Filter out path targets who are already 1st-degree direct contacts
-        direct_names = {d["name"].lower().strip() for d in direct}
-        real_paths = [p for p in real_paths if p["target"]["name"].lower().strip() not in direct_names]
+        # Filter out path targets who are already 1st-degree direct contacts.
+        direct_names = {(d.get("name") or "").lower().strip() for d in direct if d.get("name")}
+        real_paths = [
+            p for p in real_paths
+            if (p.get("target", {}).get("name") or "").lower().strip() not in direct_names
+        ]
 
         # Step 3: Build candidate connectors for AI-suggested paths (fallback)
         target_domain = detect_domain(role) if role else "general"
@@ -1077,6 +1320,7 @@ class RelationshipEngine:
                         role=role or "senior role",
                         company_intel=company_intel,
                         mutual_headline=connector_headline,
+                        mutual_title=p["connector"].get("title") or "",
                     )
                     if msg and msg.strip():
                         p["intro_message"] = msg
@@ -1111,6 +1355,59 @@ class RelationshipEngine:
         # ALWAYS find key people at the target company — the core value prop.
         # Cross-reference with user's connections to show degree + path.
         discover_targets = await self._find_key_people(company, role, all_conns, company_intel)
+        discovery_yielded_real_people = len(discover_targets) > 0
+
+        # Honest fallback: top up with REAL 1st-degree contacts at the target
+        # company (never synthetic stub names). Keeps the panel useful when
+        # web search returns fewer than 3.
+        if len(discover_targets) < 3:
+            seen_dt = {
+                f"{(d.get('name') or '').lower().strip()}|{((d.get('linkedin_url') or '').rstrip('/').lower())}"
+                for d in discover_targets
+            }
+            fallback_pool = (direct or []) + (recruiter_contacts or []) + (visited_targets or [])
+            for c in fallback_pool:
+                if not (c.get("name") or "").strip():
+                    continue
+                key = f"{(c.get('name') or '').lower().strip()}|{((c.get('linkedin_url') or '').rstrip('/').lower())}"
+                if key in seen_dt:
+                    continue
+                seen_dt.add(key)
+                is_vis = bool(c.get("is_visited_profile"))
+                # Visited profiles are scraped targets — not labeled 1st/2nd; real network rows are 1st.
+                fb_degree = None if is_vis else "1st"
+                discover_targets.append({
+                    "name": c.get("name", ""),
+                    "title": c.get("title", ""),
+                    "linkedin_url": c.get("linkedin_url"),
+                    "snippet": c.get("headline", ""),
+                    "degree": fb_degree,
+                    "connection_path": None,
+                    "message": c.get("message", ""),
+                    "why_relevant": self._explain_relevance(c.get("title", ""), role, company),
+                })
+                if len(discover_targets) >= 5:
+                    break
+        discover_targets = discover_targets[:5]
+
+        # Discovery metadata for the frontend so it can show a clear empty state
+        # (instead of silently rendering nothing) when discovery genuinely fails.
+        from app.config import settings as _wayin_settings
+        if undisclosed_company:
+            discovery_reason = "undisclosed_company"
+        elif not _wayin_settings.serper_api_key:
+            discovery_reason = "no_search_api_key"
+        elif discovery_yielded_real_people:
+            discovery_reason = "ok"
+        elif discover_targets:
+            discovery_reason = "fallback_network_only"
+        else:
+            discovery_reason = "no_results"
+        discovery_meta = {
+            "reason": discovery_reason,
+            "returned": len(discover_targets),
+            "from_search": discovery_yielded_real_people,
+        }
 
         # No more "network brokers" fallback. Surfacing random recruiters and
         # senior people from unrelated companies confused users — they expected
@@ -1156,6 +1453,7 @@ class RelationshipEngine:
             "backup_paths": backup_paths,
             "verified_paths": len(real_paths),
             "discover_targets": discover_targets,
+            "discovery_meta": discovery_meta,
             "network_brokers": network_brokers,  # always [] — kept for response shape
             "total_connections": len(all_conns),
             "direct_contacts": direct[:50],  # 1st-degree, recruiter-free, sorted by seniority
@@ -1165,194 +1463,618 @@ class RelationshipEngine:
             "visited_targets": visited_targets[:20],
             "total_visited": len(visited_targets),
             "recommended_action": recommended,
-            "_debug_near_misses": near_misses[:20],
-            "_debug_total_connections": len(all_conns),
-            "_debug_company_words": company_words,
+            # Internal debug fields intentionally omitted from API response.
         }
+
+    # ── Way In core pipeline (5 stages) ──────────────────────────────────
+    #
+    # Discovery → Normalize → Rank → Network overlay → Messages
+    #
+    # Each stage is a small, testable helper. structlog events at every
+    # stage make accept/reject decisions visible in production.
+    #
+    # No fake stub names are ever returned. If discovery yields no real
+    # people, this method returns [] and the caller surfaces the reason.
+
+    REGION_TOKENS_POOL = (
+        "uae", "dubai", "abu dhabi", "ksa", "saudi", "riyadh", "jeddah",
+        "qatar", "doha", "bahrain", "oman", "kuwait",
+        "gcc", "mena", "middle east",
+    )
+    GENERIC_COMPANY_TOKENS = {
+        "global", "group", "capital", "digital", "services", "solutions",
+        "professional", "bank", "international", "holdings", "ventures",
+        "consulting", "management", "partners", "advisory", "financial",
+        "technology", "technologies", "systems", "company",
+    }
+    GENERIC_ROLE_TOKENS = {
+        "manager", "director", "head", "chief", "officer", "practice",
+        "senior", "lead", "vice", "president",
+    }
+
+    def _wayin_tokens(self, company: str, role: str | None) -> tuple[list[str], list[str], list[str]]:
+        """Build (company_tokens, role_tokens, region_tokens) used by the ranker."""
+        company_tokens = [
+            t for t in normalize_company(company).split()
+            if len(t) >= 4 and t not in self.GENERIC_COMPANY_TOKENS
+        ]
+        role_tokens = [
+            t for t in normalize_text(role or "").split()
+            if len(t) >= 4 and t not in self.GENERIC_ROLE_TOKENS
+        ]
+        target_text = normalize_text(f"{company} {role or ''}")
+        region_tokens = [r for r in self.REGION_TOKENS_POOL if r in target_text]
+        return company_tokens, role_tokens, region_tokens
 
     async def _find_key_people(
         self, company: str, role: str | None,
         all_conns: list[LinkedInConnection],
         company_intel: str,
     ) -> list[dict]:
+        """Way In pipeline. Returns 0–5 ranked people with degree + message.
+
+        Returns [] when discovery yields nothing real. Never returns
+        synthetic stub names like "Recruiter — <company>".
         """
-        ALWAYS search for the key people at the target company that the user
-        should talk to. Cross-reference each with the user's network to show:
-          - degree: "1st" (direct connection), "2nd" (reachable via intro), "3rd" (cold)
-          - For 1st: crafted direct message
-          - For 2nd: which connection can intro + crafted intro request
-          - For 3rd: just name them as target
+        logger.info(
+            "wayin_pipeline_start",
+            company=company, role=role, n_connections=len(all_conns),
+        )
+
+        # Stage A — DISCOVER raw candidates
+        raw = await self._wayin_discover(company, role)
+        if not raw:
+            logger.info("wayin_pipeline_no_raw", company=company, role=role)
+            return []
+
+        # Stage B — NORMALIZE
+        normalized = [self._wayin_normalize(c) for c in raw]
+
+        # Stage C — RANK
+        ranked = self._wayin_rank(normalized, company, role)
+        if not ranked:
+            logger.info("wayin_pipeline_no_ranked", company=company, role=role, raw=len(raw))
+            return []
+
+        # Stage D — CROSS-REFERENCE with user's network
+        overlaid = await self._wayin_overlay_network(ranked, all_conns, company)
+
+        # Stage E — GENERATE messages and finalize
+        return self._wayin_finalize(overlaid, company, role, company_intel)
+
+    # ── Stage A: DISCOVER ────────────────────────────────────────────────
+
+    async def _wayin_discover(self, company: str, role: str | None) -> list[dict]:
+        """Discover raw candidate profiles via Serper LinkedIn search.
+
+        Skips discovery cleanly when the target is undisclosed or the
+        Serper API key is missing — does NOT return synthetic stubs.
         """
         from app.config import settings
         import httpx
 
+        if not (company and company.strip()):
+            logger.info("wayin_discover_skip_no_company")
+            return []
+        company_lower = company.lower()
+        if any(k in company_lower for k in ["undisclosed", "confidential", "stealth", "unknown"]):
+            logger.info("wayin_discover_skip_undisclosed", company=company)
+            return []
         if not settings.serper_api_key:
+            logger.warning("wayin_discover_skip_no_serper_key", company=company)
             return []
 
-        # Build search queries targeting the RIGHT people for this role
         role_str = role or "VP Director Head"
         queries = [
-            f"site:linkedin.com/in {company} {role_str}",
-            f"site:linkedin.com/in {company} recruiter talent acquisition hiring",
-            f"site:linkedin.com/in {company} VP Director Head strategy",
-            f"site:linkedin.com/in {company} HR people operations",
+            f'site:linkedin.com/in "{company}" {role_str}',
+            f'site:linkedin.com/in "{company}" recruiter talent acquisition',
+            f'site:linkedin.com/in "{company}" head director vp',
+            f'site:linkedin.com/in "{company}" people operations human resources',
         ]
+        logger.info("wayin_discover_queries", company=company, queries=queries)
 
-        raw_people = []
-        seen_urls = set()
-
+        seen: set[str] = set()
+        raw: list[dict] = []
         async with httpx.AsyncClient(timeout=8) as client:
             for q in queries:
                 try:
                     resp = await client.post(
                         "https://google.serper.dev/search",
-                        headers={"X-API-KEY": settings.serper_api_key, "Content-Type": "application/json"},
-                        json={"q": q, "num": 5},
+                        headers={
+                            "X-API-KEY": settings.serper_api_key,
+                            "Content-Type": "application/json",
+                        },
+                        json={"q": q, "num": 8},
                     )
-                    if resp.status_code != 200:
-                        continue
-                    for r_item in resp.json().get("organic", []):
-                        url = r_item.get("link", "")
-                        if "/in/" not in url or url in seen_urls:
-                            continue
-                        seen_urls.add(url)
-                        title_raw = r_item.get("title", "")
-                        # LinkedIn titles: "Name - Title - Company | LinkedIn"
-                        parts = [p.strip() for p in title_raw.split(" - ") if p.strip()]
-                        name = parts[0] if parts else ""
-                        person_title = parts[1] if len(parts) > 1 else ""
-                        # Clean up: remove "| LinkedIn" from title
-                        if person_title:
-                            person_title = re.sub(r'\s*\|?\s*LinkedIn\s*$', '', person_title).strip()
-                        if not name or len(name) < 3 or "linkedin" in name.lower():
-                            continue
-                        raw_people.append({
-                            "name": name,
-                            "title": person_title,
-                            "linkedin_url": url.split("?")[0],
-                            "snippet": r_item.get("snippet", "")[:200],
-                        })
-                except Exception:
+                except Exception as e:
+                    logger.warning("wayin_serper_request_failed", query=q, error=str(e))
                     continue
+                if resp.status_code != 200:
+                    logger.warning("wayin_serper_non_200", query=q, status=resp.status_code)
+                    continue
+                for item in resp.json().get("organic", []) or []:
+                    record = self._wayin_parse_serper_item(item, q)
+                    if not record:
+                        continue
+                    key = (record.get("linkedin_url") or "").lower()
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    raw.append(record)
 
-        if not raw_people:
-            return []
+        logger.info("wayin_discover_raw", company=company, raw_count=len(raw))
+        return raw
 
-        # ── Cross-reference with user's network ──
-        # Build lookup indexes from connections
-        conn_by_name: dict[str, LinkedInConnection] = {}
-        conn_by_url: dict[str, LinkedInConnection] = {}
-        for c in all_conns:
-            name_key = c.full_name.lower().strip()
-            conn_by_name[name_key] = c
-            if c.linkedin_url:
-                # Normalize URL for matching
-                url_clean = c.linkedin_url.rstrip("/").lower()
-                conn_by_url[url_clean] = c
+    def _wayin_parse_serper_item(self, item: dict, source_query: str) -> dict | None:
+        """Parse one Serper organic result into a candidate record. Pure."""
+        url = (item.get("link") or "").strip()
+        if "/in/" not in url:
+            return None
+        title_raw = item.get("title", "") or ""
+        snippet_raw = item.get("snippet", "") or ""
+        parts = [p.strip() for p in title_raw.split(" - ") if p.strip()]
+        name = parts[0] if parts else ""
+        person_title = parts[1] if len(parts) > 1 else ""
+        if person_title:
+            person_title = re.sub(r"\s*\|?\s*LinkedIn\s*$", "", person_title).strip()
+        if not name or len(name) < 3 or "linkedin" in name.lower():
+            return None
+        company_hint = ""
+        if len(parts) >= 3:
+            company_hint = re.sub(r"\s*\|?\s*LinkedIn\s*$", "", parts[2]).strip()
+        return {
+            "name": name,
+            "title": person_title,
+            "company_hint": company_hint,
+            "linkedin_url": url.split("?")[0],
+            "snippet": snippet_raw[:240],
+            "_source_query": source_query,
+        }
 
-        # Check mutual connections for 2nd-degree paths
-        from app.models.mutual_connection import MutualConnection
-        mutual_results = await self.db.execute(
-            select(MutualConnection).where(
-                MutualConnection.user_id == all_conns[0].user_id if all_conns else "",
-            )
-        )
-        all_mutuals = list(mutual_results.scalars().all())
-        # Index mutuals by target URL/name for quick lookup
-        mutual_by_target_url: dict[str, list] = defaultdict(list)
-        mutual_by_target_name: dict[str, list] = defaultdict(list)
-        for mc in all_mutuals:
-            if mc.target_linkedin_url:
-                url_clean = mc.target_linkedin_url.rstrip("/").lower()
-                mutual_by_target_url[url_clean].append(mc)
-            if mc.target_name:
-                mutual_by_target_name[mc.target_name.lower().strip()].append(mc)
+    # ── Stage B: NORMALIZE ───────────────────────────────────────────────
 
-        # Deduplicate against direct_contacts already shown
-        direct_names = set()
-        direct_urls = set()
-        # We'll check against the direct contacts built earlier — pass them via all_conns matching
-        for c in all_conns:
-            if c.current_company and companies_match(c.current_company, company):
-                direct_names.add(c.full_name.lower().strip())
-                if c.linkedin_url:
-                    direct_urls.add(c.linkedin_url.rstrip("/").lower())
+    def _wayin_normalize(self, candidate: dict) -> dict:
+        """Add normalized text fields used by the ranker. Pure."""
+        title = candidate.get("title", "")
+        snippet = candidate.get("snippet", "")
+        company_hint = candidate.get("company_hint", "")
+        candidate["title_norm"] = normalize_text(title)
+        candidate["snippet_norm"] = normalize_text(snippet)
+        candidate["company_hint_norm"] = normalize_company(company_hint)
+        candidate["function"] = detect_domain(title)
+        candidate["seniority_score"] = detect_seniority(title)
+        candidate["seniority_label"] = seniority_tier(title)[1]
+        candidate["combined_text"] = " ".join([
+            candidate["title_norm"], candidate["snippet_norm"], candidate["company_hint_norm"],
+        ]).strip()
+        return candidate
 
-        results = []
-        for person in raw_people:
-            p_name = person["name"]
-            p_title = person["title"]
-            p_url = person["linkedin_url"].rstrip("/").lower()
-            p_name_lower = p_name.lower().strip()
+    # ── Stage C: RANK ────────────────────────────────────────────────────
 
-            # Skip if already shown as direct contact
-            if p_name_lower in direct_names or p_url in direct_urls:
+    def _wayin_rank(
+        self, candidates: list[dict], company: str, role: str | None,
+    ) -> list[dict]:
+        """Score each candidate, drop irrelevant ones, sort high → low. Pure.
+
+        Hard rejections:
+          - company doesn't match (no 2+ token hits AND no parsed company hint match)
+          - candidate is neither hiring-relevant nor sufficiently senior
+          - region required (role mentions a region) but candidate is non-recruiter IC
+            without that region
+        """
+        company_tokens, role_tokens, region_tokens = self._wayin_tokens(company, role)
+        role_function = detect_domain(role or "")
+        company_norm = normalize_company(company)
+
+        scored: list[dict] = []
+        for c in candidates:
+            text = c.get("combined_text", "")
+            title = c.get("title", "")
+            title_norm = c.get("title_norm", "")
+            company_hint = c.get("company_hint_norm", "")
+            snippet_norm = c.get("snippet_norm", "")
+            headline = _wayin_headline_bucket(title_norm, company_hint)
+
+            if _wayin_snippet_suggests_past_only_employer(
+                title_norm, company_hint, snippet_norm, company_norm,
+            ):
+                logger.info(
+                    "wayin_rank_rejected",
+                    name=c.get("name", ""), title=title,
+                    reason="past_employer_snippet_only",
+                    company=company,
+                )
                 continue
 
-            # Determine degree of connection
-            degree = "3rd"
-            connection_path = None
-            message = ""
+            # ── Company match score ──
+            # Require evidence in the LinkedIn *headline* fields (title + employer hint),
+            # not Google snippet alone — snippets often mention a company for talks, press, ex-roles.
+            company_match_score = 0
+            company_pass = False
+            if company_hint and companies_match(company_hint, company):
+                company_match_score = 100
+                company_pass = True
+            elif company_norm and title_norm and company_norm in title_norm:
+                company_match_score = 80
+                company_pass = True
+            elif company_tokens:
+                hits_h = _wayin_company_tokens_in_text(company_tokens, headline)
+                if len(company_tokens) >= 2:
+                    if hits_h >= 2:
+                        company_match_score = 60
+                        company_pass = True
+                elif hits_h >= 1:
+                    company_match_score = 60
+                    company_pass = True
+            if not company_pass:
+                logger.info(
+                    "wayin_rank_rejected",
+                    name=c.get("name", ""), title=title,
+                    reason="company_mismatch",
+                    company=company, company_hint=company_hint,
+                )
+                continue
 
-            # Check 1st degree: is this person in user's connections?
-            conn = conn_by_url.get(p_url) or conn_by_name.get(p_name_lower)
-            if conn:
-                degree = "1st"
-                message = self._craft_message(
-                    recipient_name=p_name,
-                    recipient_title=p_title,
-                    recipient_headline=person.get("snippet", ""),
-                    company=company,
-                    role=role,
-                    company_intel=company_intel,
-                    message_type="direct",
+            # ── Recruiter / hiring-influence signals ──
+            is_recruiter = bool(re.search(
+                r"\b(recruit|recruiter|recruiting|recruitment|talent acquisition|"
+                r"talent partner|headhunter|head hunter|human resources|hr partner|"
+                r"people operations|people partner|staffing|executive search|"
+                r"search consultant|resourcing)\b",
+                text,
+            ))
+            is_hiring_authority = bool(re.search(
+                r"\b(hiring manager|head of|chief|vice president|svp|evp|"
+                r"managing director|country manager|general manager|business unit head)\b",
+                text,
+            )) or re.search(r"\bvp\b", text) is not None or re.search(r"\bdirector\b", text) is not None
+
+            recruiter_score = 60 if is_recruiter else 0
+            hiring_score = 40 if (is_hiring_authority and not is_recruiter) else 0
+
+            # ── Function / role-token relevance ──
+            role_score = 0
+            person_function = c.get("function", "general")
+            if role_function != "general" and person_function == role_function:
+                role_score += 30
+            if role_tokens and any(re.search(rf"\b{re.escape(t)}\b", text) for t in role_tokens):
+                role_score += 20
+
+            # ── Seniority ──
+            seniority_norm = int(c.get("seniority_score", 0) or 0)
+            seniority_score = seniority_norm * 0.4
+
+            # ── Region match (only matters when role/company implies a region) ──
+            if region_tokens:
+                region_match = any(rt in text for rt in region_tokens)
+            else:
+                region_match = True
+            region_score = 15 if (region_tokens and region_match) else (0 if not region_tokens else 0)
+
+            # ── Hard rejects ──
+            if not is_recruiter and not is_hiring_authority and seniority_norm < 45:
+                logger.info(
+                    "wayin_rank_rejected",
+                    name=c.get("name", ""), title=title,
+                    reason="not_hiring_relevant",
+                    seniority=seniority_norm,
+                )
+                continue
+            if region_tokens and not region_match and not is_recruiter and seniority_norm < 70:
+                logger.info(
+                    "wayin_rank_rejected",
+                    name=c.get("name", ""), title=title,
+                    reason="region_mismatch",
+                    region_tokens=region_tokens,
+                )
+                continue
+
+            score = (
+                company_match_score
+                + recruiter_score
+                + hiring_score
+                + role_score
+                + seniority_score
+                + region_score
+            )
+            components = {
+                "company_match": company_match_score,
+                "recruiter": recruiter_score,
+                "hiring": hiring_score,
+                "role": role_score,
+                "seniority": seniority_score,
+                "region": region_score,
+            }
+            c["_rank_score"] = round(score, 2)
+            c["_rank_components"] = components
+            c["_is_recruiter"] = is_recruiter
+            c["_is_hiring_authority"] = is_hiring_authority
+            scored.append(c)
+            logger.info(
+                "wayin_rank_accepted",
+                name=c.get("name", ""), title=title,
+                score=c["_rank_score"], components=components,
+            )
+
+        scored.sort(key=lambda x: x["_rank_score"], reverse=True)
+        return scored
+
+    # ── Stage D: CROSS-REFERENCE network ─────────────────────────────────
+
+    async def _wayin_overlay_network(
+        self,
+        ranked: list[dict],
+        all_conns: list[LinkedInConnection],
+        company: str,
+    ) -> list[dict]:
+        """Annotate each candidate with degree (1st / 2nd only) and connector path.
+
+        Reads MutualConnection records to find verified 2nd-degree paths.
+        Never invents a connector — everyone else stays unlabeled (degree None).
+        """
+        from app.models.mutual_connection import MutualConnection
+
+        conn_by_id: dict[str, LinkedInConnection] = {}
+        conn_by_name: dict[str, LinkedInConnection] = {}
+        conn_by_url: dict[str, LinkedInConnection] = {}
+        conn_by_first_last: dict[str, LinkedInConnection] = {}
+        # Slug keys from real /in/{vanity} URLs only — used for 1st-degree identity.
+        conn_profile_slug: dict[str, LinkedInConnection] = {}
+        # URL slug + name-derived keys — used to resolve mutual → connector only.
+        conn_by_slug: dict[str, LinkedInConnection] = {}
+
+        for c in all_conns:
+            lid = (getattr(c, "linkedin_id", None) or "").strip()
+            if lid:
+                conn_by_id[lid] = c
+            if c.linkedin_url:
+                u = c.linkedin_url.rstrip("/").lower()
+                conn_by_url[u] = c
+                slug = linkedin_profile_slug_from_url(c.linkedin_url)
+                if slug:
+                    conn_by_slug[slug] = c
+                    conn_profile_slug[slug] = c
+            fn = strip_linkedin_display_noise((c.full_name or "").strip())
+            if not fn:
+                continue
+            name_lower = fn.lower().strip()
+            conn_by_name[name_lower] = c
+            parts = name_lower.split()
+            if len(parts) >= 2:
+                fl = f"{parts[0]} {parts[-1]}"
+                if fl not in conn_by_first_last:
+                    conn_by_first_last[fl] = c
+            hy_slug = re.sub(r"[^a-z0-9]", "-", name_lower).strip("-")
+            if hy_slug:
+                conn_by_slug.setdefault(hy_slug, c)
+
+        def _trusted_first_degree_network_row(c: LinkedInConnection | None) -> bool:
+            """Extension marks profile visits: strong/medium=real network, weak=2nd, discovered=3rd, visited=unknown."""
+            if c is None:
+                return False
+            rs = (getattr(c, "relationship_strength", None) or "").strip().lower()
+            if rs in ("weak", "discovered", "visited"):
+                return False
+            return True
+
+        mutual_by_target_url: dict[str, list] = defaultdict(list)
+        mutual_by_target_slug: dict[str, list] = defaultdict(list)
+        mutual_by_target_name: dict[str, list] = defaultdict(list)
+        user_id = all_conns[0].user_id if all_conns else None
+        if user_id:
+            mutual_results = await self.db.execute(
+                select(MutualConnection).where(MutualConnection.user_id == user_id)
+            )
+            for mc in mutual_results.scalars().all():
+                if mc.target_linkedin_url:
+                    u = mc.target_linkedin_url.rstrip("/").lower()
+                    mutual_by_target_url[u].append(mc)
+                    ts = linkedin_profile_slug_from_url(mc.target_linkedin_url)
+                    if ts:
+                        mutual_by_target_slug[ts].append(mc)
+                if mc.target_name:
+                    tl = strip_linkedin_display_noise(mc.target_name).lower().strip()
+                    mutual_by_target_name[tl].append(mc)
+                    tnorm = normalize_person_name(mc.target_name)
+                    if tnorm and tnorm != tl:
+                        mutual_by_target_name[tnorm].append(mc)
+                    parts = tl.split()
+                    if len(parts) >= 2:
+                        mutual_by_target_name[f"{parts[0]} {parts[-1]}"].append(mc)
+
+        for c in ranked:
+            url_key = (c.get("linkedin_url") or "").rstrip("/").lower()
+            slug_key = linkedin_profile_slug_from_url(url_key) if url_key else ""
+            raw_display_name = strip_linkedin_display_noise(c.get("name") or "")
+            name_key = raw_display_name.lower().strip()
+            norm_name = normalize_person_name(raw_display_name)
+            parts = name_key.split()
+            fl_key = f"{parts[0]} {parts[-1]}" if len(parts) >= 2 else ""
+
+            # 1st degree ONLY when the discovered profile URL/slug matches a synced
+            # connection. Name-only matches cause false 1sts (same name, wrong person).
+            direct_conn = None
+            if slug_key or (url_key and "/in/" in url_key):
+                direct_conn = conn_by_url.get(url_key) or (
+                    conn_profile_slug.get(slug_key) if slug_key else None
                 )
             else:
-                # Check 2nd degree: do we have a mutual connection path?
-                mutuals = mutual_by_target_url.get(p_url, []) or mutual_by_target_name.get(p_name_lower, [])
-                if mutuals:
-                    mc = mutuals[0]
-                    # Find the connector in user's connections
-                    connector_name = mc.mutual_name or ""
-                    connector = conn_by_name.get(connector_name.lower().strip())
+                direct_conn = (
+                    conn_by_name.get(name_key)
+                    or (conn_by_first_last.get(fl_key) if fl_key else None)
+                )
+            if direct_conn and not _trusted_first_degree_network_row(direct_conn):
+                direct_conn = None
+            degree = None
+            connection_path = None
+            degree_bonus = 0
+
+            if direct_conn:
+                degree = "1st"
+                # A direct connection at the target company is the most
+                # actionable contact possible — it must rank above unlabeled
+                # candidates even when they have a slightly stronger
+                # function/seniority signal.
+                degree_bonus = 50
+            else:
+                bucket_lists: list = []
+                if url_key:
+                    bucket_lists.append(mutual_by_target_url.get(url_key, []))
+                if slug_key:
+                    bucket_lists.append(mutual_by_target_slug.get(slug_key, []))
+                if name_key:
+                    bucket_lists.append(mutual_by_target_name.get(name_key, []))
+                if norm_name and norm_name != name_key:
+                    bucket_lists.append(mutual_by_target_name.get(norm_name, []))
+                if fl_key:
+                    bucket_lists.append(mutual_by_target_name.get(fl_key, []))
+
+                seen_mutual: set[tuple] = set()
+                mutuals: list = []
+                for lst in bucket_lists:
+                    for mc in lst:
+                        mk = (
+                            getattr(mc, "target_linkedin_id", None),
+                            (getattr(mc, "mutual_linkedin_id", None) or "").lower(),
+                            (getattr(mc, "mutual_name", None) or "").lower(),
+                        )
+                        if mk in seen_mutual:
+                            continue
+                        seen_mutual.add(mk)
+                        mutuals.append(mc)
+
+                for mc in mutuals:
+                    connector = match_connector_from_mutual(
+                        mc, conn_by_id, conn_by_name, conn_by_first_last, conn_by_slug,
+                    )
                     if connector:
                         degree = "2nd"
                         connection_path = {
                             "connector_name": connector.full_name,
                             "connector_title": connector.current_title or "",
                             "connector_url": connector.linkedin_url or "",
+                            "connector_id": str(connector.id),
+                            "connector_headline": (connector.headline or ""),
                         }
-                        message = self._craft_message(
-                            recipient_name=connector.full_name,
-                            recipient_title=connector.current_title or "",
-                            recipient_headline=connector.headline or "",
-                            company=company,
-                            role=role,
-                            company_intel=company_intel,
-                            message_type="intro_request",
-                            connector_name=f"{p_name} ({p_title})",
-                        )
+                        degree_bonus = 25
+                        break
 
-            # For 3rd degree — no message, just name them
-            if degree == "3rd":
-                message = ""
+            c["degree"] = degree
+            c["connection_path"] = connection_path
+            c["_direct_conn"] = direct_conn
+            c["_rank_score"] = round(c.get("_rank_score", 0) + degree_bonus, 2)
+            if "_rank_components" in c:
+                c["_rank_components"]["degree"] = degree_bonus
+            logger.info(
+                "wayin_overlay",
+                name=c.get("name", ""), degree=degree,
+                connector=(connection_path or {}).get("connector_name"),
+                final_score=c.get("_rank_score"),
+            )
 
-            results.append({
-                "name": p_name,
-                "title": p_title,
-                "linkedin_url": person["linkedin_url"],
-                "snippet": person.get("snippet", ""),
+        ranked.sort(key=lambda x: x.get("_rank_score", 0), reverse=True)
+        return ranked
+
+    # ── Stage E: GENERATE messages + finalize ────────────────────────────
+
+    def _wayin_finalize(
+        self,
+        overlaid: list[dict],
+        company: str,
+        role: str | None,
+        company_intel: str,
+    ) -> list[dict]:
+        """Build messages (1st direct, 2nd intro request) and cap at 5.
+
+        Drops any candidate without a real name (no empty target names).
+        Every 1st and every 2nd with a connector gets a non-empty LinkedIn draft
+        (LLM via _craft_message, or the same fallbacks if the model/cache fails).
+        Unlabeled targets get no auto message.
+        """
+        out: list[dict] = []
+        seen: set[str] = set()
+        for c in overlaid:
+            name = (c.get("name") or "").strip()
+            if not name:
+                continue
+            key = f"{name.lower()}|{(c.get('linkedin_url') or '').rstrip('/').lower()}"
+            if key in seen:
+                continue
+            seen.add(key)
+
+            raw_deg = c.get("degree")
+            degree = raw_deg if raw_deg in ("1st", "2nd") else None
+            connection_path = c.get("connection_path")
+            message = ""
+            if degree == "1st":
+                message = self._craft_message(
+                    recipient_name=name,
+                    recipient_title=c.get("title", ""),
+                    recipient_headline=c.get("snippet", ""),
+                    company=company,
+                    role=role,
+                    company_intel=company_intel,
+                    message_type="direct",
+                )
+            elif degree == "2nd" and connection_path:
+                message = self._craft_message(
+                    recipient_name=connection_path.get("connector_name", ""),
+                    recipient_title=connection_path.get("connector_title", ""),
+                    recipient_headline=connection_path.get("connector_headline") or "",
+                    company=company,
+                    role=role,
+                    company_intel=company_intel,
+                    message_type="intro_request",
+                    connector_name=f"{name} ({c.get('title','')})",
+                )
+            # Unlabeled: no message — strict.
+
+            if degree in ("1st", "2nd") and not (message or "").strip():
+                logger.warning(
+                    "wayin_finalize_empty_message",
+                    degree=degree, name=name,
+                )
+                if degree == "2nd" and connection_path:
+                    cn = connection_path.get("connector_name", "") or "there"
+                    cfirst = cn.split()[0] if cn else "there"
+                    tgt_first = name.split()[0] if name else "them"
+                    tt = (c.get("title") or "").strip() or "there"
+                    message = (
+                        f"Hi {cfirst}, I noticed you're connected with {name} ({tt}) at {company}. "
+                        f"I'm exploring a {role or 'senior role'} there and {tgt_first}'s "
+                        f"perspective would be really valuable. "
+                        f"Would you be open to a quick intro? Happy to send a blurb you can forward. "
+                        f"No pressure at all!"
+                    )
+                elif degree == "1st":
+                    rt = c.get("title", "") or "the team"
+                    first = name.split()[0] if name else "there"
+                    message = (
+                        f"Hi {first}, your work as {rt} at {company} caught my attention. "
+                        f"I'm exploring a {role or 'senior role'} opportunity there and your perspective "
+                        f"on the team would be invaluable. Could I ask for 15 minutes this week? "
+                        f"Happy to share what I bring to the table."
+                    )
+
+            out.append({
+                "name": name,
+                "title": c.get("title", ""),
+                "linkedin_url": c.get("linkedin_url"),
+                "snippet": c.get("snippet", ""),
                 "degree": degree,
-                "connection_path": connection_path,
+                "connection_path": connection_path if degree == "2nd" else None,
                 "message": message,
-                "why_relevant": self._explain_relevance(p_title, role, company),
+                "why_relevant": self._explain_relevance(c.get("title", ""), role, company),
+                "rank_score": c.get("_rank_score", 0),
+                "rank_components": c.get("_rank_components", {}),
             })
-
-        # Sort: 1st degree first, then 2nd, then 3rd. Within each, prioritize seniority.
-        degree_order = {"1st": 0, "2nd": 1, "3rd": 2}
-        results.sort(key=lambda x: (degree_order.get(x["degree"], 3), -detect_seniority(x["title"])))
-
-        return results[:15]
+            if len(out) >= 5:
+                break
+        logger.info(
+            "wayin_pipeline_done",
+            company=company, role=role, returned=len(out),
+        )
+        return out
 
     def _explain_relevance(self, person_title: str, target_role: str | None, company: str) -> str:
         """Short explanation of why this person is worth talking to."""
