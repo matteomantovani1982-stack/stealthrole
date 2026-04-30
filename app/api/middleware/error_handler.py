@@ -6,10 +6,12 @@ Converts unhandled exceptions into consistent JSON error responses.
 """
 
 import structlog
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
+
+from app.config import settings
 
 logger = structlog.get_logger(__name__)
 
@@ -87,7 +89,7 @@ def register_error_handlers(app: FastAPI) -> None:
         )
         return JSONResponse(
             status_code=exc.status_code,
-            content={"error": exc.message, "type": type(exc).__name__},
+            content={"detail": exc.message, "type": type(exc).__name__},
         )
 
     @app.exception_handler(SQLAlchemyError)
@@ -100,9 +102,28 @@ def register_error_handlers(app: FastAPI) -> None:
             method=request.method,
             error=str(exc),
         )
+        payload = {"detail": "A database error occurred.", "type": "DatabaseError"}
+        if settings.is_development or settings.debug:
+            payload["debug_detail"] = str(exc)
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            content={"error": "A database error occurred.", "type": "DatabaseError"},
+            content=payload,
+        )
+
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(
+        request: Request, exc: HTTPException
+    ) -> JSONResponse:
+        logger.warning(
+            "http_exception",
+            path=request.url.path,
+            method=request.method,
+            http_status=exc.status_code,
+            detail=str(exc.detail),
+        )
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail if isinstance(exc.detail, str) else str(exc.detail)},
         )
 
     @app.exception_handler(Exception)
@@ -116,7 +137,10 @@ def register_error_handlers(app: FastAPI) -> None:
             error=str(exc),
             exc_info=True,
         )
+        payload = {"detail": "An unexpected error occurred.", "type": "InternalError"}
+        if settings.is_development or settings.debug:
+            payload["debug_detail"] = str(exc)
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"error": "An unexpected error occurred.", "type": "InternalError"},
+            content=payload,
         )

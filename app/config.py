@@ -6,6 +6,7 @@ All settings are validated at startup via pydantic-settings.
 Import `settings` anywhere in the app — never read os.environ directly.
 """
 
+import os
 from functools import lru_cache
 from typing import Literal
 
@@ -150,6 +151,37 @@ class Settings(BaseSettings):
                 "postgresql+asyncpg://..."
             )
         return v
+
+
+def should_skip_anthropic_api() -> bool:
+    """
+    When True, do not call Anthropic — use heuristic demo payloads (no API billing).
+
+    - DEMO_MODE=true (explicit env or settings) → demo
+    Use DEMO_MODE=false (and valid credits) for full AI parity with uploaded CV/JD data.
+    """
+    raw = os.environ.get("DEMO_MODE")
+    demo_explicit: bool | None = None
+    if raw is not None:
+        s = str(raw).strip().lower()
+        if s in ("", "0", "false", "no", "off"):
+            demo_explicit = False
+        elif s in ("1", "true", "yes", "on"):
+            demo_explicit = True
+        else:
+            demo_explicit = bool(s)
+
+    cfg = Settings()
+
+    if demo_explicit is True:
+        return True
+    if cfg.demo_mode:
+        return True
+
+    if demo_explicit is False:
+        return False
+
+    return False
 
 
 @lru_cache(maxsize=1)
