@@ -707,14 +707,24 @@ async def current_vacancies(
                     seen_urls.add(url)
                     title = r.get("title", "")
                     snippet = r.get("snippet", "")
+                    title_lower = title.lower()
+                    snippet_lower = snippet.lower()
                     if not title:
                         continue
 
                     # Only include actual job listings, not articles
                     is_job = any(s in url.lower() for s in JOB_SOURCES)
-                    title_lower = title.lower()
                     has_job_keyword = any(k in title_lower for k in ["job", "hiring", "position", "vacancy", "career", "apply", "role", "opening"])
                     if not is_job and not has_job_keyword:
+                        continue
+
+                    # Skip closed / stale listing language that is clearly not actionable.
+                    if any(phrase in f"{title_lower} {snippet_lower}" for phrase in [
+                        "no longer accepting applications",
+                        "position has been filled",
+                        "job expired",
+                        "application closed",
+                    ]):
                         continue
 
                     # Skip articles/guides/aggregator pages
@@ -787,6 +797,11 @@ async def current_vacancies(
                     date_str = r.get("date", "")
                     if date_str and ("2024" in date_str or "2023" in date_str):
                         continue
+                    # Also skip old "X months ago" postings.
+                    if date_str:
+                        m = re.search(r'(\d+)\s+months?\s+ago', date_str.lower())
+                        if m and int(m.group(1)) >= 2:
+                            continue
 
                     all_results.append({
                         "title": title[:150],

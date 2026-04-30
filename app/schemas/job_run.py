@@ -117,6 +117,12 @@ class JobRunStatusResponse(BaseModel):
     failed_step: str | None = None
     error_message: str | None = None
 
+    # Source + identity (for client UI: JD link, pack vs application consistency)
+    jd_url: str | None = None
+    company_name: str | None = None
+    role_title: str | None = None
+    keyword_match_score: int | None = None
+
 
 class JobRunListItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)

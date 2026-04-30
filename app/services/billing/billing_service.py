@@ -57,6 +57,13 @@ class BillingService:
         Create a FREE tier subscription for a newly registered user.
         Called automatically in the registration flow.
         """
+        result = await self._db.execute(
+            select(Subscription).where(Subscription.user_id == user_id)
+        )
+        existing = result.scalar_one_or_none()
+        if existing is not None:
+            return existing
+
         sub = Subscription(
             user_id=user_id,
             plan_tier=PlanTier.FREE,
@@ -64,7 +71,7 @@ class BillingService:
         )
         self._db.add(sub)
         await self._db.flush()
-        logger.info("free_subscription_provisioned", extra={"user_id": str(user_id)})
+        logger.info("free_subscription_provisioned", user_id=str(user_id))
         return sub
 
     # ── Checkout / upgrade ────────────────────────────────────────────────

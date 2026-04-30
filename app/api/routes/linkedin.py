@@ -136,6 +136,23 @@ async def cleanup_mutual_connections(
     return await _svc(db).deduplicate_mutual_connections(user_id=user_id)
 
 
+@router.delete(
+    "/mutual-connections",
+    summary="Wipe ALL mutual connection records for the current user (use to clear bad scrapes)",
+)
+async def wipe_mutual_connections(
+    db: DB,
+    user_id: CurrentUserId,
+) -> dict:
+    from sqlalchemy import delete as sa_delete
+    from app.models.mutual_connection import MutualConnection
+    result = await db.execute(
+        sa_delete(MutualConnection).where(MutualConnection.user_id == user_id)
+    )
+    await db.commit()
+    return {"deleted": result.rowcount or 0}
+
+
 @router.post(
     "/ingest/conversations",
     status_code=status.HTTP_201_CREATED,

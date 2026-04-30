@@ -16,9 +16,10 @@ Routes:
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 
 from app.dependencies import DB, CurrentUserId
+from app.services.user_data_wipe import wipe_application_and_network_data
 from app.schemas.application import (
     ApplicationAnalytics,
     ApplicationCreate,
@@ -38,6 +39,44 @@ router = APIRouter(
 
 def _svc(db: DB) -> ApplicationService:
     return ApplicationService(db=db)
+
+
+# ── Testing reset (auth) ─────────────────────────────────────────────────────
+
+@router.delete(
+    "/wipe-all-for-testing",
+    summary="Delete all applications + LinkedIn network sync for your account (irreversible)",
+)
+async def wipe_all_for_testing(
+    db: DB,
+    user_id: CurrentUserId,
+    confirm: str = Query(
+        ...,
+        description="Must be exactly: WIPE_MY_DATA",
+    ),
+    include_intelligence: bool = Query(
+        True,
+        description="Also clear user_intelligence and email_intelligence rows",
+    ),
+) -> dict:
+    """
+    Clears Kanban applications (and cascaded interview/timeline rows), mutuals,
+    LinkedIn connections/conversations/messages, warm intros, shadow apps,
+    calendar events, scout/hidden/saved jobs, and auto-apply submissions/profile.
+
+    Does not delete your login, CV files, or billing. Extension: re-sync connections after.
+    """
+    if confirm != "WIPE_MY_DATA":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pass query confirm=WIPE_MY_DATA",
+        )
+    deleted = await wipe_application_and_network_data(
+        db,
+        user_id,
+        include_intelligence=include_intelligence,
+    )
+    return {"status": "wiped", "user_id": user_id, "deleted": deleted}
 
 
 # ── Create ────────────────────────────────────────────────────────────────────

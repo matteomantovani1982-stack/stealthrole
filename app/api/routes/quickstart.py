@@ -10,7 +10,6 @@ It provides a convenience wrapper for the frontend.
 
 import uuid
 import asyncio
-from datetime import UTC, datetime
 
 import structlog
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
@@ -24,16 +23,27 @@ logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/v1/quickstart", tags=["Quick Start"])
 
 
+def _content_type_from_filename(filename: str, fallback: str | None) -> str:
+    """Match /api/v1/cvs — browsers often send wrong MIME for .docx."""
+    fn = filename or "cv.pdf"
+    ext = fn.lower().rsplit(".", 1)[-1] if "." in fn else ""
+    mime_map = {
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "pdf": "application/pdf",
+    }
+    return mime_map.get(ext) or fallback or "application/pdf"
+
+
 @router.post(
     "/upload-and-populate",
     status_code=status.HTTP_200_OK,
     summary="Upload CV → parse → extract profile → auto-populate. One call.",
 )
 async def upload_and_populate(
+    db: DB,
+    s3_client: S3Client,
+    user_id: CurrentUserId,
     file: UploadFile = File(...),
-    db: DB = None,
-    s3_client: S3Client = None,
-    user_id: CurrentUserId = None,
 ) -> dict:
     """
     Full pipeline in one endpoint:
@@ -54,11 +64,13 @@ async def upload_and_populate(
     cv_service = CVService(db=db, storage=storage)
 
     file_bytes = await file.read()
+    filename = file.filename or "cv.pdf"
+    content_type = _content_type_from_filename(filename, file.content_type)
     result = await cv_service.upload_cv(
         user_id=user_id,
-        filename=file.filename or "cv.pdf",
+        filename=filename,
         file_data=file_bytes,
-        content_type=file.content_type or "application/pdf",
+        content_type=content_type,
     )
     cv_id = result.id
     logger.info("quickstart_uploaded", cv_id=str(cv_id))
@@ -124,7 +136,9 @@ async def upload_and_populate(
     imported = None
     try:
         from app.api.routes.profile_import import _extract_profile_with_claude, _cv_to_text
-        cv = (await db.execute(select(CV).where(CV.id == cv_id))).scalar_one()
+        cv = (await db.execute(select(CV).where(CV.id == cv_id))).scalar_one_or_none()
+        if not cv:
+            raise HTTPException(status_code=404, detail="CV record missing after upload")
 
         cv_text = ""
         if cv.parsed_content:
@@ -154,6 +168,8 @@ async def upload_and_populate(
                 None, partial(_extract_profile_with_claude, cv_text)
             )
             logger.info("quickstart_extracted", experiences=len(imported.experiences) if imported else 0)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.warning("quickstart_extract_failed", error=str(e))
         # Non-fatal: profile will exist but without Claude-extracted data
@@ -171,9 +187,15 @@ async def upload_and_populate(
             if imported.full_name:
                 # Update user name too
                 from app.models.user import User
-                user = (await db.execute(
-                    select(User).where(User.id == uuid.UUID(user_id))
-                )).scalar_one_or_none()
+                try:
+                    uid_uuid = uuid.UUID(str(user_id))
+                except ValueError:
+                    uid_uuid = None
+                user = (
+                    (await db.execute(select(User).where(User.id == uid_uuid))).scalar_one_or_none()
+                    if uid_uuid
+                    else None
+                )
                 if user and not user.full_name:
                     user.full_name = imported.full_name
 
@@ -218,10 +240,9 @@ async def upload_and_populate(
                 db.add(entry)
                 experiences_added += 1
 
-            # Step 6: Activate
+            # Step 6: Activate (request DB dependency commits on success)
             profile.status = ProfileStatus.ACTIVE
             await db.flush()
-            await db.commit()
 
         except Exception as e:
             logger.warning("quickstart_apply_failed", error=str(e))

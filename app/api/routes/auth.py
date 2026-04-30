@@ -11,6 +11,7 @@ Routes:
   GET  /api/v1/auth/me         — current user info
 """
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
@@ -29,6 +30,8 @@ from app.schemas.auth import (
     ChangePasswordRequest,
 )
 from app.services.auth.auth_service import AuthError, AuthService
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
 bearer = HTTPBearer(auto_error=False)
@@ -58,16 +61,7 @@ async def register(payload: RegisterRequest, db: DB) -> RegisterResponse:
             password=payload.password,
             full_name=payload.full_name,
         )
-
-        # Provision free subscription for new user
-        try:
-            from app.services.billing.billing_service import BillingService
-            billing = BillingService(db=db)
-            await billing.provision_free_subscription(user.id)
-        except Exception:
-            await db.rollback()
-            raise
-
+        # Persist user first so registration cannot be blocked by downstream services.
         await db.commit()
 
         # Auto-login after registration
@@ -76,6 +70,22 @@ async def register(payload: RegisterRequest, db: DB) -> RegisterResponse:
             password=payload.password,
         )
         await db.commit()
+
+        # Provision free subscription (non-fatal). Use a SAVEPOINT so failures
+        # roll back only the subscription insert — never session.rollback(), which
+        # expires the User instance and causes 500s when building RegisterResponse.
+        try:
+            async with db.begin_nested():
+                from app.services.billing.billing_service import BillingService
+
+                billing = BillingService(db=db)
+                await billing.provision_free_subscription(user.id)
+        except Exception as _e:
+            logger.warning("provision_free_subscription_failed", error=str(_e))
+        else:
+            await db.commit()
+
+        await db.refresh(user)
 
         # Send verification email (non-fatal)
         try:
@@ -88,8 +98,7 @@ async def register(payload: RegisterRequest, db: DB) -> RegisterResponse:
                 token=token,
             )
         except Exception as _e:
-            import structlog
-            structlog.get_logger(__name__).warning("verify_email_send_failed", error=str(_e))
+            logger.warning("verify_email_send_failed", error=str(_e))
 
     except AuthError as e:
         raise _auth_error_to_http(e)

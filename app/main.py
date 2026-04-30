@@ -57,7 +57,7 @@ def create_app() -> FastAPI:
     register_error_handlers(app)
 
     # ── Routers ────────────────────────────────────────────────────────────
-    # All routes are versioned under /api/v1
+    # All routes are versioned under /api/v1 (except health — see /health for liveness)
     app.include_router(health.router)               # /health, /health/ready
 
     # Auth routes — /api/v1/auth

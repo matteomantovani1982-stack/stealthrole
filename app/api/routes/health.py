@@ -11,7 +11,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from app.config import settings
+from app.config import settings, should_skip_anthropic_api
 from app.db.session import AsyncSessionLocal
 
 logger = structlog.get_logger(__name__)
@@ -25,6 +25,8 @@ async def health_check() -> dict:
         "app": settings.app_name,
         "version": settings.app_version,
         "env": settings.app_env,
+        "demo_mode": should_skip_anthropic_api(),
+        "demo_setting_raw": settings.demo_mode,
         "deploy_marker": "2026-04-22-v4-discover-people",
         "timestamp": datetime.now(UTC).isoformat(),
     }
@@ -122,7 +124,7 @@ async def reset_user_data(
 
     async with AsyncSessionLocal() as session:
         # Find user
-        from sqlalchemy import select, delete
+        from sqlalchemy import select
         result = await session.execute(select(User).where(User.email == email))
         user = result.scalar_one_or_none()
         if not user:
@@ -130,26 +132,11 @@ async def reset_user_data(
 
         uid = str(user.id)
 
-        # Delete all user data (order matters for foreign keys)
-        tables_to_clear = [
-            "warm_intros", "mutual_connections", "application_timeline",
-            "application_events", "interview_rounds", "compensation_benchmarks",
-            "scout_results", "hidden_signals", "saved_jobs",
-            "linkedin_conversations", "linkedin_messages",
-            "linkedin_connections", "applications",
-        ]
+        from app.services.user_data_wipe import wipe_application_and_network_data
 
-        deleted = {}
-        for table in tables_to_clear:
-            try:
-                r = await session.execute(
-                    text(f"DELETE FROM {table} WHERE user_id = :uid"),
-                    {"uid": uid},
-                )
-                deleted[table] = r.rowcount
-            except Exception as e:
-                deleted[table] = f"error: {str(e)}"
-
+        deleted = await wipe_application_and_network_data(
+            session, uid, include_intelligence=True,
+        )
         await session.commit()
 
         return {

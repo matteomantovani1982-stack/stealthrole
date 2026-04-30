@@ -336,18 +336,36 @@ class LinkedInService:
         """
         Store mutual connection data scraped from a profile page.
         Resolves mutuals against the user's 1st-degree connections.
+
+        Returns a detailed breakdown so the extension/frontend can show why
+        a save resulted in stored=0 (target missing, all duplicates, all
+        names empty, etc.) instead of an opaque "ok but stored=0".
         """
-        if not target.get("linkedin_id") or not mutuals:
-            return {"stored": 0, "target": target.get("full_name", "")}
+        target_id = target.get("linkedin_id") or ""
+        target_name = target.get("full_name", "")
+        if not target_id:
+            logger.warning(
+                "mutual_store_skipped_no_target_id",
+                user_id=user_id, target_name=target_name,
+                received=len(mutuals),
+            )
+            return {
+                "stored": 0, "target": target_name,
+                "received": len(mutuals), "reason": "missing_target_linkedin_id",
+            }
+        if not mutuals:
+            return {
+                "stored": 0, "target": target_name,
+                "received": 0, "reason": "no_mutuals_received",
+            }
 
         # Backfill target_company if extension didn't extract it
         target_company = target.get("current_company", "")
-        if not target_company and target.get("linkedin_id"):
-            # Try to find the target in the user's connections table
+        if not target_company and target_id:
             target_conn = (await self.db.execute(
                 select(LinkedInConnection).where(
                     LinkedInConnection.user_id == user_id,
-                    LinkedInConnection.linkedin_id == target["linkedin_id"],
+                    LinkedInConnection.linkedin_id == target_id,
                 )
             )).scalars().first()
             if target_conn and target_conn.current_company:
@@ -358,46 +376,52 @@ class LinkedInService:
         all_conns = (await self.db.execute(
             select(LinkedInConnection).where(LinkedInConnection.user_id == user_id)
         )).scalars().all()
-        conn_by_name = {c.full_name.lower().strip(): c for c in all_conns}
-        conn_by_url = {}
-        conn_by_slug = {}
-        conn_by_first_last = {}
+        conn_by_name: dict[str, LinkedInConnection] = {}
+        conn_by_url: dict[str, LinkedInConnection] = {}
+        conn_by_slug: dict[str, LinkedInConnection] = {}
+        conn_by_first_last: dict[str, LinkedInConnection] = {}
         for c in all_conns:
+            if not c.full_name:
+                continue
+            name_lower = c.full_name.lower().strip()
+            if name_lower:
+                conn_by_name[name_lower] = c
             if c.linkedin_url:
                 conn_by_url[c.linkedin_url] = c
-                # Also index by slug (the /in/xxx part)
                 slug = (c.linkedin_url.split("/in/")[-1] or "").rstrip("/").lower()
                 if slug:
                     conn_by_slug[slug] = c
-            name_lower = c.full_name.lower().strip()
-            parts = name_lower.split()
+            parts = name_lower.split() if name_lower else []
             if len(parts) >= 2:
                 conn_by_first_last[parts[0] + " " + parts[-1]] = c
 
         stored = 0
+        skipped_no_name = 0
+        skipped_duplicate_in_batch = 0
+        skipped_existing = 0
+        seen_in_batch: set[str] = set()
+        sample_skipped: list[str] = []
+
         for m in mutuals:
-            if not m.get("name"):
+            mname = (m.get("name") or "").strip()
+            if not mname:
+                skipped_no_name += 1
                 continue
 
-            resolved_id = m.get("linkedin_id") or ""
-            resolved_url = m.get("linkedin_url") or ""
+            resolved_id = (m.get("linkedin_id") or "").strip()
+            resolved_url = (m.get("linkedin_url") or "").strip()
 
-            # Match by LinkedIn URL first (most reliable)
             matched_conn = conn_by_url.get(resolved_url) if resolved_url else None
-            # Then by slug from URL
             if not matched_conn and resolved_url:
                 slug = (resolved_url.split("/in/")[-1] or "").rstrip("/").lower()
                 if slug:
                     matched_conn = conn_by_slug.get(slug)
-            # Then by linkedin_id as slug
             if not matched_conn and resolved_id:
                 matched_conn = conn_by_slug.get(resolved_id.lower())
-            # Then by exact name
             if not matched_conn:
-                matched_conn = conn_by_name.get(m["name"].lower().strip())
-            # Then by first+last name (handles middle names)
+                matched_conn = conn_by_name.get(mname.lower())
             if not matched_conn:
-                parts = m["name"].lower().strip().split()
+                parts = mname.lower().split()
                 if len(parts) >= 2:
                     matched_conn = conn_by_first_last.get(parts[0] + " " + parts[-1])
 
@@ -407,45 +431,79 @@ class LinkedInService:
                     resolved_url = matched_conn.linkedin_url
 
             if not resolved_id:
-                resolved_id = m["name"]
+                resolved_id = mname
 
-            # Check if already stored
+            # In-batch dedupe — the LinkedIn search results page often
+            # surfaces the same person multiple times (avatar link + name
+            # link + "View profile" link), all with the same /in/ slug.
+            # The previous code relied on a DB query to dedupe, but the
+            # session-pending records don't show up there → every duplicate
+            # in the batch was inserted, then on a re-scrape the WHOLE batch
+            # was matched as "existing" and stored=0 was returned.
+            batch_key = f"{resolved_id}|{mname.lower()}"
+            if batch_key in seen_in_batch:
+                skipped_duplicate_in_batch += 1
+                continue
+            seen_in_batch.add(batch_key)
+
             existing = (await self.db.execute(
                 select(MutualConnection).where(
                     MutualConnection.user_id == user_id,
-                    MutualConnection.target_linkedin_id == target["linkedin_id"],
+                    MutualConnection.target_linkedin_id == target_id,
                     or_(
                         MutualConnection.mutual_linkedin_id == resolved_id,
-                        MutualConnection.mutual_name == m["name"],
+                        MutualConnection.mutual_name == mname,
                     ),
                 )
             )).scalars().first()
 
             if existing:
+                # Refresh the matched_conn link if we now have a better resolution.
                 if matched_conn and matched_conn.linkedin_id and existing.mutual_linkedin_id != matched_conn.linkedin_id:
                     existing.mutual_linkedin_id = matched_conn.linkedin_id
                     existing.mutual_linkedin_url = matched_conn.linkedin_url or existing.mutual_linkedin_url
+                skipped_existing += 1
+                if len(sample_skipped) < 5:
+                    sample_skipped.append(mname)
                 continue
 
             self.db.add(MutualConnection(
                 user_id=user_id,
-                target_linkedin_id=target["linkedin_id"],
-                target_name=target.get("full_name", ""),
+                target_linkedin_id=target_id,
+                target_name=target_name,
                 target_title=target.get("current_title", ""),
                 target_company=target.get("current_company", ""),
                 target_linkedin_url=target.get("linkedin_url", ""),
                 mutual_linkedin_id=resolved_id,
-                mutual_name=m["name"],
+                mutual_name=mname,
                 mutual_linkedin_url=resolved_url,
                 total_mutual_count=mutual_count,
             ))
             stored += 1
 
-        if stored:
+        if stored or skipped_existing:
+            # Always commit — we may have updated linkedin_id on existing rows.
             await self.db.flush()
             await self.db.commit()
 
-        return {"stored": stored, "target": target.get("full_name", "")}
+        logger.info(
+            "mutual_store_complete",
+            user_id=user_id, target=target_name, target_id=target_id,
+            received=len(mutuals), stored=stored,
+            skipped_no_name=skipped_no_name,
+            skipped_duplicate_in_batch=skipped_duplicate_in_batch,
+            skipped_existing=skipped_existing,
+            sample_skipped_existing=sample_skipped,
+        )
+
+        return {
+            "stored": stored,
+            "target": target_name,
+            "received": len(mutuals),
+            "skipped_no_name": skipped_no_name,
+            "skipped_duplicate_in_batch": skipped_duplicate_in_batch,
+            "skipped_existing": skipped_existing,
+        }
 
     async def ingest_network_scan(
         self, user_id: str, connector_url: str, connector_name: str,
