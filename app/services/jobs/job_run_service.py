@@ -62,15 +62,13 @@ class JobRunService:
             user_id=user_id,
         )
 
-        # Fail fast on incompatible source format. The "edit" build mode applies
-        # an EditPlan diff via python-docx (Document(BytesIO(...))), which only
-        # opens DOCX zip archives — a PDF source raises "File is not a zip file"
-        # deep in the render pipeline. See app/services/rendering/docx_renderer.py.
+        # PDF sources can't use "edit" mode (python-docx needs a zip/DOCX file).
+        # Auto-switch to "rebuild" so pack generation still works.
         if cv.mime_type == "application/pdf" and (cv.build_mode or "edit") == "edit":
-            raise ValidationError(
-                "This CV was uploaded as a PDF. Tailoring in edit mode requires a "
-                "DOCX source — please re-upload your CV as a .docx file."
-            )
+            cv.build_mode = "rebuild"
+            if not cv.template_slug:
+                cv.template_slug = "classic"
+            logger.info("pdf_auto_switch_rebuild", cv_id=str(cv.id), original_mode="edit")
 
         # Merge plan feature flags into preferences so the LLM task can read them
         prefs = payload.preferences.model_dump()
