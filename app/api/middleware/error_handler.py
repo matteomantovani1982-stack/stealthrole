@@ -138,6 +138,7 @@ def register_error_handlers(app: FastAPI) -> None:
             exc_info=True,
         )
         payload = {"detail": "An unexpected error occurred.", "type": "InternalError"}
+        # In local/dev, expose raw exception to speed up debugging.
         if settings.is_development or settings.debug:
             payload["debug_detail"] = str(exc)
         return JSONResponse(
