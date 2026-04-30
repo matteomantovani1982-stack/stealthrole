@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { connectEmail, listEmailAccounts, getCreditBalance, getCreditPricing, getActiveProfile, importLinkedIn, applyImportToProfile } from "@/lib/api";
 import { getAuthHeaders } from "@/lib/utils";
@@ -44,6 +44,7 @@ export default function SettingsPage() {
   const [linkedinImporting, setLinkedinImporting] = useState(false);
   const [extensionSync, setExtensionSync] = useState<{ status: "idle" | "scanning" | "done" | "error"; count: number; error?: string }>({ status: "idle", count: 0 });
   const [extensionInstalled, setExtensionInstalled] = useState(false);
+  const syncStartedAckRef = useRef(false);
 
   useEffect(() => {
     const headers = getAuthHeaders(false);
@@ -78,6 +79,7 @@ export default function SettingsPage() {
         }
       }
       if (msg.type === "SR_SYNC_STARTED") {
+        syncStartedAckRef.current = true;
         if (!msg.ok) setExtensionSync({ status: "error", count: 0, error: msg.error || "Could not start sync" });
       }
     };
@@ -86,8 +88,21 @@ export default function SettingsPage() {
   }, []);
 
   function startExtensionSync() {
+    syncStartedAckRef.current = false;
     setExtensionSync({ status: "scanning", count: 0 });
     window.postMessage({ type: "SR_START_CONNECTIONS_SYNC" }, "*");
+    // Guard: if extension bridge doesn't ack quickly, show actionable error.
+    window.setTimeout(() => {
+      setExtensionSync((prev) => {
+        if (prev.status !== "scanning") return prev;
+        if (syncStartedAckRef.current) return prev;
+        return {
+          status: "error",
+          count: 0,
+          error: "Extension bridge not responding. Reload extension and page, then try again.",
+        };
+      });
+    }, 8000);
   }
 
   async function handleConnectEmail(provider: "gmail" | "outlook") {

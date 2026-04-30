@@ -106,19 +106,9 @@ export default function HomePage() {
 
   const displayName = user?.full_name || user?.email?.split("@")[0] || "there";
 
-  // Show shell immediately — sections fill in as they arrive
-  // Only show full skeleton if NO section has loaded yet (first visit, no cache)
-  const hasAnyData = sectionsLoaded.size > 0;
-  if (!hasAnyData) {
-    return (
-      <div style={{ padding: "36px" }}>
-        <div className="animate-pulse" style={{ height: 270, borderRadius: 20, background: "rgba(255,255,255,0.04)", marginBottom: 20 }} />
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 10 }}>
-          {[1,2,3].map(i => <div key={i} className="animate-pulse" style={{ height: 220, borderRadius: 16, background: "rgba(255,255,255,0.04)" }} />)}
-        </div>
-      </div>
-    );
-  }
+  // First paint before any dashboard API slice completes: still render the real
+  // StealthRole home (hero, sections, routes) — not a standalone gray "shell".
+  const dashboardLoading = sectionsLoaded.size === 0;
 
   const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
 
@@ -249,31 +239,37 @@ export default function HomePage() {
 
             {/* Dynamic bullets from real data */}
             <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-              {opportunities.length > 0 && (
+              {dashboardLoading && (
+                <div style={{ display: "flex", gap: 8, fontSize: 12, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>
+                  <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#4d8ef5", flexShrink: 0, marginTop: 5, animation: "glowDot 1.2s ease-in-out infinite" }} />
+                  <span>Syncing dashboard data from the API…</span>
+                </div>
+              )}
+              {!dashboardLoading && opportunities.length > 0 && (
                 <div style={{ display: "flex", gap: 8, fontSize: 12, color: "rgba(255,255,255,0.32)", lineHeight: 1.5, animation: "ticker 0.35s ease 0s both" }}>
                   <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#4d8ef5", flexShrink: 0, marginTop: 5 }} />
                   <span><span style={{ color: "#4d8ef5", fontWeight: 500 }}>{opportunities.length} opportunities</span> detected across your target market.</span>
                 </div>
               )}
-              {interviewCount > 0 && (
+              {!dashboardLoading && interviewCount > 0 && (
                 <div style={{ display: "flex", gap: 8, fontSize: 12, color: "rgba(255,255,255,0.32)", lineHeight: 1.5, animation: "ticker 0.35s ease 0.1s both" }}>
                   <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#22c55e", flexShrink: 0, marginTop: 5 }} />
                   <span><span style={{ color: "#22c55e", fontWeight: 500 }}>{interviewCount} interview{interviewCount !== 1 ? "s" : ""}</span> booked — check your prep deck.</span>
                 </div>
               )}
-              {followUpsDue > 0 && (
+              {!dashboardLoading && followUpsDue > 0 && (
                 <div style={{ display: "flex", gap: 8, fontSize: 12, color: "rgba(255,255,255,0.32)", lineHeight: 1.5, animation: "ticker 0.35s ease 0.2s both" }}>
                   <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#fbbf24", flexShrink: 0, marginTop: 5 }} />
                   <span><span style={{ color: "#fbbf24", fontWeight: 500 }}>{followUpsDue} follow-up{followUpsDue !== 1 ? "s" : ""}</span> overdue — don&apos;t let them go cold.</span>
                 </div>
               )}
-              {signals.length > 0 && (
+              {!dashboardLoading && signals.length > 0 && (
                 <div style={{ display: "flex", gap: 8, fontSize: 12, color: "rgba(255,255,255,0.32)", lineHeight: 1.5, animation: "ticker 0.35s ease 0.3s both" }}>
                   <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#a78bfa", flexShrink: 0, marginTop: 5 }} />
                   <span><span style={{ color: "#a78bfa", fontWeight: 500 }}>{signals.length} market signal{signals.length !== 1 ? "s" : ""}</span> detected this week.</span>
                 </div>
               )}
-              {opportunities.length === 0 && signals.length === 0 && interviewCount === 0 && (
+              {!dashboardLoading && opportunities.length === 0 && signals.length === 0 && interviewCount === 0 && followUpsDue === 0 && (
                 <div style={{ display: "flex", gap: 8, fontSize: 12, color: "rgba(255,255,255,0.32)", lineHeight: 1.5, animation: "ticker 0.35s ease 0s both" }}>
                   <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#4d8ef5", flexShrink: 0, marginTop: 5 }} />
                   <span>Scanning the market for opportunities that match your profile.</span>
@@ -290,7 +286,20 @@ export default function HomePage() {
                 { val: String(signals.length), label: "signals this week", color: "#a78bfa" },
               ].map((s, i) => (
                 <div key={i} style={{ borderLeft: "2px solid rgba(255,255,255,0.12)", paddingLeft: 12 }}>
-                  <div style={{ fontSize: 22, fontWeight: 500, color: s.color }}>{s.val}</div>
+                  <div
+                    style={{
+                      fontSize: 22,
+                      fontWeight: 500,
+                      color: s.color,
+                      minHeight: 28,
+                      ...(dashboardLoading
+                        ? { opacity: 0.35, background: "rgba(255,255,255,0.06)", borderRadius: 6, width: 36 }
+                        : {}),
+                    }}
+                    className={dashboardLoading ? "animate-pulse" : undefined}
+                  >
+                    {dashboardLoading ? "\u00a0" : s.val}
+                  </div>
                   <div style={{ fontSize: 10, color: "rgba(255,255,255,0.55)", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 500, marginTop: 2 }}>{s.label}</div>
                 </div>
               ))}
@@ -376,6 +385,15 @@ export default function HomePage() {
                   );
                 })}
               </div>
+            ) : dashboardLoading ? (
+              <div style={{ background: "rgba(255,255,255,0.025)", border: "0.5px solid rgba(255,255,255,0.06)", borderRadius: 16, padding: 32, textAlign: "center" }}>
+                <div className="animate-pulse" style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginBottom: 10 }}>Loading opportunities from Scout…</div>
+                <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 10, marginTop: 16 }}>
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="animate-pulse" style={{ height: 160, borderRadius: 16, background: "rgba(255,255,255,0.04)" }} />
+                  ))}
+                </div>
+              </div>
             ) : (
               <div style={{ background: "rgba(255,255,255,0.025)", border: "0.5px solid rgba(255,255,255,0.06)", borderRadius: 16, padding: 32, textAlign: "center" }}>
                 <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginBottom: 8 }}>No opportunities detected yet</div>
@@ -407,7 +425,13 @@ export default function HomePage() {
                     <span style={{ fontSize: 9, color: "rgba(255,255,255,0.15)", minWidth: 20, textAlign: "right" }}>{timeAgo(s.created_at)}</span>
                   </div>
                 );
-              }) : (
+              }) : dashboardLoading ? (
+                <div style={{ padding: "12px 0" }}>
+                  <div className="animate-pulse" style={{ height: 12, borderRadius: 4, background: "rgba(255,255,255,0.06)", marginBottom: 10 }} />
+                  <div className="animate-pulse" style={{ height: 12, borderRadius: 4, background: "rgba(255,255,255,0.05)", marginBottom: 10 }} />
+                  <div className="animate-pulse" style={{ height: 12, borderRadius: 4, background: "rgba(255,255,255,0.04)" }} />
+                </div>
+              ) : (
                 <div style={{ padding: "16px 0", textAlign: "center" }}>
                   <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)" }}>No signals yet — check back soon</div>
                   <div style={{ fontSize: 10, color: "rgba(255,255,255,0.15)", marginTop: 4 }}>Signals appear as the market is scanned</div>
@@ -427,7 +451,12 @@ export default function HomePage() {
                   </div>
                   <a href={a.href} style={{ fontSize: 10, fontWeight: 600, color: a.color, background: `${a.color}15`, padding: "3px 8px", borderRadius: 6, textDecoration: "none", whiteSpace: "nowrap" }}>{a.cta}</a>
                 </div>
-              )) : (
+              )) : dashboardLoading ? (
+                <div style={{ padding: "12px 0" }}>
+                  <div className="animate-pulse" style={{ height: 14, borderRadius: 4, background: "rgba(255,255,255,0.06)", marginBottom: 12 }} />
+                  <div className="animate-pulse" style={{ height: 14, borderRadius: 4, background: "rgba(255,255,255,0.05)" }} />
+                </div>
+              ) : (
                 <div style={{ padding: "16px 0", textAlign: "center" }}>
                   <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)" }}>No actions for today</div>
                   <div style={{ fontSize: 10, color: "rgba(255,255,255,0.15)", marginTop: 4 }}>Start scouting and applying to build your pipeline</div>
@@ -451,7 +480,12 @@ export default function HomePage() {
                     <span style={{ fontSize: 9, fontWeight: 600, color: stageColor, background: `${stageColor}15`, padding: "2px 7px", borderRadius: 6, whiteSpace: "nowrap", textTransform: "capitalize" }}>{p.stage}</span>
                   </div>
                 );
-              }) : (
+              }) : dashboardLoading ? (
+                <div style={{ padding: "12px 0" }}>
+                  <div className="animate-pulse" style={{ height: 36, borderRadius: 8, background: "rgba(255,255,255,0.06)", marginBottom: 10 }} />
+                  <div className="animate-pulse" style={{ height: 36, borderRadius: 8, background: "rgba(255,255,255,0.05)" }} />
+                </div>
+              ) : (
                 <div style={{ padding: "16px 0", textAlign: "center" }}>
                   <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)" }}>No applications tracked yet</div>
                   <div style={{ fontSize: 10, color: "rgba(255,255,255,0.15)", marginTop: 4 }}>

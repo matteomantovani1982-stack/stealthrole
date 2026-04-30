@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { clearAllUserData, setCurrentUserId, getMe } from "@/lib/api";
+import { clearAllUserData, setCurrentUserId, getMe, setToken } from "@/lib/api";
 
 export default function AuthCallbackPage() {
   return (
@@ -45,7 +45,7 @@ function AuthCallbackInner() {
 
       if (res.ok) {
         const data = await res.json();
-        localStorage.setItem("sr_token", data.access_token);
+        setToken(data.access_token);
         if (data.refresh_token) localStorage.setItem("sr_refresh", data.refresh_token);
         // Fetch the new user's identity and pin it
         try {

@@ -37,29 +37,22 @@ export default function ExtensionBanner() {
     return () => clearTimeout(timer);
   }, []);
 
-  // Sync token to extension whenever it changes
+  // Sync token to extension when another tab updates auth (same event as api.setToken elsewhere).
+  // Omit mount + window focus — setToken/login/refresh already dispatches sr-token-sync once.
   useEffect(() => {
+    let last: string | null = null;
+
     function syncToken() {
       const headers = getAuthHeaders(false);
-      const token = headers["Authorization"]?.replace("Bearer ", "");
-      if (token) {
-        // Dispatch a custom event that the extension content script can listen for
-        window.dispatchEvent(new CustomEvent("sr-token-sync", { detail: { token } }));
-      }
+      const token = headers["Authorization"]?.replace("Bearer ", "") ?? null;
+      if (!token || token === last) return;
+      last = token;
+      window.dispatchEvent(new CustomEvent("sr-token-sync", { detail: { token } }));
     }
 
-    // Sync on mount
-    syncToken();
-
-    // Sync whenever localStorage changes (login/logout)
     window.addEventListener("storage", syncToken);
-    // Also sync on focus (user might have just logged in on another tab)
-    window.addEventListener("focus", syncToken);
 
-    return () => {
-      window.removeEventListener("storage", syncToken);
-      window.removeEventListener("focus", syncToken);
-    };
+    return () => window.removeEventListener("storage", syncToken);
   }, []);
 
   if (dismissed) return null;

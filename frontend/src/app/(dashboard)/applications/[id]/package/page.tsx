@@ -16,6 +16,43 @@ import {
 } from "@/lib/api";
 import PackDisplay from "@/components/pack-display";
 
+function normEntity(v: string | null | undefined): string {
+  return (v || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function entitiesClash(a: string, b: string): boolean {
+  const x = normEntity(a);
+  const y = normEntity(b);
+  if (!x || !y) return false;
+  return !(x === y || x.includes(y) || y.includes(x));
+}
+
+/** True when the stored job run / report was generated for a different app than this tracker row. */
+function computePackContentMismatch(
+  application: ApplicationItem | null,
+  packData: JobRun | null
+): boolean {
+  if (!application || !packData) return false;
+  const reports: any = packData.reports || {};
+  const packCo =
+    (packData as any).company_name ||
+    reports?.company?.company_name ||
+    "";
+  const packRo =
+    (packData as any).role_title ||
+    reports?.role?.role_title ||
+    "";
+  const companyBad =
+    !!String(application.company).trim() &&
+    !!String(packCo).trim() &&
+    entitiesClash(application.company, String(packCo));
+  const roleBad =
+    !!String(application.role).trim() &&
+    !!String(packRo).trim() &&
+    entitiesClash(application.role, String(packRo));
+  return companyBad || roleBad;
+}
+
 const STAGE_COLORS: Record<string, { bg: string; text: string }> = {
   watching: { bg: "#78350f", text: "#fbbf24" },
   applied: { bg: "#1e3a5f", text: "#60a5fa" },
@@ -45,11 +82,27 @@ export default function PackagePage() {
   const [error, setError] = useState("");
   const [progressStep, setProgressStep] = useState(0); // 0=idle, 1-5=steps
   const [generating, setGenerating] = useState(false);
+  const [showWorkerHint, setShowWorkerHint] = useState(false);
+
+  useEffect(() => {
+    const inProgress =
+      generating ||
+      (pack != null &&
+        pack.status !== "completed" &&
+        pack.status !== "failed");
+    if (!inProgress) {
+      setShowWorkerHint(false);
+      return;
+    }
+    const t = window.setTimeout(() => setShowWorkerHint(true), 45000);
+    return () => window.clearTimeout(t);
+  }, [generating, pack?.status, pack?.id]);
 
   useEffect(() => {
     let pollId: ReturnType<typeof setInterval> | null = null;
     let progressId: ReturnType<typeof setInterval> | null = null;
     let cancelled = false;
+    let consecutivePollFailures = 0;
 
     async function startProgress() {
       let step = 1;
@@ -65,6 +118,7 @@ export default function PackagePage() {
       try {
         const updated = await getJobRun(jobRunId);
         if (cancelled) return;
+        consecutivePollFailures = 0;
         setPack(updated);
         if (updated.status === "completed") {
           if (pollId) clearInterval(pollId);
@@ -83,7 +137,17 @@ export default function PackagePage() {
           setError("Pack generation failed: " + (updated.error_message || "unknown error") + ". Your credits have not been charged.");
         }
       } catch (e: any) {
-        // Network error — keep polling
+        consecutivePollFailures += 1;
+        if (consecutivePollFailures >= 8) {
+          if (pollId) clearInterval(pollId);
+          if (progressId) clearInterval(progressId);
+          setProgressStep(0);
+          setGenerating(false);
+          setError(
+            "Could not read pack status (API unreachable or signed out). " +
+              (e?.message || "Try refreshing.")
+          );
+        }
       }
     }
 
@@ -103,6 +167,7 @@ export default function PackagePage() {
         const job = await createJobRun({
           cv_id: cv.id,
           jd_text: jdText,
+          jd_url: application.url || undefined,
           preferences: { tone: "executive", region: "UAE" },
         } as any);
         // Link the job_run to the application
@@ -163,6 +228,12 @@ export default function PackagePage() {
         if (found.job_run_id) {
           try {
             const packData = await getJobRun(found.job_run_id);
+            if (computePackContentMismatch(found, packData)) {
+              // Linked pack is stale/wrong (e.g. from another application).
+              // Regenerate from THIS application context and relink.
+              await startGeneration(found);
+              return;
+            }
             setPack(packData);
             if (packData.status === "completed") {
               try {
@@ -269,6 +340,39 @@ export default function PackagePage() {
             This usually takes 1-3 minutes. You can navigate away and come back —
             your pack will be ready when you return.
           </div>
+
+          {showWorkerHint && (
+            <div
+              style={{
+                marginTop: 24,
+                padding: "14px 16px",
+                borderRadius: 12,
+                background: "rgba(234, 179, 8, 0.12)",
+                border: "1px solid rgba(234, 179, 8, 0.35)",
+                textAlign: "left",
+                fontSize: 12,
+                lineHeight: 1.45,
+                color: "rgba(254, 243, 199, 0.95)",
+              }}
+            >
+              <strong style={{ display: "block", marginBottom: 8 }}>Still stuck after ~1 minute?</strong>
+              The pack runs in background workers (not only the API). From your project folder start them:
+              <pre
+                style={{
+                  margin: "10px 0 0",
+                  padding: "10px 12px",
+                  borderRadius: 8,
+                  background: "rgba(0,0,0,0.35)",
+                  fontSize: 11,
+                  overflow: "auto",
+                  color: "#fef08a",
+                }}
+              >
+                cd careeros && docker compose -f docker/docker-compose.yml up -d worker_llm worker_default
+              </pre>
+              Then refresh this page. Check Flower at http://localhost:5555 to see if tasks are running.
+            </div>
+          )}
         </div>
       </div>
     );
@@ -350,6 +454,19 @@ export default function PackagePage() {
     text: "#94a3b8",
   };
 
+  const packContentMismatch = computePackContentMismatch(app, pack);
+
+  async function handleRegeneratePack() {
+    if (!app) return;
+    setError("");
+    try {
+      await updateApplication(app.id, { job_run_id: null } as any);
+      window.location.reload();
+    } catch {
+      setError("Could not reset this pack. Try again or update the job link on this application in the tracker.");
+    }
+  }
+
   return (
     <div style={{ minHeight: "100vh", background: "#03040f" }}>
       {/* Header */}
@@ -429,12 +546,53 @@ export default function PackagePage() {
         )}
       </div>
 
+      {packContentMismatch && (
+        <div
+          style={{
+            margin: "0 24px 16px",
+            padding: 14,
+            borderRadius: 10,
+            background: "rgba(239,68,68,0.12)",
+            border: "1px solid rgba(248,113,113,0.45)",
+            color: "#fecaca",
+            fontSize: 13,
+            lineHeight: 1.5,
+          }}
+        >
+          <div style={{ marginBottom: 10 }}>
+            This pack does not match this application (wrong company/role in stored run). Executive summary, interview, and networking text may
+            be for a different job until you regenerate.
+          </div>
+          <button
+            type="button"
+            onClick={handleRegeneratePack}
+            style={{
+              background: "#7f1d1d",
+              color: "#fff",
+              border: "none",
+              borderRadius: 8,
+              padding: "8px 14px",
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Regenerate pack for {app?.company} — {app?.role}
+          </button>
+        </div>
+      )}
+
       {/* Pack Display */}
       <div style={{ padding: "0 24px 24px" }}>
         <PackDisplay
           pack={pack}
           downloadUrl={downloadUrl}
           linkedinContacts={linkedinContacts}
+          baseCompany={app?.company || ""}
+          baseRole={app?.role || ""}
+          baseApplicationId={app?.id || ""}
+          applicationUrl={app?.url || ""}
+          packContentMismatch={packContentMismatch}
         />
       </div>
     </div>

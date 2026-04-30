@@ -77,7 +77,7 @@ export default function MessagesPage() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<FilterKey>("all");
+  const [filter, setFilter] = useState<FilterKey>("job_related");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<InboxConversation | null>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);

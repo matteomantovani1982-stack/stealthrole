@@ -41,28 +41,48 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
 
   useEffect(() => {
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    const finish = () => setLoading(false);
+
     if (isAuthenticated()) {
+      // If the API is down / never answers, unblock the shell (don't spin forever)
+      timeoutId = setTimeout(finish, 15000);
+
       getMe()
         .then((me) => {
+          if (cancelled) return;
           // SECURITY: if the cached user_id doesn't match the API response,
           // a different user has logged in — wipe all cached data
           const cachedUserId = getCurrentUserId();
           if (cachedUserId && cachedUserId !== me.id) {
             clearAllUserData();
-            // After clearAllUserData the token is gone too — force re-login
             window.location.href = "/login";
             return;
           }
           if (!cachedUserId) setCurrentUserId(me.id);
           setUser(me);
         })
-        .catch(() => clearAllUserData())
-        .finally(() => setLoading(false));
+        /**
+         * On 401, request() already cleared tokens — do not clearAllUserData()
+         * again (avoids duplicate sr-token-sync + extension churn).
+         * On other errors keep session so user can retry.
+         */
+        .catch(() => setUser(null))
+        .finally(() => {
+          if (timeoutId) clearTimeout(timeoutId);
+          finish();
+        });
     } else {
-      // No token — make sure no stale data lingers
-      clearAllUserData();
+      // Already logged out — do not clear storage (was spamming extension + console on every /login visit).
       setLoading(false);
     }
+
+    return () => {
+      cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, []);
 
   const login = useCallback(

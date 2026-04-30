@@ -24,7 +24,8 @@ interface KeyPerson {
   name: string;
   role: string;
   company: string;
-  connectionDegree: 1 | 2 | 3;
+  /** 0 = no 1st/2nd label (3rd+ or unknown) */
+  connectionDegree: 0 | 1 | 2;
   linkedinUrl: string;
   avatarInitials: string;
   avatarColor: "blue" | "teal" | "amber" | "purple" | "coral";
@@ -46,10 +47,9 @@ const AVATAR: Record<string, { bg: string; text: string }> = {
   coral:  { bg: "#2e1208", text: "#f87171" },
 };
 
-const DEGREE: Record<number, { bg: string; text: string; label: string }> = {
+const DEGREE: Record<1 | 2, { bg: string; text: string; label: string }> = {
   1: { bg: "rgba(34,197,94,0.15)",  text: "#22c55e", label: "1st" },
   2: { bg: "rgba(251,191,36,0.15)", text: "#fbbf24", label: "2nd" },
-  3: { bg: "rgba(255,255,255,0.08)", text: "#8B92B0", label: "3rd" },
 };
 
 const SOURCE: Record<string, { bg: string; border: string; text: string }> = {
@@ -119,138 +119,91 @@ function useConnectionPath(company: string, role: string) {
 
 function mapApiToKeyPeople(data: any, company: string, role: string): KeyPerson[] {
   const people: KeyPerson[] = [];
-  const targetMap: Record<string, KeyPerson> = {};
-  const seenConnectors = new Set<string>();
+  const seenPeople = new Set<string>();
 
-  // Helper: add a connector to a target person
-  function addConnector(targetName: string, targetTitle: string, targetCompany: string, targetUrl: string, connector: any) {
-    if (!connector?.name || seenConnectors.has(connector.name)) return;
-    seenConnectors.add(connector.name);
+  // Primary source: backend-enforced discover_targets (3–5).
+  const discoverTargets = Array.isArray(data.discover_targets) ? data.discover_targets : [];
+  for (const t of discoverTargets) {
+    const degree: 0 | 1 | 2 = t.degree === "1st" ? 1 : t.degree === "2nd" ? 2 : 0;
+    const idKey = String(t.linkedin_url || t.name || "").toLowerCase();
+    if (!idKey || seenPeople.has(idKey)) continue;
+    seenPeople.add(idKey);
 
-    if (!targetMap[targetName]) {
-      targetMap[targetName] = {
-        id: "target-" + targetName,
-        name: targetName,
-        role: targetTitle,
-        company: targetCompany || company,
-        connectionDegree: 2,
-        linkedinUrl: targetUrl || "",
-        avatarInitials: initials(targetName),
-        avatarColor: color(targetName),
-        connections: [],
-      };
+    const connections: Connection[] = [];
+    if (degree === 1 && t.message) {
+      connections.push({
+        id: `d-${t.name}`,
+        name: t.name,
+        role: t.title || "",
+        company: company,
+        source: "mutual",
+        sourceLabel: "Direct connection",
+        avatarInitials: initials(t.name || ""),
+        avatarColor: color(t.name || ""),
+        linkedinUrl: t.linkedin_url || "",
+        suggestedMessage: t.message,
+      });
+    } else if (degree === 2 && t.connection_path?.connector_name) {
+      connections.push({
+        id: `c-${t.connection_path.connector_name}-${t.name}`,
+        name: t.connection_path.connector_name,
+        role: t.connection_path.connector_title || "",
+        company: t.connection_path.connector_company || "",
+        source: "mutual",
+        sourceLabel: "Mutual connection",
+        avatarInitials: initials(t.connection_path.connector_name || ""),
+        avatarColor: color(t.connection_path.connector_name || ""),
+        linkedinUrl: t.connection_path.connector_url || "",
+        suggestedMessage: t.message || `Hi ${t.connection_path.connector_name?.split(" ")[0] || "there"}, would you be open to introducing me to ${t.name} at ${company}?`,
+      });
     }
 
-    const firstName = connector.name.split(" ")[0];
-    const targetFirst = targetName.split(" ")[0];
-    const connRole = connector.title || "";
-    const connCompany = connector.company || "";
-
-    // Generate a personalized message based on the connector's background
-    let message = connector.suggestedMessage || "";
-    if (!message || message.startsWith("Ask ")) {
-      const templates = [
-        `Hi ${firstName}, hope you're doing well! I'm exploring the ${role} opportunity at ${company} and I noticed you're connected to ${targetFirst} at ${targetCompany || company}. Given your experience${connRole ? " as " + connRole : ""}${connCompany ? " at " + connCompany : ""}, I'd really value your perspective. Would you be open to a quick intro? Happy to share more context.`,
-        `${firstName}, I'm reaching out because I'm pursuing the ${role} role at ${company}. I see you know ${targetFirst}${targetCompany ? " at " + targetCompany : ""} — would you be comfortable making an introduction? I'd be happy to share my background first so you can decide if it's a good fit.`,
-        `Hi ${firstName}, I've been following ${company}'s growth and I'm very interested in the ${role} position. I noticed you're connected to ${targetFirst} — would you be willing to put in a word or make an intro? I'd really appreciate it and am happy to return the favor anytime.`,
-      ];
-      // Pick a template deterministically based on connector name
-      const idx = (connector.name.charCodeAt(0) + connector.name.length) % templates.length;
-      message = templates[idx];
-    }
-
-    targetMap[targetName].connections.push({
-      id: "conn-" + connector.name,
-      name: connector.name,
-      role: connRole,
-      company: connCompany,
-      source: "mutual",
-      sourceLabel: "Mutual connection",
-      avatarInitials: initials(connector.name),
-      avatarColor: color(connector.name),
-      linkedinUrl: connector.linkedin_url || "",
-      suggestedMessage: message,
+    people.push({
+      id: `target-${t.name || t.linkedin_url}`,
+      name: t.name || "Target Contact",
+      role: t.title || "",
+      company: company,
+      connectionDegree: degree,
+      linkedinUrl: t.linkedin_url || "",
+      avatarInitials: initials(t.name || "T"),
+      avatarColor: color(t.name || "Target"),
+      connections,
     });
   }
 
-  // Collect ALL paths — best + backups all point to target people with connectors
-  const allPaths = [];
-  if (data.best_path) allPaths.push(data.best_path);
-  for (const bp of (data.backup_paths || [])) allPaths.push(bp);
-
-  for (const path of allPaths) {
-    if (!path.target?.name || !path.connector?.name) continue;
-    addConnector(
-      path.target.name,
-      path.target.title || "",
-      path.target.company || "",
-      path.target.linkedin_url || "",
-      { ...path.connector, action: path.action },
-    );
-  }
-
-  // Add grouped targets to people list (2nd degree)
-  for (const person of Object.values(targetMap)) {
-    people.push(person);
-  }
-
-  // Direct contacts (1st degree) — skip anyone already in targets
-  const targetNames = new Set(Object.keys(targetMap));
-  for (const c of (data.direct_contacts || [])) {
-    if (targetNames.has(c.name)) continue;
-    people.push({
-      id: c.connection_id || c.name,
-      name: c.name,
-      role: c.title || "",
-      company: c.company || company,
-      connectionDegree: 1,
-      linkedinUrl: c.linkedin_url || "",
-      avatarInitials: initials(c.name),
-      avatarColor: color(c.name),
-      connections: [{
-        id: "d-" + c.name,
+  // Safety fallback: if backend returns fewer than 3, top up from direct contacts.
+  if (people.length < 3) {
+    for (const c of (data.direct_contacts || [])) {
+      const idKey = String(c.linkedin_url || c.name || "").toLowerCase();
+      if (!idKey || seenPeople.has(idKey)) continue;
+      seenPeople.add(idKey);
+      people.push({
+        id: c.connection_id || c.name,
         name: c.name,
         role: c.title || "",
         company: c.company || company,
-        source: "mutual",
-        sourceLabel: "Direct connection",
-        avatarInitials: initials(c.name),
-        avatarColor: color(c.name),
+        connectionDegree: 1,
         linkedinUrl: c.linkedin_url || "",
-        suggestedMessage: c.message || `Hi ${c.name.split(" ")[0]}, I'm exploring the ${role} role at ${company} and would love to connect.`,
-      }],
-    });
+        avatarInitials: initials(c.name || ""),
+        avatarColor: color(c.name || ""),
+        connections: [{
+          id: "d-" + c.name,
+          name: c.name,
+          role: c.title || "",
+          company: c.company || company,
+          source: "mutual",
+          sourceLabel: "Direct connection",
+          avatarInitials: initials(c.name || ""),
+          avatarColor: color(c.name || ""),
+          linkedinUrl: c.linkedin_url || "",
+          suggestedMessage: c.message || `Hi ${c.name.split(" ")[0]}, I'm exploring the ${role} role at ${company} and would love to connect.`,
+        }],
+      });
+      if (people.length >= 3) break;
+    }
   }
 
-  // FALLBACK: network brokers — senior/recruiter people in the user's network
-  // who can intro to anyone they know at the target company
-  for (const b of (data.network_brokers || [])) {
-    if (targetNames.has(b.name)) continue;
-    people.push({
-      id: b.connection_id || b.name,
-      name: b.name,
-      role: b.title || "",
-      company: b.company || "",
-      connectionDegree: 1,
-      linkedinUrl: b.linkedin_url || "",
-      avatarInitials: initials(b.name),
-      avatarColor: color(b.name),
-      connections: [{
-        id: "broker-" + b.name,
-        name: b.name,
-        role: b.title || "",
-        company: b.company || "",
-        source: "mutual",
-        sourceLabel: b.is_recruiter ? "Recruiter in your network" : "Senior contact in your network",
-        avatarInitials: initials(b.name),
-        avatarColor: color(b.name),
-        linkedinUrl: b.linkedin_url || "",
-        suggestedMessage: b.message || `Hi ${b.name.split(" ")[0]}, do you happen to know anyone at ${company}?`,
-      }],
-    });
-  }
-
-  return people;
+  return people.slice(0, 5);
 }
 
 /* ── Component ─────────────────────────────────────────────────────── */
@@ -347,7 +300,7 @@ export default function ConnectionPathPanel({ company, role }: ConnectionPathPro
         {people.map(person => {
           const open = openId === person.id;
           const ac = AVATAR[person.avatarColor] || AVATAR.blue;
-          const deg = DEGREE[person.connectionDegree] || DEGREE[3];
+          const degBadge = person.connectionDegree === 1 ? DEGREE[1] : person.connectionDegree === 2 ? DEGREE[2] : null;
 
           return (
             <div key={person.id}>
@@ -375,10 +328,12 @@ export default function ConnectionPathPanel({ company, role }: ConnectionPathPro
                     )}
                     <div className="text-[12px] text-[#8B92B0]">{person.role} · {person.company}</div>
                   </div>
-                  <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full shrink-0"
-                    style={{ background: deg.bg, color: deg.text }}>
-                    {deg.label}
-                  </span>
+                  {degBadge && (
+                    <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full shrink-0"
+                      style={{ background: degBadge.bg, color: degBadge.text }}>
+                      {degBadge.label}
+                    </span>
+                  )}
                   <button onClick={() => toggle(person.id)}
                     className="text-[12px] font-semibold px-4 py-2 rounded-lg shrink-0 transition-all duration-200"
                     style={{
@@ -406,9 +361,13 @@ export default function ConnectionPathPanel({ company, role }: ConnectionPathPro
                       <div className="text-[13px] text-[#22c55e] mt-0.5">
                         You're directly connected — reach out directly
                       </div>
-                    ) : (
+                    ) : person.connectionDegree === 2 ? (
                       <div className="text-[13px] text-[#8B92B0] mt-0.5">
                         {person.connections.length} {person.connections.length === 1 ? "person" : "people"} can introduce you — each from a different angle
+                      </div>
+                    ) : (
+                      <div className="text-[13px] text-[#8B92B0] mt-0.5">
+                        No direct link or verified mutual path yet. Visit their profile with the extension to map your network, or reach out from LinkedIn.
                       </div>
                     )}
                   </div>
@@ -444,8 +403,8 @@ export default function ConnectionPathPanel({ company, role }: ConnectionPathPro
                     </div>
                   )}
 
-                  {/* 2nd/3rd degree — connection rows */}
-                  {person.connectionDegree !== 1 && (
+                  {/* 2nd degree — connection rows */}
+                  {person.connectionDegree === 2 && (
                     <div className="space-y-3">
                       {person.connections.map(conn => {
                         const cc = AVATAR[conn.avatarColor] || AVATAR[color(conn.name)];

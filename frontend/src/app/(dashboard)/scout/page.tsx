@@ -73,6 +73,19 @@ function ScoutPage() {
   const [tab, setTab] = useState("vacancies");
 
   const headers = getAuthHeaders(false);
+  const roleFromHeadline = (headline: string) => {
+    const h = (headline || "").trim();
+    if (!h) return "Senior Role";
+    if (h.includes(" — ")) {
+      const parts = h.split(" — ").map((p) => p.trim()).filter(Boolean);
+      if (parts.length >= 2) return parts[1];
+    }
+    if (h.includes(" - ")) {
+      const parts = h.split(" - ").map((p) => p.trim()).filter(Boolean);
+      if (parts.length >= 2) return parts[1];
+    }
+    return h;
+  };
 
   // Load on mount — use sessionStorage cache to avoid re-fetching on navigation
   useEffect(() => {
@@ -140,6 +153,7 @@ function ScoutPage() {
   }
 
   const TABS = [
+    { id: "intelligence", label: "Intelligence", count: predictions.length + signals.length },
     { id: "vacancies", label: "Current Vacancies", count: vacancies.length },
     { id: "predictions", label: "Future Openings", count: predictions.length },
     { id: "signals", label: "Hiring Signals", count: signals.length },
@@ -188,6 +202,15 @@ function ScoutPage() {
             <div key={i} className="h-20 rounded-xl animate-pulse" style={{ background: "rgba(255,255,255,0.04)" }} />
           ))}
         </div>
+      )}
+
+      {/* ═══ INTELLIGENCE (merged, additive) ═══ */}
+      {!loading && tab === "intelligence" && (
+        <IntelligenceTab
+          predictions={predictions}
+          signals={signals}
+          onAddPack={createAppAndPack}
+        />
       )}
 
       {/* ═══ CURRENT VACANCIES ═══ */}
@@ -262,8 +285,15 @@ function VacanciesTab({ onAddPack, vacancies = [] }: { onAddPack: (company: stri
     .filter((job: any) => {
       const company = job.company || "";
       const title = job.role || job.title || "";
+      const desc = (job.description || "").toLowerCase();
       if (!company || company === "Company" || company.length < 2) return false;
       if (title.includes("jobs in") || title.includes("Jobs in") || title.includes("Search Results")) return false;
+      if (
+        desc.includes("no longer accepting applications")
+        || desc.includes("job expired")
+        || desc.includes("application closed")
+        || title.toLowerCase().includes("no longer accepting applications")
+      ) return false;
       if (job.date) {
         try { if (Date.now() - new Date(job.date).getTime() > 60 * 86400000) return false; } catch {}
       }
@@ -278,7 +308,8 @@ function VacanciesTab({ onAddPack, vacancies = [] }: { onAddPack: (company: stri
       desc: job.description?.substring(0, 120) || "",
       source: job.source || "LinkedIn",
       date: job.date || "",
-      url: job.url || null,
+      // Some providers return source_url/job_url instead of url.
+      url: job.url || job.source_url || job.job_url || null,
     }));
 
   async function handleApply(company: string, role: string, url?: string | null) {
@@ -927,7 +958,7 @@ function SignalsTab({ signals = [] }: { signals?: import("@/lib/api").HiddenSign
                       <button
                         onClick={async () => {
                           try {
-                            const app = await createAppAndPack(card.company, card.headline.split(" — ")[0] || "Senior Role", card.url || null, "");
+                            const app = await createAppAndPack(card.company, roleFromHeadline(card.headline), card.url || null, "");
                             if (app?.id) router.push(`/applications/${app.id}/package`);
                             else router.push("/applications");
                           } catch (err: any) {
@@ -945,7 +976,7 @@ function SignalsTab({ signals = [] }: { signals?: import("@/lib/api").HiddenSign
                   </div>
                   {wayInCard === card.company && (
                     <div style={{ marginTop: 10 }}>
-                      <FindWayInPanel company={card.company} role={card.headline.split(" — ")[0] || "Senior Role"} headers={getAuthHeaders(false)} />
+                      <FindWayInPanel company={card.company} role={roleFromHeadline(card.headline)} headers={getAuthHeaders(false)} />
                     </div>
                   )}
                 </div>
@@ -1010,6 +1041,187 @@ function FreelanceTab() {
         Freelance and interim executive projects will appear here as they are detected. Set up your profile to start matching.
       </div>
       <a href="/profile" style={{ background: "#4d8ef5", color: "#fff", borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 600, textDecoration: "none" }}>Set up profile →</a>
+    </div>
+  );
+}
+
+function IntelligenceTab({
+  predictions = [],
+  signals = [],
+  onAddPack,
+}: {
+  predictions?: any[];
+  signals?: any[];
+  onAddPack: (company: string, role: string, url: string | null, description: string) => Promise<any>;
+}) {
+  const router = useRouter();
+  const [wayInTarget, setWayInTarget] = useState<{ company: string; role: string } | null>(null);
+  const [view, setView] = useState<"all" | "predictions" | "signals">("all");
+
+  const predictionItems = (predictions || []).slice(0, 12).map((p: any) => ({
+    kind: "prediction" as const,
+    company: p.company || "Unknown Company",
+    role: p.predicted_role || "Predicted Role",
+    confidence: Math.max(0, Math.min(100, Number(p.confidence || 0))),
+    timeline: p.timeline || "TBD",
+    summary: p.reasoning || p.trigger_event || "Predicted opportunity from market signals.",
+    sourceUrl: p.source_url || null,
+  }));
+
+  const signalItems = (signals || []).slice(0, 12).map((s: any) => ({
+    kind: "signal" as const,
+    company: s.company_name || "Unknown Company",
+    role: (Array.isArray(s.likely_roles) && s.likely_roles[0]) || "Potential Role",
+    confidence: (() => {
+      const raw = Number(s.confidence || 0);
+      return raw <= 1 ? Math.round(raw * 100) : Math.round(raw);
+    })(),
+    timeline: s.signal_type ? String(s.signal_type).replace(/_/g, " ") : "market signal",
+    summary: s.reasoning || "Hiring signal detected.",
+    sourceUrl: s.source_url || null,
+  }));
+
+  const mergedAll = [...predictionItems, ...signalItems]
+    .sort((a, b) => b.confidence - a.confidence)
+    .slice(0, 20);
+
+  const merged = mergedAll.filter((item) => {
+    if (view === "all") return true;
+    if (view === "predictions") return item.kind === "prediction";
+    if (view === "signals") return item.kind === "signal";
+    return true;
+  });
+
+  async function handleGenerate(company: string, role: string, url: string | null) {
+    try {
+      const app = await onAddPack(company, role, url, "");
+      if (app?.id) router.push(`/applications/${app.id}/package`);
+      else router.push("/applications");
+    } catch (err: any) {
+      const msg = err?.message || "Failed to start pack generation";
+      if (msg.startsWith("NO_CV:")) alert(msg.replace("NO_CV: ", ""));
+      else alert(msg);
+    }
+  }
+
+  if (!merged.length) {
+    return (
+      <div style={{ padding: "48px 24px", textAlign: "center" }}>
+        <div style={{ fontSize: 16, color: "rgba(255,255,255,0.4)", marginBottom: 10 }}>No intelligence items yet</div>
+        <div style={{ fontSize: 13, color: "rgba(255,255,255,0.25)" }}>
+          Run scout to populate future openings and hiring signals.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: "16px 8px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.7, color: "rgba(255,255,255,0.35)" }}>
+          Combined feed — future openings + hiring signals
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button
+            onClick={() => setView("all")}
+            style={{
+              fontSize: 10,
+              padding: "4px 10px",
+              borderRadius: 10,
+              cursor: "pointer",
+              border: view === "all" ? "1px solid rgba(77,142,245,0.5)" : "1px solid rgba(255,255,255,0.12)",
+              background: view === "all" ? "rgba(77,142,245,0.15)" : "rgba(255,255,255,0.03)",
+              color: view === "all" ? "#93c5fd" : "rgba(255,255,255,0.6)",
+            }}
+          >
+            All
+          </button>
+          <button
+            onClick={() => setView("predictions")}
+            style={{
+              fontSize: 10,
+              padding: "4px 10px",
+              borderRadius: 10,
+              cursor: "pointer",
+              border: view === "predictions" ? "1px solid rgba(77,142,245,0.5)" : "1px solid rgba(255,255,255,0.12)",
+              background: view === "predictions" ? "rgba(77,142,245,0.15)" : "rgba(255,255,255,0.03)",
+              color: view === "predictions" ? "#93c5fd" : "rgba(255,255,255,0.6)",
+            }}
+          >
+            Predictions
+          </button>
+          <button
+            onClick={() => setView("signals")}
+            style={{
+              fontSize: 10,
+              padding: "4px 10px",
+              borderRadius: 10,
+              cursor: "pointer",
+              border: view === "signals" ? "1px solid rgba(34,197,94,0.45)" : "1px solid rgba(255,255,255,0.12)",
+              background: view === "signals" ? "rgba(34,197,94,0.15)" : "rgba(255,255,255,0.03)",
+              color: view === "signals" ? "#86efac" : "rgba(255,255,255,0.6)",
+            }}
+          >
+            Signals
+          </button>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 10 }}>
+        {merged.map((item, i) => (
+          <div key={`${item.kind}-${item.company}-${i}`} style={{
+            background: "rgba(255,255,255,0.03)",
+            border: "0.5px solid rgba(255,255,255,0.08)",
+            borderRadius: 14,
+            padding: 16,
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: "#fff", lineHeight: 1.3 }}>{item.role}</div>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", marginTop: 3 }}>{item.company}</div>
+              </div>
+              <div style={{ fontSize: 26, fontWeight: 600, color: "#4d8ef5", lineHeight: 1 }}>
+                {item.confidence}<span style={{ fontSize: 11, opacity: 0.6 }}>%</span>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 10, background: item.kind === "prediction" ? "rgba(77,142,245,0.15)" : "rgba(34,197,94,0.15)", color: item.kind === "prediction" ? "#93c5fd" : "#86efac", textTransform: "uppercase" }}>
+                {item.kind}
+              </span>
+              <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 10, background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.6)" }}>
+                {item.timeline}
+              </span>
+            </div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", lineHeight: 1.5 }}>{item.summary}</div>
+            <div style={{ display: "flex", gap: 6, marginTop: "auto" }}>
+              <button
+                onClick={() => handleGenerate(item.company, item.role, item.sourceUrl)}
+                style={{ flex: 1, background: "#4d8ef5", color: "#fff", border: "none", borderRadius: 10, padding: "8px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}
+              >
+                Generate pack
+              </button>
+              <button
+                onClick={() => setWayInTarget(wayInTarget?.company === item.company ? null : { company: item.company, role: item.role })}
+                style={{ background: wayInTarget?.company === item.company ? "#4d8ef5" : "rgba(255,255,255,0.04)", color: wayInTarget?.company === item.company ? "#fff" : "rgba(255,255,255,0.65)", border: "0.5px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: "8px 12px", fontSize: 11, fontWeight: 500, cursor: "pointer" }}
+              >
+                Way in
+              </button>
+              {item.sourceUrl && (
+                <a href={item.sourceUrl} target="_blank" rel="noopener" style={{ background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.65)", border: "0.5px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: "8px 12px", fontSize: 11, fontWeight: 500, textDecoration: "none" }}>
+                  Source →
+                </a>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+      {wayInTarget && (
+        <div style={{ marginTop: 16 }}>
+          <FindWayInPanel company={wayInTarget.company} role={wayInTarget.role} headers={getAuthHeaders(false)} />
+        </div>
+      )}
     </div>
   );
 }

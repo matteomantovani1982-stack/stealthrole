@@ -3,6 +3,7 @@
 
 import { useState } from "react";
 import type { JobRun } from "@/lib/api";
+import { getAuthHeaders } from "@/lib/utils";
 import ConnectionPathPanel from "./connection-path";
 import FindWayInPanel from "./find-way-in";
 
@@ -18,6 +19,12 @@ interface Props {
   pack: JobRun;
   downloadUrl?: string;
   linkedinContacts?: LinkedInContact[];
+  baseCompany?: string;
+  baseRole?: string;
+  baseApplicationId?: string;
+  applicationUrl?: string;
+  /** True when job run reports do not match the application card (wrong pack linked) */
+  packContentMismatch?: boolean;
 }
 
 const TABS = [
@@ -29,7 +36,7 @@ const TABS = [
   { id: "contacts", label: "Contacts" },
 ];
 
-export default function PackDisplay({ pack, downloadUrl, linkedinContacts = [] }: Props) {
+export default function PackDisplay({ pack, downloadUrl, linkedinContacts = [], baseCompany = "", baseRole = "", baseApplicationId = "", applicationUrl = "", packContentMismatch = false }: Props) {
   const [tab, setTab] = useState("overview");
   const reports = (pack.reports || {}) as Record<string, any>;
   const positioning = (pack.positioning || {}) as Record<string, any>;
@@ -38,7 +45,46 @@ export default function PackDisplay({ pack, downloadUrl, linkedinContacts = [] }
   const salary = Array.isArray(reports.salary) ? reports.salary[0] || {} : reports.salary || {};
   const networking = reports.networking || {};
   const application = reports.application || {};
+  const effectiveCompany = (baseCompany || pack.company_name || company.company_name || "").trim();
+  const effectiveRole = (baseRole || pack.role_title || company.role_title || "").trim();
+  const wayInRoleContext = [
+    baseRole,
+    pack.role_title,
+    application?.title,
+    application?.job_title,
+    application?.position_title,
+  ]
+    .filter((v, i, arr) => !!v && arr.indexOf(v) === i)
+    .join(" | ");
+  const postingUrl =
+    (applicationUrl && String(applicationUrl).trim())
+    || (application?.source_url as string | undefined)
+    || (application?.job_url as string | undefined)
+    || (application?.url as string | undefined)
+    || ((pack as any)?.jd_url as string | undefined)
+    || null;
+  const jobSearchUrl =
+    effectiveCompany && effectiveRole
+      ? `https://www.google.com/search?q=${encodeURIComponent(`${effectiveRole} at ${effectiveCompany} job`)}`
+      : null;
   const execSummary = Array.isArray(reports.exec_summary) ? reports.exec_summary : [];
+  const looksLikeSpecificPerson = (value: string) => {
+    const s = (value || "").trim();
+    if (!s) return false;
+    const genericHints = /(recruiter|hiring manager|hr|talent|panel|team|founder|leadership|manager|director|vp|head|interviewer)/i;
+    if (genericHints.test(s)) return false;
+    // Heuristic: "First Last" style name with capitals.
+    return /^[A-Z][a-z]+(?:[-'][A-Z][a-z]+)?\s+[A-Z][a-z]+/.test(s);
+  };
+
+  const sanitizeActionStep = (value: string) => {
+    const s = safeStr(value || "");
+    if (!s) return s;
+    // Remove hard assumptions that target a specific person by name.
+    return s
+      .replace(/\bMessage [A-Z][a-z]+(?:[-'][A-Z][a-z]+)?\s+[A-Z][a-z]+[^.]*\./g, "Message the most relevant hiring manager or recruiter with a warm, specific ask.")
+      .replace(/\bFollow up with [A-Z][a-z]+(?:[-'][A-Z][a-z]+)?\b/g, "Follow up with the relevant hiring contact");
+  };
 
   return (
     <div className="space-y-4">
@@ -52,8 +98,8 @@ export default function PackDisplay({ pack, downloadUrl, linkedinContacts = [] }
             </div>
           ) : null}
           <div>
-            <div className="text-lg font-bold text-ink-900">{pack.role_title || company.role_title || "Role"}</div>
-            <div className="text-sm text-ink-400">{pack.company_name || company.company_name || "Company"}</div>
+            <div className="text-lg font-bold text-ink-900">{effectiveRole || "Role"}</div>
+            <div className="text-sm text-ink-400">{effectiveCompany || "Company"}</div>
           </div>
         </div>
         {downloadUrl && (
@@ -61,6 +107,18 @@ export default function PackDisplay({ pack, downloadUrl, linkedinContacts = [] }
             Download Tailored CV
           </a>
         )}
+        <div className="flex flex-wrap items-center gap-2">
+          {postingUrl && (
+            <a href={postingUrl} target="_blank" rel="noopener" className="px-4 py-2 bg-surface-100 text-ink-700 text-sm font-semibold rounded-lg hover:bg-surface-200 transition-colors">
+              View JD Source
+            </a>
+          )}
+          {!postingUrl && jobSearchUrl && (
+            <a href={jobSearchUrl} target="_blank" rel="noopener" className="px-4 py-2 bg-surface-100 text-ink-700 text-sm font-semibold rounded-lg hover:bg-surface-200 transition-colors">
+              Find job posting
+            </a>
+          )}
+        </div>
       </div>
 
       {/* Tab bar */}
@@ -83,7 +141,13 @@ export default function PackDisplay({ pack, downloadUrl, linkedinContacts = [] }
       {/* ═══ OVERVIEW ═══ */}
       {tab === "overview" && (
         <div className="space-y-4">
-          {execSummary.length > 0 && (
+          {packContentMismatch && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              Executive summary is hidden because the stored pack does not match this application. Use <strong>Regenerate pack</strong> above, then
+              return to this page.
+            </div>
+          )}
+          {!packContentMismatch && execSummary.length > 0 && (
             <Section title="Executive Summary" description="Key takeaways from your application analysis">
               {execSummary.map((line, i) => (
                 <BulletItem key={i} icon="→" color="brand">{line}</BulletItem>
@@ -96,10 +160,10 @@ export default function PackDisplay({ pack, downloadUrl, linkedinContacts = [] }
               {positioning.positioning_narrative && <p className="text-sm text-ink-600 leading-relaxed">{positioning.positioning_narrative}</p>}
             </Section>
           )}
-          {company.company_name && (
+          {(effectiveCompany || company.company_name) && (
             <Section title="Company Snapshot" description="What you need to know about this company">
               <div className="grid grid-cols-2 gap-2">
-                {company.company_name && <InfoRow label="Company" value={company.company_name} />}
+                <InfoRow label="Company" value={effectiveCompany || company.company_name} />
                 {company.hq_location && <InfoRow label="Location" value={company.hq_location} />}
                 {company.industry && <InfoRow label="Industry" value={company.industry} />}
                 {company.employee_count && <InfoRow label="Size" value={company.employee_count} />}
@@ -211,6 +275,11 @@ export default function PackDisplay({ pack, downloadUrl, linkedinContacts = [] }
       {/* ═══ INTERVIEW ═══ */}
       {tab === "interview" && (
         <div className="space-y-4">
+          {packContentMismatch && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              Interview steps below may describe the wrong company until you <strong>Regenerate pack</strong> for {effectiveCompany || "this application"}.
+            </div>
+          )}
           {Array.isArray(application.interview_process) && application.interview_process.length > 0 && (
             <Section title="Interview Process" description="Expected stages and what to prepare for each">
               <div className="space-y-2">
@@ -220,7 +289,9 @@ export default function PackDisplay({ pack, downloadUrl, linkedinContacts = [] }
                     <div>
                       <div className="text-sm font-semibold text-ink-900">{safeStr(step.stage_name || step.stage || step.who || step.format || (typeof step === "string" ? step : `Round ${i + 1}`))}</div>
                       {step.what_to_expect && <div className="text-[12px] text-ink-500 mt-0.5">{safeStr(step.what_to_expect)}</div>}
-                      {step.who && <div className="text-[12px] text-ink-500">Who: {safeStr(step.who)}</div>}
+                      {step.who && !looksLikeSpecificPerson(safeStr(step.who)) && (
+                        <div className="text-[12px] text-ink-500">Who: {safeStr(step.who)}</div>
+                      )}
                       {step.format && <div className="text-[12px] text-ink-500">Format: {safeStr(step.format)}</div>}
                       {step.duration && <div className="text-[12px] text-ink-500">Duration: {safeStr(step.duration)}</div>}
                       {step.how_to_prepare && <div className="text-[12px] text-ink-600 mt-1">Prep: {safeStr(step.how_to_prepare)}</div>}
@@ -252,11 +323,10 @@ export default function PackDisplay({ pack, downloadUrl, linkedinContacts = [] }
         <div className="space-y-4">
           {/* Connection Path — Find My Way In (shared component, always-open mode) */}
           <FindWayInPanel
-            company={company?.company_name || pack.company_name || ""}
-            role={pack.role_title || ""}
-            headers={typeof window !== "undefined" && localStorage.getItem("sr_token")
-              ? { Authorization: `Bearer ${localStorage.getItem("sr_token")}` }
-              : {}}
+            company={effectiveCompany}
+            role={wayInRoleContext || effectiveRole || ""}
+            applicationId={baseApplicationId || undefined}
+            headers={getAuthHeaders(false)}
             alwaysOpen={true}
           />
 
@@ -269,7 +339,7 @@ export default function PackDisplay({ pack, downloadUrl, linkedinContacts = [] }
                     <div className="w-16 shrink-0">
                       <span className="text-[11px] font-bold text-brand-600 uppercase">Day {step.day || i + 1}</span>
                     </div>
-                    <div className="text-sm text-ink-700">{safeStr(step.action || step)}</div>
+                    <div className="text-sm text-ink-700">{sanitizeActionStep(safeStr(step.action || step))}</div>
                   </div>
                 ))}
               </div>

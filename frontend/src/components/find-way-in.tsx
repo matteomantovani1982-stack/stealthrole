@@ -7,13 +7,15 @@ interface FindWayInPanelProps {
   company: string;
   role: string;
   headers: Record<string, string>;
+  applicationId?: string;
   // Optional: render the panel always-open (no toggle button) — used in pack contacts tab
   alwaysOpen?: boolean;
 }
 
-export default function FindWayInPanel({ company, role, headers, alwaysOpen = false }: FindWayInPanelProps) {
+export default function FindWayInPanel({ company, role, headers, applicationId, alwaysOpen = false }: FindWayInPanelProps) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
+  const [apiError, setApiError] = useState<string | null>(null);
   const [open, setOpen] = useState(alwaysOpen);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const [scanProgress, setScanProgress] = useState<string | null>(null);
@@ -21,31 +23,53 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
 
   // Auto-load when always-open mode (used in pack contacts tab)
   useEffect(() => {
+    setResult(null);
+    setApiError(null);
     if (alwaysOpen) {
       findPath(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [alwaysOpen, company]);
+  }, [alwaysOpen, company, role, applicationId]);
 
   async function findPath(forceRefresh = false) {
     if (result && !forceRefresh) { setOpen(!open); return; }
     setOpen(true);
     setLoading(true);
+    setApiError(null);
+    const co = (company || "").trim();
+    if (!co) {
+      setApiError("Contacts need a company name. Set the company on this application, then refresh.");
+      setResult(null);
+      setLoading(false);
+      return;
+    }
+    if (typeof window !== "undefined" && !localStorage.getItem("sr_token")) {
+      setApiError("You are not signed in (no session token). Open Contacts after logging in.");
+      setResult(null);
+      setLoading(false);
+      return;
+    }
     try {
       const res = await fetch("/api/v1/relationships/find-way-in", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...headers },
-        body: JSON.stringify({ company, role }),
+        body: JSON.stringify({ company: co, role: role || null, application_id: applicationId || null }),
       });
       if (res.ok) {
         const data = await res.json();
         console.log("[SR] find-way-in response:", JSON.stringify(data.direct_contacts?.slice(0, 3), null, 2));
         setResult(data);
+        setApiError(null);
       } else {
-        console.error("[SR] find-way-in failed:", res.status, await res.text().catch(() => ""));
+        const t = await res.text().catch(() => "");
+        console.error("[SR] find-way-in failed:", res.status, t);
+        setResult(null);
+        setApiError(`Contacts could not load (${res.status}). ${t.slice(0, 280) || "Check that the API is running and you are logged in."}`);
       }
     } catch (err) {
       console.error("[SR] find-way-in error:", err);
+      setResult(null);
+      setApiError("Network error while loading contacts. Check your connection and that the backend is running.");
     }
     setLoading(false);
   }
@@ -116,8 +140,89 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
     backup_paths = [],
     recommended_action,
     discover_targets = [],
+    discovery_meta = null,
     total_connections = 0,
   } = result || {};
+
+  const normalize = (s: string) => (s || "").toLowerCase().replace(/[^\w\s&]/g, " ").replace(/\s+/g, " ").trim();
+  const companyTokens = normalize(company)
+    .split(" ")
+    .filter((t) => t.length >= 4 && !["global", "group", "capital", "digital", "services", "solutions", "professional"].includes(t));
+  const roleTokens = normalize(role || "")
+    .split(" ")
+    .filter((t) => t.length >= 4 && !["manager", "director", "head", "senior", "lead", "practice"].includes(t));
+  const regionTokens = ["uae", "dubai", "abu dhabi", "mena", "gcc", "ksa", "saudi", "riyadh"].filter((t) =>
+    normalize(`${company} ${role || ""}`).includes(t),
+  );
+  const isUndisclosedTarget = /(undisclosed|confidential|stealth|unknown)/.test(normalize(company));
+
+  const contactLooksRelevant = (c: any) => {
+    const text = normalize([
+      c?.name || "",
+      c?.title || "",
+      c?.company || "",
+      c?.headline || "",
+      c?.snippet || "",
+      c?.why_relevant || "",
+    ].join(" "));
+    if (!text) return false;
+
+    const tokenHits = companyTokens.reduce((n, t) => n + (new RegExp(`\\b${t}\\b`).test(text) ? 1 : 0), 0);
+    const companyPass = companyTokens.length <= 1 ? tokenHits >= 1 : tokenHits >= 2;
+    // Profiles that clearly mention the target company (incl. ICs) are always relevant.
+    if (companyPass && !isUndisclosedTarget) return true;
+
+    const isRecruiting = /(recruit|talent|human resources|people operations|hiring)/.test(text);
+    const isHiringSide = /(hiring manager|head of|director|vice president|\bvp\b|general manager|country manager|team lead|\bmanager\b|lead|principal)/.test(text);
+    if (!isRecruiting && !isHiringSide) return false;
+
+    if (companyPass && isUndisclosedTarget) return true;
+
+    if (!isUndisclosedTarget && !companyPass) return false;
+
+    if (regionTokens.length > 0 && !isRecruiting) {
+      const hasRegion = regionTokens.some((rt) => new RegExp(`\\b${rt.replace(" ", "\\s+")}\\b`).test(text));
+      if (!hasRegion) return false;
+    }
+
+    if (roleTokens.length > 0 && !isRecruiting) {
+      const roleHit = roleTokens.some((rt) => new RegExp(`\\b${rt}\\b`).test(text));
+      if (!roleHit && !/(director|vice president|\bvp\b|head of|general manager|country manager|manager|lead)/.test(text)) return false;
+    }
+    return true;
+  };
+
+  const filteredDirect = direct_contacts.filter(contactLooksRelevant);
+  const filteredRecruiters = recruiter_contacts.filter(contactLooksRelevant);
+  const filteredVisited = visited_targets.filter(contactLooksRelevant);
+
+  // Primary output: guaranteed 3–5 people from discovery + network overlay.
+  const actionableTargets: any[] = (() => {
+    // Discovery output from backend is already relevance-ranked; do not over-filter
+    // it client-side or we can hide all contacts for valid opportunities.
+    const base = (Array.isArray(discover_targets) ? [...discover_targets] : [])
+      .filter((p: any) => !!(p?.name || p?.linkedin_url));
+    if (base.length >= 3) return base.slice(0, 5);
+    const extras = [...filteredDirect, ...filteredRecruiters, ...filteredVisited].map((c: any) => ({
+      name: c.name,
+      title: c.title || "",
+      linkedin_url: c.linkedin_url || "",
+      ...(c.is_visited_profile ? {} : { degree: "1st" as const }),
+      connection_path: null,
+      message: c.message || "",
+      why_relevant: c.intro_angle || `Relevant contact at ${company}`,
+    }));
+    const merged = [...base];
+    const seen = new Set(base.map((p: any) => `${(p.name || "").toLowerCase()}|${(p.linkedin_url || "").toLowerCase()}`));
+    for (const p of extras) {
+      const key = `${(p.name || "").toLowerCase()}|${(p.linkedin_url || "").toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(p);
+      if (merged.length >= 5) break;
+    }
+    return merged.slice(0, 5);
+  })();
 
   // Always return a usable LinkedIn URL — fall back to a search URL
   // so the "Open LinkedIn ↗" button NEVER does nothing.
@@ -132,7 +237,7 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
   if (best_path) introPaths.push(best_path);
   introPaths.push(...backup_paths);
 
-  const hasAnyPaths = direct_contacts.length > 0 || introPaths.length > 0 || recruiter_contacts.length > 0 || visited_targets.length > 0;
+  const hasAnyPaths = filteredDirect.length > 0 || introPaths.length > 0 || filteredRecruiters.length > 0 || filteredVisited.length > 0 || actionableTargets.length > 0;
 
   return (
     <>
@@ -144,24 +249,23 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
       {alwaysOpen && loading && (
         <div className="text-[12px] text-[#8B92B0] py-2">Mapping connections at {company}...</div>
       )}
-      {open && !loading && result && (
+      {open && !loading && (result || apiError) && (
         <div className="mt-3 space-y-2 animate-in fade-in slide-in-from-top-2 duration-300">
-          {/* ═══ DEBUG: near misses — connections that mention company but didn't match ═══ */}
-          {(result as any)?._debug_near_misses?.length > 0 && (
-            <div className="rounded-lg p-3 border border-orange-500/30 bg-orange-500/5">
-              <div className="text-[10px] font-bold text-orange-400 uppercase mb-1">
-                DEBUG: Near misses ({(result as any)._debug_near_misses.length}) — connections mentioning &quot;{company}&quot; but NOT matched
-              </div>
-              <div className="text-[9px] text-orange-300/70 mb-2">Total connections in DB: {(result as any)._debug_total_connections}</div>
-              {(result as any)._debug_near_misses.map((m: any, i: number) => (
-                <div key={i} className="text-[10px] text-orange-300/90 font-mono py-0.5 border-t border-orange-500/10">
-                  <strong>{m.name}</strong> | company=&quot;{m.current_company}&quot; | headline=&quot;{m.headline}&quot; | strength={m.relationship_strength}
-                </div>
-              ))}
+          {apiError && (
+            <div className="rounded-lg p-4 border border-red-500/40 bg-red-500/10 text-[13px] text-red-200">
+              <div className="font-semibold text-red-100 mb-1">Contacts unavailable</div>
+              <div className="text-[12px] text-red-200/90 leading-relaxed">{apiError}</div>
+              <button
+                type="button"
+                onClick={() => findPath(true)}
+                className="mt-3 text-[11px] font-semibold text-white bg-red-600/80 hover:bg-red-600 px-3 py-1.5 rounded-lg"
+              >
+                Retry
+              </button>
             </div>
           )}
           {/* ═══ Scan progress banner (extension) ═══ */}
-          {scanProgress && (
+          {result && scanProgress && (
             <div className="rounded-lg p-3 border border-violet-500/30" style={{ background: "rgba(139,92,246,0.12)" }}>
               <div className="flex items-center gap-2">
                 <div className="w-4 h-4 rounded-full border-2 border-violet-400 border-t-transparent animate-spin shrink-0" />
@@ -184,7 +288,7 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
           )}
 
           {/* Recommended action + refresh */}
-          {recommended_action && (
+          {result && recommended_action && (
             <div className="rounded-lg p-3 border border-[#7F8CFF]/20" style={{ background: "rgba(127,140,255,0.08)" }}>
               <div className="flex items-center justify-between mb-1">
                 <div className="text-[10px] font-medium text-[#7F8CFF] uppercase">Recommended Action</div>
@@ -197,13 +301,13 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
           )}
 
           {/* ═══ LAYER 1 — DIRECT (1st degree, recruiter-free, sorted by seniority) ═══ */}
-          {direct_contacts.length > 0 && (
+          {result && filteredDirect.length > 0 && (
             <div className="rounded-lg p-3 border border-emerald-500/20" style={{ background: "rgba(52,211,153,0.06)" }}>
               <div className="text-[10px] font-medium text-emerald-400 uppercase mb-2">
-                Direct contacts at {company} · {result.total_direct} found
+                Direct contacts at {company} · {filteredDirect.length} found
               </div>
               <div className="space-y-3">
-                {direct_contacts.map((c: any, i: number) => {
+                {filteredDirect.map((c: any, i: number) => {
                   const tier = c.seniority_tier || "IC";
                   const tierLabel = tier === "C_SUITE" ? "C-Suite" : tier === "VP_DIRECTOR" ? "VP / Director" : tier === "MANAGER" ? "Manager" : "IC";
                   const tierColor = tier === "C_SUITE" ? "#fbbf24" : tier === "VP_DIRECTOR" ? "#4d8ef5" : tier === "MANAGER" ? "#a78bfa" : "#86efac";
@@ -225,7 +329,6 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
                             <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/10 text-[#8B92B0] font-medium">1st</span>
                           </div>
                           <div className="text-[11px] text-[#6B7194]">{c.title}{c.company ? ` · ${c.company}` : ""}</div>
-                          {c._debug_title_used && <div className="text-[9px] text-orange-400/80 font-mono">tier={c.seniority_tier} from=&quot;{c._debug_title_used}&quot;</div>}
                         </div>
                         {c.message ? (
                           <button
@@ -265,7 +368,7 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
           )}
 
           {/* ═══ LAYER 2 — INTRO PATHS (2nd degree) ═══ */}
-          {introPaths.length > 0 && (
+          {result && introPaths.length > 0 && (
             <div className="rounded-lg p-3 border border-[#4d8ef5]/20" style={{ background: "rgba(77,142,245,0.06)" }}>
               <div className="text-[10px] font-medium text-[#4d8ef5] uppercase mb-2">
                 Intro paths via your network · {introPaths.length}
@@ -348,16 +451,16 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
           )}
 
           {/* ═══ RECRUITERS AT TARGET COMPANY (separate bucket from direct contacts) ═══ */}
-          {recruiter_contacts.length > 0 && (
+          {result && filteredRecruiters.length > 0 && (
             <div className="rounded-lg p-3 border border-amber-500/20" style={{ background: "rgba(245,158,11,0.06)" }}>
               <div className="text-[10px] font-medium text-amber-400 uppercase mb-2">
-                Recruiters / talent at {company} · {result.total_recruiters} found
+                Recruiters / talent at {company} · {filteredRecruiters.length} found
               </div>
               <div className="text-[11px] text-[#6B7194] mb-2">
                 Reach out directly about open roles. They handle hiring pipeline.
               </div>
               <div className="space-y-3">
-                {recruiter_contacts.map((c: any, i: number) => {
+                {filteredRecruiters.map((c: any, i: number) => {
                   const linkUrl = linkedInUrlFor(c);
                   return (
                     <div key={i} className="rounded-lg p-2.5 bg-white/[0.04]">
@@ -389,13 +492,13 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
           )}
 
           {/* ═══ Visited targets (cold outreach to people you researched) ═══ */}
-          {visited_targets.length > 0 && (
+          {result && filteredVisited.length > 0 && (
             <div className="rounded-lg p-3 border border-amber-500/20" style={{ background: "rgba(245,158,11,0.06)" }}>
               <div className="text-[10px] font-medium text-amber-400 uppercase mb-2">
-                Profiles you researched at {company} ({result.total_visited})
+                Profiles you researched at {company} ({filteredVisited.length})
               </div>
               <div className="space-y-3">
-                {visited_targets.map((c: any, i: number) => (
+                {filteredVisited.map((c: any, i: number) => (
                   <div key={i} className="rounded-lg p-2.5 bg-white/[0.04]">
                     <div className="flex items-center gap-2.5 mb-1.5">
                       <div className="w-8 h-8 rounded-full bg-amber-500/15 text-amber-400 flex items-center justify-center text-[12px] font-bold shrink-0">
@@ -438,13 +541,14 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
           )}
 
           {/* Key people to contact — ALWAYS shown, with degree + paths */}
-          {discover_targets.length > 0 && (
+          {result && actionableTargets.length > 0 && (
             <div className="rounded-lg p-3 border border-violet-500/20" style={{ background: "rgba(139,92,246,0.06)" }}>
-              <div className="text-[10px] font-medium text-violet-400 uppercase mb-2">People you should contact at {company} · {discover_targets.length} found</div>
+              <div className="text-[10px] font-medium text-violet-400 uppercase mb-2">People you should contact at {company} · {actionableTargets.length} shown</div>
               <div className="space-y-2">
-                {discover_targets.map((person: any, i: number) => {
-                  const degreeColor = person.degree === "1st" ? "text-emerald-400" : person.degree === "2nd" ? "text-amber-400" : "text-gray-400";
-                  const degreeBg = person.degree === "1st" ? "bg-emerald-500/15" : person.degree === "2nd" ? "bg-amber-500/15" : "bg-gray-500/15";
+                {actionableTargets.map((person: any, i: number) => {
+                  const showDegree = person.degree === "1st" || person.degree === "2nd";
+                  const degreeColor = person.degree === "1st" ? "text-emerald-400" : "text-amber-400";
+                  const degreeBg = person.degree === "1st" ? "bg-emerald-500/15" : "bg-amber-500/15";
                   return (
                     <div key={i} className="p-2.5 rounded-lg bg-white/[0.04] border border-white/5">
                       <div className="flex items-center gap-2.5">
@@ -453,8 +557,10 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1.5">
-                            <a href={person.linkedin_url} target="_blank" rel="noopener" className="text-[12px] font-semibold text-[#7F8CFF] underline decoration-[#7F8CFF]/40 hover:text-white">{person.name}</a>
-                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${degreeBg} ${degreeColor}`}>{person.degree}</span>
+                            <a href={linkedInUrlFor(person)} target="_blank" rel="noopener" className="text-[12px] font-semibold text-[#7F8CFF] underline decoration-[#7F8CFF]/40 hover:text-white">{person.name}</a>
+                            {showDegree && (
+                              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${degreeBg} ${degreeColor}`}>{person.degree}</span>
+                            )}
                           </div>
                           {person.title && <div className="text-[11px] text-[#6B7194]">{person.title}</div>}
                           {person.why_relevant && <div className="text-[10px] text-violet-300/70 mt-0.5">{person.why_relevant}</div>}
@@ -472,7 +578,7 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
                           <div className="text-[11px] text-[#c4c9e0] bg-white/[0.03] rounded p-2 border border-white/5 leading-relaxed">{person.message}</div>
                           <div className="flex gap-2 mt-1.5">
                             <a
-                              href={person.degree === "2nd" && person.connection_path?.connector_url ? person.connection_path.connector_url : person.linkedin_url}
+                              href={person.degree === "2nd" && person.connection_path?.connector_url ? person.connection_path.connector_url : linkedInUrlFor(person)}
                               target="_blank" rel="noopener"
                               className="text-[10px] font-semibold text-[#4d8ef5] hover:text-white transition-colors"
                             >
@@ -487,10 +593,10 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
                           </div>
                         </div>
                       )}
-                      {/* 3rd degree: just show profile link */}
-                      {person.degree === "3rd" && (
+                      {/* Unlabeled (3rd+ / unknown): profile only — no degree pill */}
+                      {!showDegree && !person.message && (
                         <div className="mt-1.5 pl-10">
-                          <a href={person.linkedin_url} target="_blank" rel="noopener" className="text-[10px] text-violet-400 hover:text-white">
+                          <a href={linkedInUrlFor(person)} target="_blank" rel="noopener" className="text-[10px] text-violet-400 hover:text-white">
                             View profile on LinkedIn →
                           </a>
                         </div>
@@ -502,14 +608,41 @@ export default function FindWayInPanel({ company, role, headers, alwaysOpen = fa
             </div>
           )}
 
-          {!hasAnyPaths && discover_targets.length === 0 && (
+          {result && !hasAnyPaths && actionableTargets.length === 0 && (
             <div className="rounded-lg p-4 text-center border border-white/10" style={{ background: "rgba(255,255,255,0.04)" }}>
-              <div className="text-[13px] text-white font-medium mb-1">No direct or indirect connections at {company} yet</div>
-              <div className="text-[11px] text-[#6B7194] mb-3">
-                {total_connections > 0
-                  ? `You have ${total_connections} connections imported, but none at this company. Import more LinkedIn connections to improve coverage.`
-                  : "Import your LinkedIn connections to start finding paths into companies."}
-              </div>
+              {(() => {
+                const reason = (discovery_meta && (discovery_meta as any).reason) || "no_results";
+                if (reason === "undisclosed_company") {
+                  return (
+                    <>
+                      <div className="text-[13px] text-white font-medium mb-1">Company not disclosed in this JD</div>
+                      <div className="text-[11px] text-[#6B7194] mb-3">
+                        We can't search for contacts without a real company name. Update the application's company field once you confirm the employer.
+                      </div>
+                    </>
+                  );
+                }
+                if (reason === "no_search_api_key") {
+                  return (
+                    <>
+                      <div className="text-[13px] text-white font-medium mb-1">Contact discovery unavailable</div>
+                      <div className="text-[11px] text-[#6B7194] mb-3">
+                        The web search API isn't configured. Set <code className="text-amber-300">SERPER_API_KEY</code> on the backend to enable contact discovery.
+                      </div>
+                    </>
+                  );
+                }
+                return (
+                  <>
+                    <div className="text-[13px] text-white font-medium mb-1">No verified contacts found at {company} yet</div>
+                    <div className="text-[11px] text-[#6B7194] mb-3">
+                      {total_connections > 0
+                        ? `You have ${total_connections} connections imported, but none currently at ${company}. Web search also returned nothing usable for this query — try broadening the role or refreshing.`
+                        : "Import your LinkedIn connections to start finding paths into companies."}
+                    </div>
+                  </>
+                );
+              })()}
               <a href="/settings#linkedin" className="inline-block px-4 py-1.5 rounded-lg bg-[#4d8ef5] text-white text-[11px] font-semibold hover:bg-[#3b7de0] transition-colors">
                 Import connections →
               </a>

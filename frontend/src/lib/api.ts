@@ -26,7 +26,21 @@ export function getToken(): string | null {
 }
 
 export function setToken(token: string) {
-  localStorage.setItem("sr_token", token);
+  try {
+    const prev = typeof window !== "undefined" ? localStorage.getItem("sr_token") : null;
+    localStorage.setItem("sr_token", token);
+    // Avoid spamming sr-token-sync (extension + consoles) when the same JWT is written again
+    if (prev === token) return;
+  } catch {
+    /* ignore */
+  }
+  try {
+    window.dispatchEvent(
+      new CustomEvent("sr-token-sync", { detail: { token } })
+    );
+  } catch {
+    /* ignore */
+  }
 }
 
 export function getCurrentUserId(): string | null {
@@ -50,6 +64,12 @@ export function clearAllUserData() {
   for (const k of USER_DATA_SESSION_KEYS) {
     try { sessionStorage.removeItem(k); } catch {}
   }
+  // Same-tab logout does not fire the `storage` event; tell the extension explicitly.
+  try {
+    window.dispatchEvent(new CustomEvent("sr-token-sync", { detail: { token: null } }));
+  } catch {
+    /* ignore */
+  }
 }
 
 export function clearToken() {
@@ -61,41 +81,115 @@ export function isAuthenticated(): boolean {
   return !!getToken();
 }
 
+/** Serialize concurrent refresh calls (rotation-safe). */
+let refreshChain: Promise<boolean> | null = null;
+
+/**
+ * Exchange refresh token for a new access + refresh pair.
+ * Backend rotates refresh tokens; always persist both when present.
+ */
+async function refreshAccessToken(): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  if (refreshChain) return refreshChain;
+
+  refreshChain = (async (): Promise<boolean> => {
+    try {
+      const rt = localStorage.getItem("sr_refresh");
+      if (!rt) return false;
+      const res = await fetch(`${API_BASE}/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: rt }),
+      });
+      if (!res.ok) return false;
+      const data = await res.json();
+      if (data.access_token) setToken(data.access_token);
+      if (data.refresh_token) localStorage.setItem("sr_refresh", data.refresh_token);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      refreshChain = null;
+    }
+  })();
+
+  return refreshChain;
+}
+
+/**
+ * Fetch with Bearer auth; on 401, try one refresh + retry (except auth routes).
+ */
+async function authFetch(url: string, init: RequestInit = {}, isRetry = false): Promise<Response> {
+  const h = new Headers(init.headers as HeadersInit | undefined);
+  const token = getToken();
+  if (token) h.set("Authorization", `Bearer ${token}`);
+  if (init.body instanceof FormData) h.delete("Content-Type");
+
+  const res = await fetch(url, { ...init, headers: h });
+
+  if (res.status === 401 && !isRetry && typeof window !== "undefined") {
+    const authPath =
+      url.includes("/auth/login") ||
+      url.includes("/auth/register") ||
+      url.includes("/auth/refresh");
+    if (!authPath && (await refreshAccessToken())) {
+      return authFetch(url, init, true);
+    }
+  }
+  return res;
+}
+
+/** Avoid reloading /login — wipes DevTools Network; session is already cleared by clearToken(). */
+function redirectToLoginUnlessAlreadyThere() {
+  if (typeof window === "undefined") return;
+  const p = window.location.pathname;
+  if (p === "/login" || p.startsWith("/login/")) return;
+  window.location.href = "/login";
+}
+
+function redirectIfUnauthorized(res: Response) {
+  if (res.status === 401 && typeof window !== "undefined") {
+    clearToken();
+    redirectToLoginUnlessAlreadyThere();
+  }
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const token = getToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string>),
   };
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
 
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await authFetch(`${API_BASE}${path}`, {
     ...options,
     headers,
   });
 
   if (res.status === 401) {
     clearToken();
-    // Don't redirect if this is a login/register attempt — let the form show the error
     const isAuthAttempt =
       path.includes("/auth/login") || path.includes("/auth/register");
     if (!isAuthAttempt && typeof window !== "undefined") {
-      window.location.href = "/login";
+      redirectToLoginUnlessAlreadyThere();
     }
     const body = await res.json().catch(() => ({}));
-    throw new Error(formatApiError(body.detail) || "Invalid email or password");
+    // Backend custom errors use {error, type} (app/api/middleware/error_handler.py);
+    // FastAPI's stock errors use {detail}. Accept either.
+    throw new Error(
+      formatApiError(body.detail) || formatApiError(body.error) || "Invalid email or password"
+    );
   }
 
   if (res.status === 204) return undefined as T;
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(formatApiError(body.detail) || `API error ${res.status}`);
+    throw new Error(
+      formatApiError(body.detail) || formatApiError(body.error) || `API error ${res.status}`
+    );
   }
 
   return res.json();
@@ -137,7 +231,7 @@ export interface User {
 export async function login(email: string, password: string) {
   // SECURITY: clear ALL prior user data before storing new token
   clearAllUserData();
-  const data = await request<{ access_token: string }>(
+  const data = await request<{ access_token: string; refresh_token: string }>(
     "/auth/login",
     {
       method: "POST",
@@ -145,7 +239,7 @@ export async function login(email: string, password: string) {
     }
   );
   setToken(data.access_token);
-  // Login response doesn't include user — fetch it separately
+  if (data.refresh_token) localStorage.setItem("sr_refresh", data.refresh_token);
   const user = await getMe();
   setCurrentUserId(user.id);
   return { ...data, user };
@@ -158,7 +252,7 @@ export async function register(
 ) {
   // SECURITY: clear ALL prior user data before storing new token
   clearAllUserData();
-  const data = await request<{ access_token: string; user: User }>(
+  const data = await request<{ access_token: string; refresh_token: string; user: User }>(
     "/auth/register",
     {
       method: "POST",
@@ -166,6 +260,7 @@ export async function register(
     }
   );
   setToken(data.access_token);
+  if (data.refresh_token) localStorage.setItem("sr_refresh", data.refresh_token);
   if (data.user?.id) setCurrentUserId(data.user.id);
   return data;
 }
@@ -358,17 +453,16 @@ export async function getHiddenMarket(): Promise<{
 // ── CV Upload ────────────────────────────────────────────────────────────────
 
 export async function uploadCV(file: File): Promise<{ id: string; status: string }> {
-  const token = getToken();
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(`${API_BASE}/cvs`, {
+  const res = await authFetch(`${API_BASE}/cvs`, {
     method: "POST",
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
     body: form,
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || body.error || `Upload failed: ${res.status}`);
+    redirectIfUnauthorized(res);
+    throw new Error(formatApiError(body.detail) || formatApiError(body.error) || `Upload failed: ${res.status}`);
   }
   return res.json();
 }
@@ -398,6 +492,8 @@ export interface JobRun {
   updated_at: string;
   role_title?: string;
   company_name?: string;
+  /** Posting URL stored on the run (e.g. from application tracker) — enables View JD Source */
+  jd_url?: string | null;
   keyword_match_score?: number;
   pipeline_stage?: string;
   reports?: Record<string, unknown>;
@@ -465,19 +561,15 @@ export async function updateProfilePreferences(
     salaryMin?: string;
   },
 ): Promise<CandidateProfile> {
-  // This endpoint has /api/v1 baked in
-  const token = getToken();
-  const res = await fetch(`/api/v1/profiles/${profileId}`, {
+  const res = await authFetch(`/api/v1/profiles/${profileId}`, {
     method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ preferences }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || body.error || "Save failed");
+    redirectIfUnauthorized(res);
+    throw new Error(formatApiError(body.detail) || formatApiError(body.error) || "Save failed");
   }
   return res.json();
 }
@@ -523,36 +615,29 @@ export async function deleteExperience(profileId: string, expId: string): Promis
 }
 
 export async function importLinkedIn(profileId: string, linkedinUrl: string): Promise<Record<string, unknown>> {
-  const token = getToken();
-  const res = await fetch(`/api/v1/profiles/${profileId}/import-linkedin`, {
+  const res = await authFetch(`/api/v1/profiles/${profileId}/import-linkedin`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ linkedin_url: linkedinUrl }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || body.error || `Import failed: ${res.status}`);
+    redirectIfUnauthorized(res);
+    throw new Error(formatApiError(body.detail) || formatApiError(body.error) || `Import failed: ${res.status}`);
   }
   return res.json();
 }
 
 export async function importCVToProfile(profileId: string, cvId: string): Promise<Record<string, unknown>> {
-  // This endpoint has /api/v1 baked into the route — use raw fetch
-  const token = getToken();
-  const res = await fetch(`/api/v1/profiles/${profileId}/import-cv`, {
+  const res = await authFetch(`/api/v1/profiles/${profileId}/import-cv`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ cv_id: cvId }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || body.error || `Import failed: ${res.status}`);
+    redirectIfUnauthorized(res);
+    throw new Error(formatApiError(body.detail) || formatApiError(body.error) || `Import failed: ${res.status}`);
   }
   return res.json();
 }
@@ -562,19 +647,15 @@ export async function applyImportToProfile(
   importedData: Record<string, unknown>,
   overwrite: boolean = true,
 ): Promise<unknown> {
-  // This endpoint has /api/v1 baked into the route — use raw fetch
-  const token = getToken();
-  const res = await fetch(`/api/v1/profiles/${profileId}/apply-import`, {
+  const res = await authFetch(`/api/v1/profiles/${profileId}/apply-import`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ imported: importedData, overwrite_existing: overwrite }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || body.error || `Apply failed: ${res.status}`);
+    redirectIfUnauthorized(res);
+    throw new Error(formatApiError(body.detail) || formatApiError(body.error) || `Apply failed: ${res.status}`);
   }
   return res.json();
 }
@@ -583,17 +664,29 @@ export async function applyImportToProfile(
 export async function uploadAndPopulateProfile(
   file: File,
 ): Promise<{ cvId: string; profileId: string; extracted: Record<string, unknown> }> {
-  const token = getToken();
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(`${API_BASE}/quickstart/upload-and-populate`, {
+  const res = await authFetch(`${API_BASE}/quickstart/upload-and-populate`, {
     method: "POST",
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
     body: form,
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || body.error || `Upload failed: ${res.status}`);
+    redirectIfUnauthorized(res);
+    const detail = body.detail;
+    const errorMsg = body.error;
+    if (res.status === 502 || res.status === 503) {
+      throw new Error(
+        typeof detail === "string" && detail
+          ? detail
+          : typeof errorMsg === "string" && errorMsg
+            ? errorMsg
+            : "Server unreachable (502). Start the API on port 8000 (or set NEXT_PUBLIC_API_URL) and try again.",
+      );
+    }
+    throw new Error(
+      formatApiError(detail) || formatApiError(errorMsg) || `Upload failed: ${res.status}`,
+    );
   }
 
   const data = await res.json();
