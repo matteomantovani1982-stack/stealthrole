@@ -6,6 +6,11 @@
   "scripts": {
     "test": "pytest tests/ -v --tb=short",
     "lint": "ruff check app/ tests/",
-    "lint:fix": "ruff check --fix app/ tests/"
+    "lint:fix": "ruff check --fix app/ tests/",
+    "test:playwright:extension": "playwright test qa/tests/extension-linkedin.spec.js",
+    "test:playwright:extension:full": "playwright test qa/tests/full-stealthrole.ext.e2e.spec.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1"
   }
 }
