@@ -149,6 +149,7 @@ class ExperienceEntryResponse(BaseModel):
     fields_completed: int
     created_at: datetime
     updated_at: datetime
+    extracted_signals: dict | None = None
 
     model_config = {"from_attributes": True}
 
@@ -173,6 +174,7 @@ class ExperienceEntryResponse(BaseModel):
             fields_completed=entry.fields_completed,
             created_at=entry.created_at,
             updated_at=entry.updated_at,
+            extracted_signals=getattr(entry, "extracted_signals", None),
         )
 
 

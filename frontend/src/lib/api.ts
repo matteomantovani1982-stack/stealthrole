@@ -438,6 +438,7 @@ export interface ExperienceEntry {
   methods: string | null;
   is_complete: boolean;
   fields_completed: number;
+  extracted_signals: Record<string, unknown> | null;
 }
 
 export interface CandidateProfile {
