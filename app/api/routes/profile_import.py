@@ -182,26 +182,78 @@ def _demo_imported_profile_from_text(
                 )
             )
 
-    snippet = t[:12000] if len(t) > 12000 else t
     if not experiences:
-        experiences = [
-            ImportedExperience(
-                role_title="Full document (demo mode)",
-                company_name="Local extraction",
-                start_date="",
-                end_date="Present",
-                location="",
-                context=(
-                    "DEMO_MODE=true: content below is taken from your file; "
-                    "set DEMO_MODE=false for AI-structured extraction."
-                ),
-                contribution="",
-                outcomes="",
-                methods="",
-                hidden="",
-                freeform=snippet,
-            )
-        ]
+        # Try splitting by common CV patterns: date ranges signal new roles
+        date_pat = re.compile(
+            r"((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+            r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
+            r"\s+\d{4}|(?:20|19)\d{2})\s*[-–—to]+\s*"
+            r"((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+            r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
+            r"\s+\d{4}|(?:20|19)\d{2}|[Pp]resent|[Cc]urrent|[Nn]ow)",
+            re.IGNORECASE,
+        )
+        blocks: list[tuple[str, str, list[str]]] = []  # (role, company, body_lines)
+        cur_role = ""
+        cur_company = ""
+        cur_lines: list[str] = []
+
+        for ln in lines:
+            has_date = bool(date_pat.search(ln))
+            has_sep = any(s in ln for s in [" | ", " — ", " – ", " - ", " at ", " @ "])
+            is_header = (has_date or has_sep) and 10 < len(ln) < 140
+
+            if is_header:
+                # Save previous block if it has content
+                if cur_lines and len("\n".join(cur_lines).strip()) > 30:
+                    blocks.append((cur_role, cur_company, cur_lines))
+                cur_lines = []
+                parts = re.split(r"\s*[|—–@]\s*", ln, maxsplit=1)
+                cur_role = parts[0].strip()[:120] if parts else ln[:120]
+                cur_company = parts[1].strip()[:120] if len(parts) > 1 else ""
+            else:
+                cur_lines.append(ln)
+
+        # Last block
+        if cur_lines and len("\n".join(cur_lines).strip()) > 30:
+            blocks.append((cur_role, cur_company, cur_lines))
+
+        if blocks:
+            for role, company, body_lines in blocks:
+                body = "\n".join(body_lines).strip()[:6000]
+                experiences.append(
+                    ImportedExperience(
+                        role_title=role or "Role (demo extraction)",
+                        company_name=company or "Company (demo extraction)",
+                        start_date="",
+                        end_date="",
+                        location="",
+                        context="DEMO_MODE: heuristic split from your CV. Set DEMO_MODE=false for full AI extraction.",
+                        contribution="",
+                        outcomes="",
+                        methods="",
+                        hidden="",
+                        freeform=body,
+                    )
+                )
+        else:
+            # Ultimate fallback — one blob with clear message
+            snippet = t[:12000] if len(t) > 12000 else t
+            experiences = [
+                ImportedExperience(
+                    role_title="Full document (demo mode)",
+                    company_name="Local extraction",
+                    start_date="",
+                    end_date="Present",
+                    location="",
+                    context="DEMO_MODE=true: could not split into individual roles. Set DEMO_MODE=false for AI extraction.",
+                    contribution="",
+                    outcomes="",
+                    methods="",
+                    hidden="",
+                    freeform=snippet,
+                )
+            ]
 
     return ImportedProfile(
         full_name=full_name,
