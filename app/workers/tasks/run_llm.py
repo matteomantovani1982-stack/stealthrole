@@ -24,6 +24,7 @@ import structlog
 from celery import Task
 from celery.exceptions import SoftTimeLimitExceeded
 
+from app.config import should_skip_anthropic_api
 from app.workers.celery_app import celery
 from app.workers.db_utils import get_sync_db
 
@@ -167,11 +168,25 @@ def run_llm_task(self: Task, job_run_id: str) -> dict:
 
     # ── 4. Retrieval ──────────────────────────────────────────────────────
     retrieve_step_id = _create_job_step(run_uuid, "retrieve", self.request.id)
+    retrieval_data: dict = {}
     try:
         # Tag Sentry scope with run + user IDs for all events in this task
         set_job_run_context(str(job_run.id), str(job_run.user_id))
 
-        retrieval_data = _run_retrieval(jd_text, preferences, log)
+        if should_skip_anthropic_api():
+            retrieval_data = {
+                "company_overview": "",
+                "salary_data": "",
+                "news": [],
+                "competitors": "",
+                "contacts": [],
+                "sources": ["skipped-demo-mode"],
+                "partial_failure": True,
+                "error_notes": ["Web retrieval skipped in DEMO_MODE (faster local runs)"],
+            }
+            log.info("retrieval_skipped_demo_mode")
+        else:
+            retrieval_data = _run_retrieval(jd_text, preferences, log)
         _complete_job_step(retrieve_step_id, {
             "sources": retrieval_data.get("sources", []),
             "partial_failure": retrieval_data.get("partial_failure", False),

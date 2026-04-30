@@ -170,7 +170,8 @@ class JDExtractor:
 
         # Skip demo mode for JD extraction - use real Claude or return stripped text
         from app.config import settings as _settings
-        if _settings.demo_mode or not _settings.anthropic_api_key:
+        from app.config import should_skip_anthropic_api
+        if should_skip_anthropic_api() or not _settings.anthropic_api_key:
             # No LLM available — return stripped text directly
             if len(stripped_text) < 200:
                 raise JDExtractionError(

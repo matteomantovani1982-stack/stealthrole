@@ -116,6 +116,7 @@ def parse_cv_task(self: Task, cv_id: str) -> dict:
             )
             # Idempotent — if already parsed, return success
             if cv.status == CVStatus.PARSED:
+                dispatch_waiting_job_runs_after_cv_parse(cv_uuid, log)
                 return {
                     "cv_id": cv_id,
                     "status": "already_parsed",
@@ -224,6 +225,11 @@ def parse_cv_task(self: Task, cv_id: str) -> dict:
 
         log.info("cv_status_set_to_parsed")
 
+    # ── Start any Intelligence Packs that were queued before parse finished ──
+    # create_run skips run_llm while CV.status != PARSED — without this hook those
+    # JobRuns stayed CREATED forever (no Celery task).
+    dispatch_waiting_job_runs_after_cv_parse(cv_uuid, log)
+
     # ── Quality scoring (non-fatal) ───────────────────────────────────────
     try:
         from app.services.cv.quality_service import CVQualityService
@@ -289,6 +295,37 @@ def parse_cv_task(self: Task, cv_id: str) -> dict:
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
+
+def dispatch_waiting_job_runs_after_cv_parse(cv_id: uuid.UUID, log) -> int:
+    """
+    Dispatch run_llm for JobRuns that were created while this CV was still parsing.
+
+    Returns the number of runs started.
+    """
+    from sqlalchemy import select
+
+    from app.models.job_run import JobRun, JobRunStatus
+    from app.workers.tasks.run_llm import run_llm_task
+
+    n = 0
+    with get_sync_db() as db:
+        rows = db.execute(
+            select(JobRun).where(
+                JobRun.cv_id == cv_id,
+                JobRun.status == JobRunStatus.CREATED,
+            )
+        ).scalars().all()
+        for jr in rows:
+            task = run_llm_task.delay(str(jr.id))
+            jr.status = JobRunStatus.RETRIEVING
+            jr.celery_task_id = task.id
+            n += 1
+        if n:
+            db.commit()
+    if n:
+        log.info("dispatched_waiting_job_runs", cv_id=str(cv_id), count=n)
+    return n
+
 
 def _mark_cv_failed(cv_id: uuid.UUID, error_message: str) -> None:
     """

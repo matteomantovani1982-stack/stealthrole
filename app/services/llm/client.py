@@ -21,6 +21,7 @@ Two call modes:
 """
 
 import json
+import re
 import time
 from typing import Any, TypeVar
 from pydantic import BaseModel
@@ -33,7 +34,7 @@ from anthropic import (
     RateLimitError,
 )
 
-from app.config import settings
+from app.config import settings, should_skip_anthropic_api
 
 import structlog
 
@@ -305,7 +306,6 @@ _DEMO_REPORT_PACK = {
 
 def _extract_from_prompt(prompt: str, hints: list[str], default: str) -> str:
     """Pull a value out of the prompt text using simple keyword scanning."""
-    import re
     for hint in hints:
         m = re.search(hint + r"[:\s]+([^\n]{3,80})", prompt, re.IGNORECASE)
         if m:
@@ -313,168 +313,401 @@ def _extract_from_prompt(prompt: str, hints: list[str], default: str) -> str:
     return default
 
 
-def _build_demo_report_pack(user_prompt: str) -> dict:
-    """Build a demo ReportPack that references the actual JD content."""
-    import re
+def _extract_cv_and_jd_from_user_prompt(user_prompt: str) -> tuple[str, str]:
+    """
+    Split prompts from build_edit_plan_user_prompt / build_report_pack_user_prompt
+    into CV text and JD text so demo mode can populate JSON from real uploads.
+    """
+    text = user_prompt or ""
+    before, jd = text, ""
+    parts = re.split(r"\n\s*JOB DESCRIPTION:\s*", text, maxsplit=1, flags=re.IGNORECASE)
+    if len(parts) == 2:
+        before, jd = parts[0].strip(), parts[1].strip()
+    for chop in ("\nPREFERENCES:", "\nTASK:", "\nRESEARCH DATA", "\nCANDIDATE'S KNOWN CONTACTS"):
+        if chop in jd:
+            jd = jd.split(chop)[0].strip()
 
-    # Try to extract company name
-    company = _extract_from_prompt(user_prompt, ["company", "employer", "organisation", "organization"], "the company")
-    # Try to extract role title
-    role = _extract_from_prompt(user_prompt, ["role", "position", "title", "job title", "applying for"], "the role")
-    # Extract a couple of sentences from the JD for context
-    jd_snippet = user_prompt[:800].replace("\n", " ").strip()
+    cv_block = before
+    for marker in (
+        "CANDIDATE CV (structured):",
+        "CANDIDATE CV SUMMARY:",
+        "CANDIDATE CV:",
+    ):
+        if marker in cv_block:
+            cv_block = cv_block.split(marker, 1)[1].strip()
+            break
+    if "\nADDITIONAL CANDIDATE CONTEXT" in cv_block:
+        cv_block = cv_block.split("\nADDITIONAL CANDIDATE CONTEXT")[0].strip()
+
+    return cv_block.strip()[:24000], jd.strip()[:14000]
+
+
+def _jd_keywords(jd: str, limit: int = 12) -> list[str]:
+    if not jd.strip():
+        return []
+    words = re.findall(r"[A-Za-z][A-Za-z0-9\-]{2,}", jd)
+    bad = {
+        "the", "and", "for", "with", "that", "this", "from", "have", "will", "your",
+        "our", "are", "was", "been", "their", "they", "what", "when", "into", "than",
+        "such", "about", "must", "can", "all", "any", "each", "which", "them", "who",
+    }
+    out: list[str] = []
+    for w in words:
+        wl = w.lower()
+        if wl in bad or len(wl) < 3:
+            continue
+        if w not in out:
+            out.append(w)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _cv_snippets(cv: str, max_chunks: int = 5, chunk_len: int = 320) -> list[str]:
+    """Pull a few substantive lines from structured or plain CV text."""
+    lines: list[str] = []
+    for line in cv.splitlines():
+        t = line.strip()
+        if not t:
+            continue
+        t = re.sub(r"^\[P:\d+\]\s*", "", t)
+        t = t.lstrip("•-–·*●◦▪\t ")
+        if len(t) < 35:
+            continue
+        lines.append(t[:chunk_len])
+        if len(lines) >= max_chunks:
+            break
+    if lines:
+        return lines
+    stripped = cv.strip()
+    return [stripped[:chunk_len]] if stripped else []
+
+
+def _indexed_paragraph_lines(cv: str) -> list[tuple[int, str]]:
+    out: list[tuple[int, str]] = []
+    for m in re.finditer(r"\[P:(\d+)\]\s*(.+)", cv):
+        t = m.group(2).strip()
+        if len(t) > 25:
+            out.append((int(m.group(1)), t[:800]))
+    return out
+
+
+def _build_demo_edit_plan_from_prompt(user_prompt: str) -> dict:
+    """Demo EditPlan grounded in the user's CV + JD blobs (no Anthropic)."""
+    cv, jd = _extract_cv_and_jd_from_user_prompt(user_prompt)
+    idx_paras = _indexed_paragraph_lines(cv)
+    snips = _cv_snippets(cv)
+    kw = _jd_keywords(jd, 15)
+    jd_compact = " ".join(jd.split())[:500]
+
+    edits: list[dict] = []
+    for pin, text in idx_paras[:3]:
+        edits.append(
+            {
+                "paragraph_index": pin,
+                "operation": "replace_text",
+                "new_text": text[:520],
+                "rationale": (
+                    f"Echo JD themes and keywords ({', '.join(kw[:6])}) while keeping your facts."
+                    if kw
+                    else "Sharpen metrics and leadership language for this posting (demo mode)."
+                ),
+            }
+        )
+    if not edits and snips:
+        edits = [
+            {
+                "paragraph_index": 1,
+                "operation": "replace_text",
+                "new_text": snips[0][:520],
+                "rationale": "Anchor the lead with your strongest quantified outcome.",
+            }
+        ]
+
+    first_head = ""
+    for line in cv.splitlines()[:25]:
+        line = line.strip()
+        if (
+            line
+            and not line.startswith("[")
+            and "SECTION" not in line
+            and len(line) < 140
+        ):
+            first_head = line
+            break
+
+    return {
+        "keyword_match_score": min(96, 62 + min(30, len(kw) * 2)),
+        "headline_summary": {
+            "new_headline": (first_head[:90] if first_head else "Your headline | matched to this role")
+            + (f" | JD: {', '.join(kw[:3])}" if kw else ""),
+            "new_summary": (
+                " ".join(
+                    [
+                        "Snapshot from your CV tailored to this JD (demo — set DEMO_MODE=false with API credits for full AI).",
+                        snips[0] if snips else "",
+                        f"Role asks for: {jd_compact[:360]}…" if jd_compact else "",
+                    ]
+                ).strip()[:1200],
+            ),
+            "rationale": "Weave JD keywords into headline and summary; keep every claim truthful.",
+        },
+        "paragraph_edits": edits,
+        "keyword_additions": kw[:20] if kw else ["impact", "ownership", "cross-functional delivery"],
+        "sections_to_add": [],
+        "positioning_note": (
+            f"Lead with outcomes that mirror: {jd_compact[:280]}…"
+            if jd_compact
+            else "Mirror language from the JD in your first page (demo note)."
+        ),
+    }
+
+
+def _build_demo_report_pack(user_prompt: str) -> dict:
+    """Demo intelligence pack: fill sections from parsed CV + JD text in the prompt."""
+    cv, jd = _extract_cv_and_jd_from_user_prompt(user_prompt)
+    company = _extract_from_prompt(
+        user_prompt, ["company", "employer", "organisation", "organization"], "this employer"
+    )
+    role = _extract_from_prompt(
+        user_prompt, ["role", "position", "title", "job title", "applying for"], "this role"
+    )
+    jd_short = " ".join(jd.split())[:900] if jd.strip() else _extract_from_prompt(
+        user_prompt, ["JOB DESCRIPTION"], ""
+    )
+    snips = _cv_snippets(cv)
+    kw = _jd_keywords(jd)
+    cv_quote = " ".join(snips[:2])[:650] if snips else cv[:650]
+
+    jd_for_role = jd_short if len(jd_short) > 80 else (user_prompt[:600].replace("\n", " "))
 
     return {
         "company": {
-            "company_name": company[:80],
-            "hq_location": "As per JD",
-            "business_description": f"Based on the job description provided: {jd_snippet[:300]}",
-            "revenue_and_scale": "Review the JD and company website for scale details.",
+            "company_name": company[:120],
+            "hq_location": "See JD / research (demo — no live crawl)",
+            "business_description": (
+                f"Derived from the job description you supplied: {jd_for_role[:520]}…"
+            ),
+            "revenue_and_scale": "Infer scale from JD and careers page when not in demo.",
             "recent_news": [
-                "Enable real AI (add Anthropic credits) for live company research",
-                "Demo mode — company intel will be sourced from web in production",
+                "DEMO_MODE: company news is not web-fetched. Add API access for live intel.",
+                jd_for_role[:200] + "…" if len(jd_for_role) > 40 else "Use JD text for priorities.",
             ],
             "strategic_priorities": [
-                "Priorities will be extracted from the JD in production",
-                "Enable real AI mode for full intelligence report",
+                f"JD signals: {jd_for_role[:220]}…",
+                "Align your stories to these themes in interviews.",
             ],
-            "culture_signals": ["Demo mode — culture signals will be researched in production"],
-            "competitor_landscape": "Competitor analysis available in production mode.",
-            "hiring_signals": ["This is a demo — real hiring signals sourced from web in production"],
-            "red_flags": [],
+            "culture_signals": [
+                f"From posting tone: {jd_for_role[80:300]}…"
+                if len(jd_for_role) > 160
+                else "Read JD for cultural hints (collaboration, pace, ownership)."
+            ],
+            "competitor_landscape": "Benchmark peers named in JD or common in that sector (demo placeholder).",
+            "hiring_signals": [f"Keywords to mirror: {', '.join(kw[:8])}" if kw else "Mirror JD language."],
+            "red_flags": ["Review employer reviews and leadership stability outside demo."],
         },
         "role": {
-            "role_title": role[:80],
-            "seniority_level": "See JD for seniority details",
-            "reporting_line": "See JD",
-            "what_they_really_want": f"Based on this JD: {jd_snippet[:400]}",
+            "role_title": role[:120],
+            "seniority_level": "As stated in JD",
+            "reporting_line": "See JD for line management / matrix",
+            "what_they_really_want": jd_for_role[:700] + ("…" if len(jd_for_role) > 700 else ""),
             "hidden_requirements": [
-                "Demo mode — hidden requirements surfaced by AI in production",
-                "Enable Anthropic API credits for full analysis",
+                "Unstated: culture fit and pace — read between lines in JD.",
+                "Map your proof points: " + (cv_quote[:300] + "…"),
             ],
-            "hiring_manager_worries": ["Demo mode — add credits for real insight"],
-            "keyword_match_gaps": ["Demo mode — real gap analysis requires AI"],
-            "positioning_recommendation": "Add Anthropic API credits to get real positioning recommendations tailored to this exact JD.",
+            "hiring_manager_worries": [
+                "Can this hire deliver in the first 90 days?",
+                "Evidence you have done this before in similar context — use: " + cv_quote[:200] + "…",
+            ],
+            "keyword_match_gaps": [
+                f"JD emphasises: {', '.join(kw[:10])}" if kw else "Compare JD must-haves to your CV.",
+            ],
+            "positioning_recommendation": (
+                "Lead with: " + (snips[0][:200] + "…") if snips else "Lead with strongest quantified outcomes."
+            ),
         },
         "salary": [
             {
                 "title": role[:80],
                 "base_annual_aed_low": 360000,
-                "base_annual_aed_high": 600000,
+                "base_annual_aed_high": 620000,
                 "bonus_pct_low": 15,
-                "bonus_pct_high": 30,
-                "total_comp_note": "Demo figures — real salary benchmarks sourced from market data in production.",
-                "source": "Demo mode",
+                "bonus_pct_high": 35,
+                "total_comp_note": "Demo range — calibrate to role level and region.",
+                "source": "Demo heuristic",
                 "confidence": "low",
             }
         ],
         "networking": {
-            "target_contacts": ["Hiring Manager", "Head of Talent", "Team Lead", "CEO / Founder"],
-            "warm_path_hypotheses": ["Alumni network", "Shared connections on LinkedIn", "Industry events"],
-            "linkedin_search_strings": [f"{role} {company}", f"Hiring {role}"],
-            "outreach_template_hiring_manager": f"Hi [Name], I came across the {role} opening at {company} and believe my background is a strong match. I would love 15 minutes to discuss — happy to share context on what I have been working on.",
-            "outreach_template_alumni": "Hi [Name], I saw you work at [Company] — I am exploring a similar move and would value your perspective. 15 minutes?",
-            "outreach_template_recruiter": f"Hi [Name], I am actively looking at {role} roles and believe I am a strong fit for {company}. Can we connect?",
+            "target_contacts": ["Hiring manager", "Recruiter", "Peer in function", "Alumni"],
+            "warm_path_hypotheses": [
+                "Peers at target company",
+                "School / programme alumni",
+                "Shared investors or advisors",
+            ],
+            "linkedin_search_strings": [
+                f"{role} {company}",
+                f"{company} hiring {role}",
+            ],
+            "outreach_template_hiring_manager": (
+                f"Hi [Name] — I applied for {role} at {company}. My background includes: {cv_quote[:200]}… "
+                f"Happy to share how I would approach the priorities in the posting."
+            ),
+            "outreach_template_alumni": (
+                "Hi [Name] — I noticed you are at [Company]. I am in process for a role there "
+                "and would value 10–15 minutes of your perspective."
+            ),
+            "outreach_template_recruiter": (
+                f"Hi [Name] — re: {role} at {company}. Key fit: {cv_quote[:180]}… Open to a short call."
+            ),
             "seven_day_action_plan": [
-                "Day 1: Apply via the portal and connect with the recruiter on LinkedIn",
-                "Day 2: Research the company — latest news, funding, leadership team",
-                "Day 3: Identify and reach out to the hiring manager",
-                "Day 4: Connect with 2-3 employees at the company",
-                "Day 5: Follow up with recruiter if no response",
-                "Day 6: Prepare your 30/60/90 day plan for the role",
-                "Day 7: Follow up on all outstanding outreach",
+                "Day 1: Submit application; message recruiter with 2-line fit summary from your CV.",
+                "Day 2: Map JD phrases to your bullet points; update CV headline if needed.",
+                "Day 3: Short list 5 stakeholders; send tailored notes.",
+                "Day 4–5: Follow-ups; prep 3 stories from: " + (snips[0][:120] + "…" if snips else "your CV."),
+                "Day 6: Mock interview against JD themes.",
+                "Day 7: Thank-you and pipeline next roles.",
             ],
         },
         "application": {
-            "positioning_headline": f"The right candidate for {role[:50]}",
-            "cover_letter_angle": f"Open by referencing what drew you to {company} specifically. Show you understand their current priorities. Keep it to 3 paragraphs — decision makers do not read long letters.",
+            "positioning_headline": (
+                f"{snips[0][:90]}…" if snips else f"Fit for {role} at {company}"
+            ),
+            "cover_letter_angle": (
+                f"Open with the clearest overlap between the JD and your proof: {cv_quote[:300]}…"
+            ),
             "interview_process": [
-                {"stage": "Recruiter Screen", "format": "video", "who": "HR / Talent team", "duration": "30 min", "what_to_expect": "Demo — real interview process mapping available with API credits."},
-                {"stage": "Hiring Manager Interview", "format": "video", "who": "Direct manager", "duration": "60 min", "what_to_expect": "Demo — add API credits for detailed stage-by-stage prep."},
+                {
+                    "stage": "Screen / first call",
+                    "format": "video",
+                    "who": "Recruiter or HM",
+                    "duration": "30–45 min",
+                    "what_to_expect": "Motivation, scope, examples. Prep stories from: " + (snips[0][:140] + "…" if snips else "CV."),
+                },
+                {
+                    "stage": "Deep dive",
+                    "format": "video",
+                    "who": "Hiring manager + panel",
+                    "duration": "60 min",
+                    "what_to_expect": f"Expect questions on: {jd_for_role[:200]}…",
+                },
             ],
             "question_bank": {
                 "behavioural": [
-                    {"question": "Tell me about a time you drove significant results under pressure.", "why_they_ask": "Demo — real questions tailored to this JD with API credits.", "your_story": "Demo — your specific stories will be mapped to questions in production.", "key_points": ["Add API credits for personalised coaching"]}
+                    {
+                        "question": f"Tell me about a time you delivered what this JD describes: {jd_for_role[:160]}…",
+                        "why_they_ask": "Maps posting to past behaviour.",
+                        "your_story": f"Use material from your CV: {snips[0][:260]}…" if snips else "Prepare CAR stories from last 3 roles.",
+                        "key_points": [s[:120] for s in snips[:3]] if snips else ["Metrics", "Stakeholders", "Outcome"],
+                    }
                 ],
                 "business_case": [
-                    {"question": f"How would you approach the key challenge facing {company}?", "case_type": "strategic", "how_to_frame": "Demo — real case prep available with API credits.", "watch_out": "Demo mode."}
+                    {
+                        "question": f"How would you prioritise in year one given: {jd_for_role[:180]}…?",
+                        "case_type": "prioritisation",
+                        "how_to_frame": "Problem → options → trade-offs → KPIs.",
+                        "watch_out": "Tie to JD language and your CV scale.",
+                    }
                 ],
-                "situational": [],
+                "situational": [
+                    {
+                        "question": "What would you do in the first 90 days?",
+                        "what_they_want": "Clarity and practicality.",
+                        "suggested_answer_angle": "Listen → quick wins → 90-day plan aligned to JD priorities.",
+                    }
+                ],
                 "culture_and_motivation": [
-                    {"question": f"Why {company}? Why now?", "ideal_answer_angle": "Demo — personalised answer angles available with API credits."}
-                ]
+                    {
+                        "question": f"Why {company} and why this move now?",
+                        "ideal_answer_angle": "Connect their mission to your track record (see CV excerpt).",
+                    }
+                ],
             },
             "questions_to_ask_them": [
-                {"question": "What does success look like in the first 6 months?", "why_powerful": "Demo — real strategic questions tailored to this role with API credits."}
+                {
+                    "question": "How is success measured for this role in the first 12 months?",
+                    "why_powerful": "Surfaces real expectations behind the JD.",
+                },
+                {
+                    "question": "What is the hardest problem the team needs solved this year?",
+                    "why_powerful": "Shows you think in their priorities.",
+                },
             ],
-            "interview_prep_themes": [
-                "Your experience relevant to this role",
-                "Why this company at this stage",
-                "Your 30/60/90 day plan",
-                "Specific examples with measurable outcomes",
-            ],
+            "interview_prep_themes": kw[:12] if kw else ["Impact", "Collaboration", "Execution"],
             "thirty_sixty_ninety": {
-                "30": "Listen, learn the team, understand current priorities, and identify quick wins.",
-                "60": "Begin executing on your first deliverable. Build trust with key stakeholders.",
-                "90": "Present a plan for the next quarter with clear metrics and priorities.",
+                "30": "Map stakeholders; align on priorities from JD; deliver one visible win.",
+                "60": "Run initiatives tied to: " + jd_for_role[:120] + "…",
+                "90": "Report outcomes vs plan; propose next horizon.",
             },
-            "risks_to_address": ["Demo mode — real risk analysis available with Anthropic API credits"],
-            "differentiators": ["Demo mode — your specific differentiators will be surfaced by AI in production"],
+            "risks_to_address": [
+                "Any gap between JD 'must haves' and CV — prepare crisp mitigation.",
+            ],
+            "differentiators": [s[:160] for s in snips[:4]] if snips else ["Your distinct outcomes"],
         },
         "exec_summary": [
-            f"Demo mode — this is placeholder data for the {role} application",
-            "Add Anthropic API credits to get real AI-powered intelligence",
-            "The CV tailoring and DOCX download are fully functional",
-            "Company intel, salary and contacts will be sourced from the web in production",
+            f"JD focus: {jd_for_role[:220]}…" if jd_for_role else "Align to posting.",
+            f"Your evidence: {cv_quote[:260]}…" if cv_quote else "Pull proof from uploaded CV.",
+            f"Keywords to echo: {', '.join(kw[:12])}" if kw else "Mirror JD phrasing.",
+            "DEMO_MODE: set DEMO_MODE=false with Anthropic credits for full-model packs.",
         ],
     }
 
 
 def _build_demo_outreach(user_prompt: str) -> dict:
-    """Build demo outreach messages that reference actual input."""
+    """Demo outreach grounded in extracted CV/JD."""
+    cv, jd = _extract_cv_and_jd_from_user_prompt(user_prompt)
     company = _extract_from_prompt(user_prompt, ["company", "COMPANY"], "the company")
     role = _extract_from_prompt(user_prompt, ["role", "TARGET ROLE", "position"], "the role")
+    snips = _cv_snippets(cv)
+    hook = snips[0][:220] if snips else jd[:220].replace("\n", " ")
     return {
         "linkedin_note": (
-            f"Hi — I came across the {role} opportunity at {company} and believe my background "
-            f"in scaling operations and teams across MENA is a strong match. Would love to connect "
-            f"and learn more about the role. Happy to share context on what I've been building."
+            f"Hi — {role} at {company} is a tight match. From my background: {hook}… "
+            f"Happy to compare notes in 15 minutes."
         ),
         "cold_email": (
-            f"Subject: {role} at {company} — Background That May Be Relevant\n\n"
-            f"Hi,\n\n"
-            f"I noticed {company} is looking for a {role}. I've spent the last 8+ years "
-            f"building and scaling teams across the region — most recently leading an 80-person "
-            f"engineering organisation with full P&L ownership.\n\n"
-            f"I'd welcome 15 minutes to explore whether there's a fit. Happy to share more "
-            f"detail on my background and what I've learned about scaling in this market.\n\n"
-            f"Best regards"
+            f"Subject: {role} — {hook[:48]}…\n\n"
+            f"I am applying for the {role} role. Relevant experience: {hook}… "
+            f"Open to a brief call.\n\nBest,"
         ),
         "follow_up": (
-            f"Hi — following up on my note about the {role} position at {company}. "
-            f"I remain very interested and would value the chance to connect. "
-            f"Happy to work around your schedule."
+            f"Following up on {role} at {company} — still keen. Highlights: {hook[:140]}…"
         ),
     }
 
 
 def _build_demo_positioning(user_prompt: str) -> dict:
-    """Build demo positioning that references actual JD content."""
+    """Demo positioning texts built from user's CV/JD excerpts."""
+    cv, jd = _extract_cv_and_jd_from_user_prompt(user_prompt)
     role = _extract_from_prompt(user_prompt, ["role", "position", "title", "applying for"], "this role")
     company = _extract_from_prompt(user_prompt, ["company", "employer", "organisation"], "the company")
+    snips = _cv_snippets(cv)
+    kw = _jd_keywords(jd)
+    jd_compact = " ".join(jd.split())[:380]
+
     return {
-        "positioning_headline": f"The right candidate for {role[:60]}",
-        "positioning_narrative": f"Demo mode — your real positioning narrative will be crafted by AI based on your CV and the {role} JD at {company}. Add Anthropic API credits to unlock this.",
+        "positioning_headline": (snips[0][:96] + "…") if snips else f"Evidence-led fit for {role}",
+        "positioning_narrative": (
+            "Positioning (demo — from your uploads): your CV shows "
+            + (snips[0][:320] + "… " if snips else "")
+            + (
+                f"The role asks for: {jd_compact}… Set DEMO_MODE=false for full AI narration."
+                if jd_compact
+                else ""
+            ).strip()
+        )[:1600],
         "key_differentiators": [
-            "Demo mode — your real differentiators will be surfaced in production",
-            "Based on your CV vs the JD requirements",
-            "Add API credits for personalised analysis",
-        ],
-        "angle_for_this_role": f"Add Anthropic API credits to get a real positioning angle for {role} at {company}.",
+            s[:160] for s in snips[:3]
+        ] if snips else ["Quantified outcomes", "Scope and scale", "Leadership cadence"],
+        "angle_for_this_role": (
+            f"Translate your track record ({snips[0][:120]}…) into outcomes they advertise: {', '.join(kw[:8])}"
+            if snips and kw
+            else f"Map your strongest wins to what {company} lists in the posting."
+        ),
         "what_to_emphasise_in_interview": [
-            "Demo mode — real interview emphasis points available in production",
-            "Will be tailored to this specific JD",
-            "Add API credits to unlock",
+            f"Keywords from JD: {', '.join(kw[:10])}" if kw else "Priorities spelled out in the posting",
+            snips[0][:140] + "…" if snips else "Top career proof points",
+            "Evidence of dealing with ambiguity and pace",
         ],
     }
 
@@ -733,10 +966,10 @@ class ClaudeClient:
         """
         last_exception: Exception | None = None
 
-        # Demo mode — skip real API call, generate context-aware fake data
-        if settings.demo_mode:
+        # Demo / local dev — skip real API (matches profile_import + health)
+        if should_skip_anthropic_api():
             if "CV Tailor" in system_prompt:
-                return _make_demo_result(_DEMO_EDIT_PLAN)
+                return _make_demo_result(_build_demo_edit_plan_from_prompt(user_prompt))
             elif "Intelligence Analyst" in system_prompt:
                 return _make_demo_result(_build_demo_report_pack(user_prompt))
             elif "CareerOS Intelligence" in system_prompt:
