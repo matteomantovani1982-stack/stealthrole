@@ -25,11 +25,12 @@
 # To run migrations only:
 #   docker compose -f docker/docker-compose.yml run --rm migrator
 
-version: "3.9"
-
 x-app-env: &app-env
   APP_ENV: development
+  DEMO_MODE: ${DEMO_MODE:-true}
   DATABASE_URL: postgresql+asyncpg://careeros:careeros@postgres:5432/careeros
+  DATABASE_POOL_SIZE: 2
+  DATABASE_MAX_OVERFLOW: 1
   REDIS_URL: redis://redis:6379/0
   CELERY_BROKER_URL: redis://redis:6379/0
   CELERY_RESULT_BACKEND: redis://redis:6379/1
