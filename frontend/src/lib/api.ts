@@ -443,7 +443,8 @@ export interface ExperienceEntry {
 export interface CandidateProfile {
   id: string;
   headline: string | null;
-  location: string | null;
+  // location lives inside global_context (no DB column on CandidateProfile);
+  // read via JSON.parse(global_context).location instead.
   status: string;
   global_context: string | null;
   preferences: Record<string, unknown> | null;

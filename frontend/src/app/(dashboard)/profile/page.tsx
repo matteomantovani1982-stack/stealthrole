@@ -526,7 +526,7 @@ export default function ProfilePage() {
                     full_name: String(ctx.full_name || ""),
                     email: String(ctx.email || ""),
                     phone: String(ctx.phone || ""),
-                    location: String(profile.location || ctx.location || ""),
+                    location: String(ctx.location || ""),
                     nationality: String(ctx.nationality || ""),
                     linkedin_url: String(ctx.linkedin_url || ""),
                   });
@@ -549,10 +549,10 @@ export default function ProfilePage() {
               {Boolean(ctx.full_name) && <Fld label="Name" value={String(ctx.full_name)} />}
               {Boolean(ctx.email) && <Fld label="Email" value={String(ctx.email)} />}
               {Boolean(ctx.phone) && <Fld label="Phone" value={String(ctx.phone)} />}
-              {Boolean(profile.location || ctx.location) && <Fld label="Location" value={String(profile.location || ctx.location)} />}
+              {Boolean(ctx.location) && <Fld label="Location" value={String(ctx.location)} />}
               {Boolean(ctx.nationality) && <Fld label="Nationality" value={String(ctx.nationality)} />}
               {Boolean(ctx.linkedin_url) && (<div><div className="text-[11px] font-medium text-[rgba(255,255,255,0.4)] uppercase mb-0.5">LinkedIn</div><a href={String(ctx.linkedin_url)} target="_blank" rel="noopener" className="text-sm text-[#4d8ef5] font-medium truncate block">{String(ctx.linkedin_url)}</a></div>)}
-              {!ctx.full_name && !ctx.email && !ctx.phone && !profile.location && !ctx.location && !ctx.nationality && !ctx.linkedin_url && (
+              {!ctx.full_name && !ctx.email && !ctx.phone && !ctx.location && !ctx.nationality && !ctx.linkedin_url && (
                 <div className="col-span-2 text-sm text-ink-300 italic">No personal details yet. Click Edit to add.</div>
               )}
             </div>
