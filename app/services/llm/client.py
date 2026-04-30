@@ -448,7 +448,7 @@ def _build_demo_edit_plan_from_prompt(user_prompt: str) -> dict:
                         snips[0] if snips else "",
                         f"Role asks for: {jd_compact[:360]}…" if jd_compact else "",
                     ]
-                ).strip()[:1200],
+                ).strip()[:1200]
             ),
             "rationale": "Weave JD keywords into headline and summary; keep every claim truthful.",
         },
