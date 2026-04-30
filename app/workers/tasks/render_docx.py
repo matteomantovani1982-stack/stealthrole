@@ -223,7 +223,9 @@ def render_docx_task(self: Task, job_run_id: str) -> dict:
             metadata={
                 "job_run_id": job_run_id,
                 "user_id": user_id,
-                "edits_applied": str(render_result.edits_applied),
+                # BuiltCV (rebuild/from_scratch) uses TemplateRenderResult which has
+                # no edits_applied — getattr fallback keeps both paths working.
+                "edits_applied": str(getattr(render_result, "edits_applied", 0)),
             },
         )
 
@@ -328,8 +330,9 @@ def render_docx_task(self: Task, job_run_id: str) -> dict:
         "job_run_id": job_run_id,
         "status": "completed",
         "output_s3_key": output_s3_key,
-        "edits_applied": render_result.edits_applied,
-        "edits_skipped": render_result.edits_skipped,
+        # BuiltCV path (TemplateRenderResult) has no edit counters — fall back to 0.
+        "edits_applied": getattr(render_result, "edits_applied", 0),
+        "edits_skipped": getattr(render_result, "edits_skipped", 0),
     }
 
 
