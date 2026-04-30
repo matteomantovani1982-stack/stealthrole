@@ -38,6 +38,25 @@ from app.models.candidate_profile import CandidateProfile, ExperienceEntry  # no
 from app.models.subscription import Subscription, UsageRecord  # noqa: E402, F401
 from app.models.cv_template import CVTemplate  # noqa: E402, F401
 from app.models.saved_job import SavedJob  # noqa: E402, F401
+from app.models.application import Application  # noqa: E402, F401
+from app.models.application_event import ApplicationEvent  # noqa: E402, F401
+from app.models.application_timeline import ApplicationTimeline  # noqa: E402, F401
+from app.models.auto_apply import AutoApplyProfile, AutoApplySubmission  # noqa: E402, F401
+from app.models.calendar_event import CalendarEvent  # noqa: E402, F401
+from app.models.credits import CreditBalance, CreditTransaction  # noqa: E402, F401
+from app.models.email_account import EmailAccount  # noqa: E402, F401
+from app.models.email_intelligence import EmailIntelligence  # noqa: E402, F401
+from app.models.email_scan import EmailScan  # noqa: E402, F401
+from app.models.hidden_signal import HiddenSignal  # noqa: E402, F401
+from app.models.interview import InterviewRound, CompensationBenchmark  # noqa: E402, F401
+from app.models.linkedin_connection import LinkedInConnection  # noqa: E402, F401
+from app.models.linkedin_conversation import LinkedInConversation  # noqa: E402, F401
+from app.models.linkedin_message import LinkedInMessage  # noqa: E402, F401
+from app.models.mutual_connection import MutualConnection  # noqa: E402, F401
+from app.models.scout_result import ScoutResult  # noqa: E402, F401
+from app.models.shadow_application import ShadowApplication  # noqa: E402, F401
+from app.models.user_intelligence import UserIntelligence  # noqa: E402, F401
+from app.models.warm_intro import WarmIntro  # noqa: E402, F401
 
 target_metadata = Base.metadata
 

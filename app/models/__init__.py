@@ -29,6 +29,8 @@ from app.models.interview import InterviewRound, CompensationBenchmark
 from app.models.email_intelligence import EmailIntelligence
 from app.models.user_intelligence import UserIntelligence
 from app.models.credits import CreditBalance, CreditTransaction
+from app.models.shadow_application import ShadowApplication
+from app.models.mutual_connection import MutualConnection
 
 __all__ = [
     "Base",
@@ -68,6 +70,8 @@ __all__ = [
     "UserIntelligence",
     "CreditBalance",
     "CreditTransaction",
+    "ShadowApplication",
+    "MutualConnection",
 ]
 
 from app.models.user import User
