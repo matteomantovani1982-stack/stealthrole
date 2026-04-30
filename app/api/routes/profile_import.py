@@ -183,77 +183,92 @@ def _demo_imported_profile_from_text(
             )
 
     if not experiences:
-        # Try splitting by common CV patterns: date ranges signal new roles
-        date_pat = re.compile(
-            r"((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
-            r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
-            r"\s+\d{4}|(?:20|19)\d{2})\s*[-–—to]+\s*"
-            r"((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
-            r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
-            r"\s+\d{4}|(?:20|19)\d{2}|[Pp]resent|[Cc]urrent|[Nn]ow)",
-            re.IGNORECASE,
+        # Heuristic: detect company/role blocks by looking for lines with year ranges
+        # Handles formats like:
+        #   "COMPANY NAME  City, Country (2019 – 2021)"
+        #   "COMPANY NAME | City | 2019 – Present"
+        #   "Role Title" on the next line
+        year_range_pat = re.compile(
+            r"[\(\s]?((?:19|20)\d{2})\s*[-–—]\s*((?:19|20)\d{2}|[Pp]resent|[Cc]urrent|[Nn]ow)[\)\s]?",
         )
-        blocks: list[tuple[str, str, list[str]]] = []  # (role, company, body_lines)
-        cur_role = ""
-        cur_company = ""
-        cur_lines: list[str] = []
 
-        for ln in lines:
-            has_date = bool(date_pat.search(ln))
-            has_sep = any(s in ln for s in [" | ", " — ", " – ", " - ", " at ", " @ "])
-            is_header = (has_date or has_sep) and 10 < len(ln) < 140
+        # Pass 1: find all lines that contain a year range — these are likely company/header lines
+        header_indices: list[int] = []
+        for i, ln in enumerate(lines):
+            if year_range_pat.search(ln) and len(ln) < 200:
+                header_indices.append(i)
 
-            if is_header:
-                # Save previous block if it has content
-                if cur_lines and len("\n".join(cur_lines).strip()) > 30:
-                    blocks.append((cur_role, cur_company, cur_lines))
-                cur_lines = []
-                parts = re.split(r"\s*[|—–@]\s*", ln, maxsplit=1)
-                cur_role = parts[0].strip()[:120] if parts else ln[:120]
-                cur_company = parts[1].strip()[:120] if len(parts) > 1 else ""
-            else:
-                cur_lines.append(ln)
+        if header_indices:
+            for idx, hi in enumerate(header_indices):
+                header_line = lines[hi]
 
-        # Last block
-        if cur_lines and len("\n".join(cur_lines).strip()) > 30:
-            blocks.append((cur_role, cur_company, cur_lines))
+                # Extract date range
+                dm = year_range_pat.search(header_line)
+                start_date = dm.group(1) if dm else ""
+                end_date = dm.group(2) if dm else ""
 
-        if blocks:
-            for role, company, body_lines in blocks:
-                body = "\n".join(body_lines).strip()[:6000]
-                experiences.append(
-                    ImportedExperience(
-                        role_title=role or "Role (demo extraction)",
-                        company_name=company or "Company (demo extraction)",
-                        start_date="",
-                        end_date="",
-                        location="",
-                        context="DEMO_MODE: heuristic split from your CV. Set DEMO_MODE=false for full AI extraction.",
-                        contribution="",
-                        outcomes="",
-                        methods="",
-                        hidden="",
-                        freeform=body,
+                # Company is the header line with date stripped
+                company = year_range_pat.sub("", header_line).strip()
+                # Clean trailing/leading punctuation and separators
+                company = re.sub(r"^[\s|—–\-,]+|[\s|—–\-,()]+$", "", company).strip()
+
+                # Role is typically the line AFTER the company header
+                role = ""
+                role_line_idx = hi + 1
+                if role_line_idx < len(lines):
+                    candidate_role = lines[role_line_idx].strip()
+                    # Role lines are short, no dates, no section markers
+                    if (
+                        candidate_role
+                        and len(candidate_role) < 100
+                        and not year_range_pat.search(candidate_role)
+                        and not candidate_role.startswith("===")
+                        and not candidate_role.upper() == candidate_role.upper()  # skip if ALL CAPS section headers
+                    ):
+                        # Only use as role if it's not another company header
+                        if role_line_idx not in header_indices:
+                            role = candidate_role
+
+                # Body: everything from the line after role (or after header) until next header
+                body_start = hi + (2 if role else 1)
+                body_end = header_indices[idx + 1] if idx + 1 < len(header_indices) else len(lines)
+                body = "\n".join(lines[body_start:body_end]).strip()[:6000]
+
+                if len(body) > 20 or role:
+                    experiences.append(
+                        ImportedExperience(
+                            role_title=role[:120] if role else "Role (demo extraction)",
+                            company_name=company[:120] if company else "Company (demo extraction)",
+                            start_date=start_date,
+                            end_date=end_date,
+                            location="",
+                            context="DEMO_MODE: heuristic split from your CV. Set DEMO_MODE=false for full AI extraction.",
+                            contribution="",
+                            outcomes="",
+                            methods="",
+                            hidden="",
+                            freeform=body,
+                        )
                     )
-                )
-        else:
-            # Ultimate fallback — one blob with clear message
-            snippet = t[:12000] if len(t) > 12000 else t
-            experiences = [
-                ImportedExperience(
-                    role_title="Full document (demo mode)",
-                    company_name="Local extraction",
-                    start_date="",
-                    end_date="Present",
-                    location="",
-                    context="DEMO_MODE=true: could not split into individual roles. Set DEMO_MODE=false for AI extraction.",
-                    contribution="",
-                    outcomes="",
-                    methods="",
-                    hidden="",
-                    freeform=snippet,
-                )
-            ]
+
+    # Ultimate fallback — still one blob if nothing matched
+    if not experiences:
+        snippet = t[:12000] if len(t) > 12000 else t
+        experiences = [
+            ImportedExperience(
+                role_title="Full document (demo mode)",
+                company_name="Local extraction",
+                start_date="",
+                end_date="Present",
+                location="",
+                context="DEMO_MODE=true: could not split into individual roles. Set DEMO_MODE=false for AI extraction.",
+                contribution="",
+                outcomes="",
+                methods="",
+                hidden="",
+                freeform=snippet,
+            )
+        ]
 
     return ImportedProfile(
         full_name=full_name,
