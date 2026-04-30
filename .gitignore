@@ -49,5 +49,14 @@ outputs/
 **/node_modules/
 **/.next/
 
+# Playwright persistent Chrome profile (LinkedIn login session for extension QA)
+qa/chrome-profile/*
+!qa/chrome-profile/.gitkeep
+
+# Generated build/test artifacts — never tracked
+*.tsbuildinfo
+test-results/
+qa/reports/
+
 # ── Claude ───────────────────────────────────────────────────────────────────
 .claude/
