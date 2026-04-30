@@ -392,6 +392,65 @@ def _indexed_paragraph_lines(cv: str) -> list[tuple[int, str]]:
     return out
 
 
+def _build_demo_built_cv(user_prompt: str) -> dict:
+    """Demo BuiltCV for the rebuild/from_scratch path (no Anthropic).
+
+    Renderer expects {name, sections[]} at minimum. We stitch a minimal
+    but valid BuiltCV from whatever profile blob shows up in the prompt.
+    """
+    # Try to pull a name out of the prompt; fall back to a generic placeholder.
+    name = "Candidate (demo mode)"
+    for ln in (user_prompt or "").splitlines():
+        s = ln.strip()
+        # Heuristic: short, non-key:value lines near the top often hold the name
+        if 2 < len(s) < 80 and ":" not in s and not s.startswith("="):
+            if s.split()[0:1] and s.split()[0][0].isupper():
+                name = s
+                break
+
+    return {
+        "name": name,
+        "headline": "Demo profile (DEMO_MODE=true — set DEMO_MODE=false with API credits for full AI rebuild).",
+        "contact": {
+            "email": "",
+            "phone": "",
+            "location": "",
+            "linkedin": "",
+        },
+        "summary": (
+            "Demo BuiltCV — heuristic placeholder generated locally. "
+            "Disable DEMO_MODE for a real LLM-rendered CV grounded in your profile + JD."
+        ),
+        "sections": [
+            {
+                "section_type": "experience",
+                "title": "Professional Experience",
+                "entries": [
+                    {
+                        "role": "Role (demo mode)",
+                        "company": "Company (demo mode)",
+                        "location": "",
+                        "start_date": "",
+                        "end_date": "Present",
+                        "bullets": [
+                            "DEMO_MODE: bullets would be tailored from your profile + JD here.",
+                            "Set DEMO_MODE=false with Anthropic credits for full output.",
+                        ],
+                    }
+                ],
+            },
+            {
+                "section_type": "skills",
+                "title": "Skills & Expertise",
+                "categories": [
+                    {"label": "Demo", "items": ["set DEMO_MODE=false for real skills extraction"]},
+                ],
+            },
+        ],
+        "page_recommendation": "1",
+    }
+
+
 def _build_demo_edit_plan_from_prompt(user_prompt: str) -> dict:
     """Demo EditPlan grounded in the user's CV + JD blobs (no Anthropic)."""
     cv, jd = _extract_cv_and_jd_from_user_prompt(user_prompt)
@@ -968,7 +1027,10 @@ class ClaudeClient:
 
         # Demo / local dev — skip real API (matches profile_import + health)
         if should_skip_anthropic_api():
-            if "CV Tailor" in system_prompt:
+            if "world-class CV writer" in system_prompt:
+                # CV builder path (rebuild / from_scratch) — needs BuiltCV shape
+                return _make_demo_result(_build_demo_built_cv(user_prompt))
+            elif "CV Tailor" in system_prompt:
                 return _make_demo_result(_build_demo_edit_plan_from_prompt(user_prompt))
             elif "Intelligence Analyst" in system_prompt:
                 return _make_demo_result(_build_demo_report_pack(user_prompt))
