@@ -32,7 +32,6 @@ class Settings(BaseSettings):
 
     # ── Security ───────────────────────────────────────────
     secret_key: str = Field(default="migration-only-secret-key-not-used-xx")
-    api_key_header: str = "X-API-Key"
 
     # ── Database ───────────────────────────────────────────
     database_url: str = Field(
@@ -77,7 +76,7 @@ class Settings(BaseSettings):
     # ── Claude API ─────────────────────────────────────────
     anthropic_api_key: str = Field(default="")
     claude_model: str = "claude-sonnet-4-6"
-    claude_max_tokens: int = 16000
+    claude_max_tokens: int = 8192
 
     # ── Feature flags ──────────────────────────────────────
     # When false, linkedin_messages rows are stored but not classified.
