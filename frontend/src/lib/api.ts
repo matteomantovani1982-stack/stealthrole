@@ -368,7 +368,7 @@ export async function uploadCV(file: File): Promise<{ id: string; status: string
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || `Upload failed: ${res.status}`);
+    throw new Error(body.detail || body.error || `Upload failed: ${res.status}`);
   }
   return res.json();
 }
@@ -475,7 +475,7 @@ export async function updateProfilePreferences(
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || "Save failed");
+    throw new Error(body.detail || body.error || "Save failed");
   }
   return res.json();
 }
@@ -532,7 +532,7 @@ export async function importLinkedIn(profileId: string, linkedinUrl: string): Pr
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || `Import failed: ${res.status}`);
+    throw new Error(body.detail || body.error || `Import failed: ${res.status}`);
   }
   return res.json();
 }
@@ -550,7 +550,7 @@ export async function importCVToProfile(profileId: string, cvId: string): Promis
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || `Import failed: ${res.status}`);
+    throw new Error(body.detail || body.error || `Import failed: ${res.status}`);
   }
   return res.json();
 }
@@ -572,7 +572,7 @@ export async function applyImportToProfile(
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || `Apply failed: ${res.status}`);
+    throw new Error(body.detail || body.error || `Apply failed: ${res.status}`);
   }
   return res.json();
 }
@@ -591,7 +591,7 @@ export async function uploadAndPopulateProfile(
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || `Upload failed: ${res.status}`);
+    throw new Error(body.detail || body.error || `Upload failed: ${res.status}`);
   }
 
   const data = await res.json();
