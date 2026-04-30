@@ -8,6 +8,7 @@ import {
   getActiveProfile,
   createProfile,
   listCVs,
+  deleteCV,
   importLinkedIn,
   uploadAndPopulateProfile,
   updateProfilePreferences,
@@ -699,7 +700,19 @@ export default function ProfilePage() {
           <div className="space-y-2">{cvs.map((cv) => (
             <div key={cv.id} className="flex items-center justify-between bg-[rgba(255,255,255,0.04)] rounded-lg px-4 py-2.5">
               <div className="flex items-center gap-3"><span className="text-lg">&#128196;</span><div><div className="text-sm font-medium text-white">{cv.original_filename}</div><div className="text-[11px] text-[rgba(255,255,255,0.4)]">{cv.status === "parsed" ? "Ready" : cv.status}</div></div></div>
-              {cv.quality_score !== null && <span className={`text-sm font-bold px-2 py-0.5 rounded ${cv.quality_score >= 70 ? "text-green-700 bg-green-50" : cv.quality_score >= 40 ? "text-amber-700 bg-amber-50" : "text-red-700 bg-red-50"}`}>{cv.quality_score}%</span>}
+              <div className="flex items-center gap-2">
+                {cv.quality_score !== null && <span className={`text-sm font-bold px-2 py-0.5 rounded ${cv.quality_score >= 70 ? "text-green-700 bg-green-50" : cv.quality_score >= 40 ? "text-amber-700 bg-amber-50" : "text-red-700 bg-red-50"}`}>{cv.quality_score}%</span>}
+                <button
+                  onClick={async () => {
+                    if (!confirm("Delete this CV?")) return;
+                    try {
+                      await deleteCV(cv.id);
+                      setCvs((prev) => prev.filter((c) => c.id !== cv.id));
+                    } catch {}
+                  }}
+                  className="text-[11px] text-red-400 hover:text-red-300 px-2 py-1 rounded hover:bg-[rgba(255,0,0,0.08)]"
+                >Delete</button>
+              </div>
             </div>
           ))}</div>
         </section>

@@ -164,6 +164,45 @@ async def get_cv_status(
     return await service.get_cv_status(cv_id=cv_id, user_id=x_user_id)
 
 
+@router.delete(
+    "/{cv_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Delete a CV",
+)
+async def delete_cv(
+    cv_id: uuid.UUID,
+    db: DB,
+    s3_client: S3Client,
+    x_user_id: CurrentUserId,
+) -> dict:
+    """Delete a CV and its S3 object. Only the owner can delete."""
+    from sqlalchemy import select, delete as sql_delete
+    from app.models.cv import CV
+
+    result = await db.execute(
+        select(CV).where(CV.id == cv_id, CV.user_id == x_user_id)
+    )
+    cv = result.scalar_one_or_none()
+    if not cv:
+        raise HTTPException(status_code=404, detail="CV not found")
+
+    # Delete from S3 if key exists
+    if cv.s3_key:
+        try:
+            from app.config import settings
+            s3_client.delete_object(
+                Bucket=settings.effective_s3_bucket,
+                Key=cv.s3_key,
+            )
+        except Exception:
+            pass  # S3 cleanup failure is non-fatal
+
+    await db.execute(sql_delete(CV).where(CV.id == cv_id))
+    await db.commit()
+
+    return {"status": "deleted", "cv_id": str(cv_id)}
+
+
 # ── Ingest endpoint ─────────────────────────────────────────────────────────
 
 # Keywords that indicate a job description rather than a CV

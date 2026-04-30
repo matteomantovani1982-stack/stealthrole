@@ -471,6 +471,10 @@ export async function listCVs(): Promise<{ id: string; original_filename: string
   return request("/cvs") || [];
 }
 
+export async function deleteCV(cvId: string): Promise<void> {
+  return request(`/cvs/${cvId}`, { method: "DELETE" });
+}
+
 // ── Job Runs (Intelligence Pack) ─────────────────────────────────────────────
 
 export interface JobRunCreate {
