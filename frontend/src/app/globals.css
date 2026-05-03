@@ -3,20 +3,24 @@
 @tailwind utilities;
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
 body {
-  @apply bg-surface-50 text-ink-900 font-sans antialiased;
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Scrollbar */
+/* Scrollbar — light theme */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { @apply bg-surface-300 rounded-full; }
+::-webkit-scrollbar-thumb { background: rgba(15,18,40,0.12); border-radius: 99px; }
 
 /* Card hover lift */
 .card-hover {
-  @apply transition-all duration-200;
+  transition: all 0.2s ease;
 }
 .card-hover:hover {
-  @apply -translate-y-0.5 shadow-md;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(15,18,40,0.08);
 }

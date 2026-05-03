@@ -1,191 +1,352 @@
-// @ts-nocheck
 "use client";
 
 import { useState } from "react";
-import { useAuth } from "@/lib/auth-context";
-import { getAuthHeaders } from "@/lib/utils";
+import { SR } from "@/lib/constants";
 
 const PLANS = [
   {
-    id: "free",
-    name: "Free",
-    price: 0,
-    annual: 0,
-    credits: 5,
-    features: ["5 credits/month", "Profile + tracker (50 jobs)", "1 Intelligence Pack", "LinkedIn import"],
-    cta: "Current Plan",
-    popular: false,
+    id: "recon",
+    name: "Recon",
+    label: "Free",
+    features: ["5 scout scans/month", "2 application packs", "Basic signals"],
   },
   {
-    id: "pro",
-    name: "Pro",
-    price: 29,
-    annual: 199,
-    credits: 30,
-    monthlyPriceId: "price_1TFK4M2NSvovIMwbAL0xrYLW",
-    annualPriceId: "price_1TFK4N2NSvovIMwbxnrto73i",
-    features: ["30 credits/month", "Full Intelligence Packs", "Email integration (Gmail/Outlook)", "LinkedIn integration", "Auto-apply (25/month)", "Hidden market signals"],
-    cta: "Upgrade to Pro",
-    popular: true,
+    id: "operator",
+    name: "Operator",
+    price: "$29/mo",
+    features: ["Unlimited scans", "20 packs/month", "Full signals + predictions", "Way-In contacts"],
   },
   {
-    id: "elite",
-    name: "Elite",
-    price: 59,
-    annual: 399,
-    credits: 100,
-    monthlyPriceId: "price_1TFK4O2NSvovIMwb49XsXfAk",
-    annualPriceId: "price_1TFK4O2NSvovIMwbIiYVJ14b",
-    features: ["100 credits/month", "Everything in Pro", "Unlimited Intelligence Packs", "100 auto-applies/month", "Priority processing", "WhatsApp alerts", "API access"],
-    cta: "Upgrade to Elite",
-    popular: false,
+    id: "command",
+    name: "Command",
+    price: "$79/mo",
+    features: ["Everything in Operator", "Priority Scout", "Unlimited packs", "API access", "Dedicated support"],
   },
 ];
 
-const CREDIT_PACKS = [
-  { name: "10 Credits", price: 5, credits: 10, priceId: "price_1TFK4Q2NSvovIMwbsOc7tNyt" },
-  { name: "40 Credits", price: 15, credits: 40, priceId: "price_1TFK4R2NSvovIMwbRRxwYjGC" },
-  { name: "100 Credits", price: 35, credits: 100, priceId: "price_1TFK4S2NSvovIMwbvd5Iljsm" },
+const USAGE_ITEMS = [
+  { label: "Scout scans", used: 3, total: 5, color: "#6366f1" },
+  { label: "Application packs", used: 1, total: 2, color: "#a855f7" },
+  { label: "API calls", used: 0, total: 100, color: "#d1d5db" },
 ];
 
-const CREDIT_COSTS = [
-  { action: "CV Tailoring", credits: 1 },
-  { action: "Intelligence Pack", credits: 3 },
-  { action: "Outreach Messages", credits: 1 },
-  { action: "Shadow Application", credits: 3 },
-  { action: "Auto-Apply", credits: 2 },
-  { action: "Deep Email Scan", credits: 2 },
-  { action: "Conversation Reply", credits: 1 },
+const INVOICES = [
+  { date: "Apr 2026", description: "Free plan", amount: "$0", status: "Paid" },
+  { date: "Mar 2026", description: "Free plan", amount: "$0", status: "Paid" },
+  { date: "Feb 2026", description: "Free plan", amount: "$0", status: "Paid" },
 ];
 
 export default function BillingPage() {
-  const { user } = useAuth();
-  const [annual, setAnnual] = useState(true);
-  const [loading, setLoading] = useState<string | null>(null);
-  const [message, setMessage] = useState("");
-
-  async function handleCheckout(priceId: string) {
-    if (!priceId) return;
-    setLoading(priceId);
-    try {
-      const res = await fetch("/api/v1/billing/checkout", {
-        method: "POST",
-        headers: getAuthHeaders(),
-        body: JSON.stringify({
-          price_id: priceId,
-          success_url: `${window.location.origin}/billing?success=true`,
-          cancel_url: `${window.location.origin}/billing?canceled=true`,
-        }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.detail || "Checkout failed");
-      }
-      const data = await res.json();
-      window.location.href = data.checkout_url;
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Checkout failed");
-      setLoading(null);
-    }
-  }
+  const [currentPlan] = useState("recon");
 
   return (
-    <div className="max-w-4xl space-y-8">
-      <div className="text-center">
-        <h1 className="text-3xl font-bold text-ink-900">Choose Your Plan</h1>
-        <p className="text-sm text-ink-400 mt-2">Scale your job search with AI-powered intelligence</p>
+    <div style={{ padding: "40px 0" }}>
+      {/* Header */}
+      <div style={{ marginBottom: "32px" }}>
+        <h1 style={{ fontSize: "28px", fontWeight: "700", color: "#0a0a0a", margin: "0 0 8px 0" }}>Billing</h1>
+        <p style={{ fontSize: "14px", color: "#666666", margin: "0" }}>Manage your plan, credits, and usage.</p>
       </div>
 
-      {message && <div className="px-4 py-3 rounded-lg bg-brand-50 text-brand-700 text-sm text-center">{message}</div>}
-
-      {/* Annual toggle */}
-      <div className="flex items-center justify-center gap-3">
-        <span className={`text-sm ${!annual ? "text-ink-900 font-medium" : "text-ink-400"}`}>Monthly</span>
-        <button onClick={() => setAnnual(!annual)} className={`relative w-12 h-6 rounded-full transition-colors ${annual ? "bg-brand-600" : "bg-surface-300"}`}>
-          <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${annual ? "translate-x-6" : "translate-x-0.5"}`} />
-        </button>
-        <span className={`text-sm ${annual ? "text-ink-900 font-medium" : "text-ink-400"}`}>Annual</span>
-        {annual && <span className="text-[11px] px-2 py-0.5 rounded-full bg-green-50 text-green-700 font-medium">Save 30%+</span>}
-      </div>
-
-      {/* Plan cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {PLANS.map((plan) => (
-          <div key={plan.id} className={`bg-white rounded-xl border p-6 flex flex-col ${plan.popular ? "border-brand-600 ring-1 ring-brand-600" : "border-surface-200"}`}>
-            {plan.popular && <div className="text-[11px] font-bold text-brand-600 uppercase mb-2">Most Popular</div>}
-            <h3 className="text-lg font-bold text-ink-900">{plan.name}</h3>
-            <div className="mt-2 mb-4">
-              {plan.price === 0 ? (
-                <span className="text-3xl font-bold text-ink-900">Free</span>
-              ) : (
-                <>
-                  <span className="text-3xl font-bold text-ink-900">${annual ? Math.round(plan.annual / 12) : plan.price}</span>
-                  <span className="text-sm text-ink-400">/mo</span>
-                  {annual && <div className="text-[12px] text-green-600 mt-1">${plan.annual}/year (billed annually)</div>}
-                </>
-              )}
+      {/* 2-column layout */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "32px" }}>
+        {/* Left column (~60%) */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "32px" }}>
+          {/* Plans Section */}
+          <div>
+            <h2 style={{ fontSize: "16px", fontWeight: "700", color: "#0a0a0a", margin: "0 0 16px 0" }}>Plans</h2>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px" }}>
+              {PLANS.map((plan) => {
+                const isActive = currentPlan === plan.id;
+                return (
+                  <div
+                    key={plan.id}
+                    style={{
+                      background: "#ffffff",
+                      border: `2px solid ${isActive ? SR.brand : SR.border}`,
+                      borderRadius: "14px",
+                      padding: "20px",
+                      backgroundColor: isActive ? `${SR.brand}10` : "#ffffff",
+                    }}
+                  >
+                    {isActive && (
+                      <div
+                        style={{
+                          display: "inline-block",
+                          fontSize: "11px",
+                          fontWeight: "700",
+                          color: SR.brand,
+                          background: `${SR.brand}20`,
+                          padding: "4px 8px",
+                          borderRadius: "4px",
+                          marginBottom: "12px",
+                        }}
+                      >
+                        Current plan
+                      </div>
+                    )}
+                    <h3 style={{ fontSize: "16px", fontWeight: "700", color: "#0a0a0a", margin: "0 0 8px 0" }}>
+                      {plan.name}
+                    </h3>
+                    {plan.label && (
+                      <p style={{ fontSize: "13px", color: "#666666", margin: "0 0 12px 0" }}>{plan.label}</p>
+                    )}
+                    {plan.price && (
+                      <p style={{ fontSize: "14px", fontWeight: "700", color: "#0a0a0a", margin: "0 0 12px 0" }}>
+                        {plan.price}
+                      </p>
+                    )}
+                    <ul style={{ margin: "0 0 16px 0", padding: "0", listStyle: "none" }}>
+                      {plan.features.map((feature, idx) => (
+                        <li
+                          key={idx}
+                          style={{
+                            fontSize: "13px",
+                            color: "#444444",
+                            margin: "0 0 8px 0",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "8px",
+                          }}
+                        >
+                          <span style={{ color: SR.brand, fontWeight: "700" }}>✓</span>
+                          {feature}
+                        </li>
+                      ))}
+                    </ul>
+                    {!isActive && (
+                      <button
+                        style={{
+                          width: "100%",
+                          padding: "10px 12px",
+                          background: SR.brand,
+                          color: "#ffffff",
+                          border: "none",
+                          borderRadius: "8px",
+                          fontSize: "13px",
+                          fontWeight: "600",
+                          cursor: "pointer",
+                          transition: "opacity 0.2s",
+                        }}
+                        onMouseEnter={(e) => ((e.target as HTMLElement).style.opacity = "0.9")}
+                        onMouseLeave={(e) => ((e.target as HTMLElement).style.opacity = "1")}
+                      >
+                        Upgrade
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-            <div className="text-sm font-semibold text-brand-600 mb-3">{plan.credits} credits/month</div>
-            <ul className="flex-1 space-y-2 mb-5">
-              {plan.features.map((f, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm text-ink-700">
-                  <span className="text-green-600 shrink-0 mt-0.5">✓</span>
-                  {f}
-                </li>
-              ))}
-            </ul>
+          </div>
+
+          {/* Usage Section */}
+          <div>
+            <h2 style={{ fontSize: "16px", fontWeight: "700", color: "#0a0a0a", margin: "0 0 16px 0" }}>Usage</h2>
+            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              {USAGE_ITEMS.map((item) => {
+                const percentage = (item.used / item.total) * 100;
+                return (
+                  <div key={item.label}>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        marginBottom: "8px",
+                      }}
+                    >
+                      <label style={{ fontSize: "13px", fontWeight: "600", color: "#0a0a0a" }}>
+                        {item.label}
+                      </label>
+                      <span style={{ fontSize: "12px", color: "#666666" }}>
+                        {item.used} of {item.total} used
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        background: SR.border,
+                        height: "6px",
+                        borderRadius: "3px",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div
+                        style={{
+                          background: item.color,
+                          height: "100%",
+                          width: `${percentage}%`,
+                          borderRadius: "3px",
+                          transition: "width 0.3s",
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Invoice History */}
+          <div>
+            <h2 style={{ fontSize: "16px", fontWeight: "700", color: "#0a0a0a", margin: "0 0 16px 0" }}>
+              Invoice History
+            </h2>
+            <div style={{ border: `1px solid ${SR.border}`, borderRadius: "8px", overflow: "hidden" }}>
+              <table
+                style={{
+                  width: "100%",
+                  borderCollapse: "collapse",
+                  fontSize: "13px",
+                }}
+              >
+                <thead>
+                  <tr style={{ background: "#f9f9f9", borderBottom: `1px solid ${SR.border}` }}>
+                    <th
+                      style={{
+                        padding: "12px",
+                        textAlign: "left",
+                        fontWeight: "600",
+                        color: "#0a0a0a",
+                      }}
+                    >
+                      Date
+                    </th>
+                    <th
+                      style={{
+                        padding: "12px",
+                        textAlign: "left",
+                        fontWeight: "600",
+                        color: "#0a0a0a",
+                      }}
+                    >
+                      Description
+                    </th>
+                    <th
+                      style={{
+                        padding: "12px",
+                        textAlign: "left",
+                        fontWeight: "600",
+                        color: "#0a0a0a",
+                      }}
+                    >
+                      Amount
+                    </th>
+                    <th
+                      style={{
+                        padding: "12px",
+                        textAlign: "left",
+                        fontWeight: "600",
+                        color: "#0a0a0a",
+                      }}
+                    >
+                      Status
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {INVOICES.map((invoice, idx) => (
+                    <tr
+                      key={idx}
+                      style={{
+                        borderBottom: idx < INVOICES.length - 1 ? `1px solid ${SR.border}` : "none",
+                      }}
+                    >
+                      <td style={{ padding: "12px", color: "#444444" }}>{invoice.date}</td>
+                      <td style={{ padding: "12px", color: "#444444" }}>{invoice.description}</td>
+                      <td style={{ padding: "12px", color: "#444444" }}>{invoice.amount}</td>
+                      <td style={{ padding: "12px" }}>
+                        <span
+                          style={{
+                            display: "inline-block",
+                            padding: "4px 8px",
+                            background: "#dcfce7",
+                            color: "#166534",
+                            borderRadius: "4px",
+                            fontSize: "12px",
+                            fontWeight: "600",
+                          }}
+                        >
+                          {invoice.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        {/* Right column (~40%) */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+          {/* Payment Methods */}
+          <div
+            style={{
+              background: "#ffffff",
+              border: `1px solid ${SR.border}`,
+              borderRadius: "8px",
+              padding: "20px",
+            }}
+          >
+            <h3 style={{ fontSize: "15px", fontWeight: "700", color: "#0a0a0a", margin: "0 0 16px 0" }}>
+              Payment Methods
+            </h3>
+            <p style={{ fontSize: "13px", color: "#666666", margin: "0 0 16px 0" }}>No payment method</p>
             <button
-              onClick={() => {
-                const priceId = annual ? plan.annualPriceId : plan.monthlyPriceId;
-                if (priceId) handleCheckout(priceId);
+              style={{
+                width: "100%",
+                padding: "10px 12px",
+                background: SR.brand,
+                color: "#ffffff",
+                border: "none",
+                borderRadius: "8px",
+                fontSize: "13px",
+                fontWeight: "600",
+                cursor: "pointer",
+                transition: "opacity 0.2s",
               }}
-              disabled={plan.id === "free" || loading !== null}
-              className={`w-full py-2.5 rounded-lg text-sm font-semibold transition-colors ${
-                plan.id === "free"
-                  ? "bg-surface-100 text-ink-400 cursor-default"
-                  : plan.popular
-                  ? "bg-brand-600 text-white hover:bg-brand-700"
-                  : "bg-ink-900 text-white hover:bg-ink-700"
-              } ${loading ? "opacity-50" : ""}`}
+              onMouseEnter={(e) => ((e.target as HTMLElement).style.opacity = "0.9")}
+              onMouseLeave={(e) => ((e.target as HTMLElement).style.opacity = "1")}
             >
-              {loading === (annual ? plan.annualPriceId : plan.monthlyPriceId) ? "Redirecting..." : plan.cta}
+              + Add payment method
             </button>
           </div>
-        ))}
-      </div>
 
-      {/* Credit packs */}
-      <div>
-        <h2 className="text-xl font-bold text-ink-900 text-center mb-2">Need More Credits?</h2>
-        <p className="text-sm text-ink-400 text-center mb-4">Top up anytime — credits never expire</p>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {CREDIT_PACKS.map((pack) => (
-            <div key={pack.name} className="bg-white rounded-xl border border-surface-200 p-5 text-center">
-              <div className="text-2xl font-bold text-brand-600 mb-1">{pack.credits}</div>
-              <div className="text-sm text-ink-400 mb-3">credits</div>
-              <div className="text-lg font-bold text-ink-900 mb-4">${pack.price}</div>
-              <button
-                onClick={() => handleCheckout(pack.priceId)}
-                disabled={loading !== null}
-                className="w-full py-2 bg-surface-100 text-ink-700 text-sm font-semibold rounded-lg hover:bg-surface-200 transition-colors"
-              >
-                {loading === pack.priceId ? "Redirecting..." : "Buy Credits"}
-              </button>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Credit costs table */}
-      <div className="bg-white rounded-xl border border-surface-200 p-6">
-        <h3 className="text-base font-bold text-ink-900 mb-4">What Credits Buy</h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {CREDIT_COSTS.map((item) => (
-            <div key={item.action} className="bg-surface-50 rounded-lg px-3 py-2.5 flex items-center justify-between">
-              <span className="text-sm text-ink-700">{item.action}</span>
-              <span className="text-sm font-bold text-brand-600">{item.credits}</span>
-            </div>
-          ))}
+          {/* Billing Details */}
+          <div
+            style={{
+              background: "#ffffff",
+              border: `1px solid ${SR.border}`,
+              borderRadius: "8px",
+              padding: "20px",
+            }}
+          >
+            <h3 style={{ fontSize: "15px", fontWeight: "700", color: "#0a0a0a", margin: "0 0 16px 0" }}>
+              Billing Details
+            </h3>
+            <p style={{ fontSize: "13px", color: "#666666", margin: "0 0 16px 0" }}>No billing address on file</p>
+            <button
+              style={{
+                width: "100%",
+                padding: "10px 12px",
+                background: "#ffffff",
+                color: SR.brand,
+                border: `1px solid ${SR.border}`,
+                borderRadius: "8px",
+                fontSize: "13px",
+                fontWeight: "600",
+                cursor: "pointer",
+                transition: "background-color 0.2s, color 0.2s",
+              }}
+              onMouseEnter={(e) => {
+                (e.target as HTMLElement).style.background = `${SR.brand}10`;
+              }}
+              onMouseLeave={(e) => {
+                (e.target as HTMLElement).style.background = "#ffffff";
+              }}
+            >
+              Add billing details
+            </button>
+          </div>
         </div>
       </div>
     </div>

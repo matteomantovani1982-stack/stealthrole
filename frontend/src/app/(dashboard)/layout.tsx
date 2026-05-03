@@ -22,8 +22,11 @@ export default function DashboardLayout({
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="w-6 h-6 border-2 border-brand-600 border-t-transparent rounded-full animate-spin" />
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ background: "#f4f5fb" }}
+      >
+        <div className="w-6 h-6 border-2 border-[#5B6CFF] border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
@@ -31,9 +34,12 @@ export default function DashboardLayout({
   if (!user) return null;
 
   return (
-    <div className="min-h-screen" style={{ background: "#03040f", color: "#ffffff" }}>
+    <div
+      className="min-h-screen"
+      style={{ background: "#f4f5fb", color: "#0c1030" }}
+    >
       <Sidebar />
-      <main className="ml-[180px] p-8 max-w-[1200px]">{children}</main>
+      <main className="ml-[200px]">{children}</main>
       <ExtensionBanner />
     </div>
   );
