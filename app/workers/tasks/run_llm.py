@@ -91,7 +91,7 @@ def run_llm_task(self: Task, job_run_id: str) -> dict:
                     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/121.0.0.0 Safari/537.36",
                     "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
                 }
-                _r = _httpx.get(job_run.jd_url, headers=_headers, timeout=20.0, follow_redirects=True)
+                _r = _httpx.get(job_run.jd_url, headers=_headers, timeout=15.0, follow_redirects=True)
                 _r.raise_for_status()
                 # Strip HTML quickly
                 import re as _re
@@ -104,6 +104,9 @@ def run_llm_task(self: Task, job_run_id: str) -> dict:
                 job_run.jd_text = jd_text
                 db.commit()
                 log.info("jd_fetched_from_url", chars=len(jd_text))
+            except SoftTimeLimitExceeded:
+                log.warning("jd_url_fetch_timed_out_soft_limit")
+                raise
             except Exception as _e:
                 log.warning("jd_url_fetch_failed", error=str(_e))
         parsed_content = dict(cv.parsed_content)
@@ -263,10 +266,44 @@ def run_llm_task(self: Task, job_run_id: str) -> dict:
         job_run.positioning = positioning
         job_run.reports = report_pack
         job_run.status = JobRunStatus.RENDERING
-        # Save role/company for kanban display
+        # Save role/company for kanban display + mismatch detection.
+        # Guard against demo-mode garbage: if the extracted value is too long
+        # or looks like a CV snippet, fall back to the parent application's
+        # company/role (which the user typed manually).
         if report_pack:
-            job_run.role_title = (report_pack.get("role") or {}).get("role_title") or None
-            job_run.company_name = (report_pack.get("company") or {}).get("company_name") or None
+            pack_role = (report_pack.get("role") or {}).get("role_title") or None
+            pack_company = (report_pack.get("company") or {}).get("company_name") or None
+
+            def _looks_like_garbage(val: str | None, max_len: int = 60) -> bool:
+                if not val:
+                    return True
+                if len(val) > max_len:
+                    return True
+                if val.lower() in ("this employer", "this role"):
+                    return True
+                return False
+
+            # Try to get the application's typed company/role as fallback
+            app_company = None
+            app_role = None
+            if _looks_like_garbage(pack_company) or _looks_like_garbage(pack_role):
+                from app.models.application import Application
+                from sqlalchemy import select
+                app = db.execute(
+                    select(Application).where(Application.job_run_id == run_uuid)
+                ).scalar_one_or_none()
+                if app:
+                    app_company = app.company
+                    app_role = app.role
+
+            job_run.company_name = (
+                pack_company if not _looks_like_garbage(pack_company)
+                else app_company or pack_company
+            )
+            job_run.role_title = (
+                pack_role if not _looks_like_garbage(pack_role)
+                else app_role or pack_role
+            )
         # Save match score immediately
         score = edit_plan.get("keyword_match_score")
         if score is not None:

@@ -33,7 +33,7 @@ Results stored in RetrievalResult.contacts and passed to the LLM.
 """
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import structlog
 

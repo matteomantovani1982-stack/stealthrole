@@ -1,4 +1,3 @@
-// @ts-nocheck
 "use client";
 
 import { useState } from "react";
@@ -210,28 +209,28 @@ export default function PackDisplay({ pack, downloadUrl, linkedinContacts = [], 
         <div className="space-y-4">
           {Array.isArray(positioning.key_differentiators) && positioning.key_differentiators.length > 0 && (
             <Section title="Your Strengths" description="What makes you stand out for this role">
-              {positioning.key_differentiators.map((item, i) => (
+              {positioning.key_differentiators.map((item: string, i: number) => (
                 <BulletItem key={i} icon="✓" color="green">{item}</BulletItem>
               ))}
             </Section>
           )}
           {Array.isArray(application.differentiators) && application.differentiators.length > 0 && (
             <Section title="Key Differentiators" description="Competitive advantages vs other candidates">
-              {application.differentiators.map((item, i) => (
+              {application.differentiators.map((item: string, i: number) => (
                 <BulletItem key={i} icon="◆" color="brand">{item}</BulletItem>
               ))}
             </Section>
           )}
           {Array.isArray(application.risks_to_address) && application.risks_to_address.length > 0 && (
             <Section title="Weaknesses & Risks" description="Gaps to address proactively in your application">
-              {application.risks_to_address.map((item, i) => (
+              {application.risks_to_address.map((item: string, i: number) => (
                 <BulletItem key={i} icon="⚠" color="amber">{item}</BulletItem>
               ))}
             </Section>
           )}
           {Array.isArray(application.gaps) && application.gaps.length > 0 && (
             <Section title="Skill Gaps" description="Areas where you may need to upskill or frame differently">
-              {application.gaps.map((item, i) => (
+              {application.gaps.map((item: string, i: number) => (
                 <BulletItem key={i} icon="—" color="red">{item}</BulletItem>
               ))}
             </Section>
@@ -283,7 +282,7 @@ export default function PackDisplay({ pack, downloadUrl, linkedinContacts = [], 
           {Array.isArray(application.interview_process) && application.interview_process.length > 0 && (
             <Section title="Interview Process" description="Expected stages and what to prepare for each">
               <div className="space-y-2">
-                {application.interview_process.map((step, i) => (
+                {application.interview_process.map((step: Record<string, string>, i: number) => (
                   <div key={i} className="flex gap-3 bg-surface-50 rounded-lg p-3">
                     <div className="w-8 h-8 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-sm font-bold shrink-0">{i + 1}</div>
                     <div>
@@ -303,14 +302,14 @@ export default function PackDisplay({ pack, downloadUrl, linkedinContacts = [], 
           )}
           {company.recent_news && Array.isArray(company.recent_news) && company.recent_news.length > 0 && (
             <Section title="Recent Company News" description="Mention these in your interview to show you've done research">
-              {company.recent_news.map((news, i) => (
+              {company.recent_news.map((news: string, i: number) => (
                 <BulletItem key={i} icon="📰" color="ink">{safeStr(news)}</BulletItem>
               ))}
             </Section>
           )}
           {company.hiring_signals && Array.isArray(company.hiring_signals) && company.hiring_signals.length > 0 && (
             <Section title="Hiring Signals" description="Why this company is hiring right now">
-              {company.hiring_signals.map((signal, i) => (
+              {company.hiring_signals.map((signal: string, i: number) => (
                 <BulletItem key={i} icon="📡" color="green">{safeStr(signal)}</BulletItem>
               ))}
             </Section>
@@ -334,7 +333,7 @@ export default function PackDisplay({ pack, downloadUrl, linkedinContacts = [], 
           {Array.isArray(networking.seven_day_action_plan) && networking.seven_day_action_plan.length > 0 && (
             <Section title="7-Day Action Plan" description="Step-by-step networking plan for this application">
               <div className="space-y-2">
-                {networking.seven_day_action_plan.map((step, i) => (
+                {networking.seven_day_action_plan.map((step: Record<string, string>, i: number) => (
                   <div key={i} className="flex gap-3 items-start">
                     <div className="w-16 shrink-0">
                       <span className="text-[11px] font-bold text-brand-600 uppercase">Day {step.day || i + 1}</span>
@@ -348,7 +347,7 @@ export default function PackDisplay({ pack, downloadUrl, linkedinContacts = [], 
           {/* LinkedIn Search Strings */}
           {Array.isArray(networking.linkedin_search_strings) && networking.linkedin_search_strings.length > 0 && (
             <Section title="LinkedIn Search Strings" description="Copy-paste these into LinkedIn search">
-              {networking.linkedin_search_strings.map((query, i) => (
+              {networking.linkedin_search_strings.map((query: string, i: number) => (
                 <div key={i} className="bg-surface-50 rounded-lg px-3 py-2 text-sm font-mono text-ink-700 mb-1">{query}</div>
               ))}
             </Section>

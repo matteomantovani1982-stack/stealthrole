@@ -17,7 +17,9 @@ Feature flags per plan:
   pdf_support       — accept PDF CV uploads (Sprint 8, future)
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+
+from app.config import settings
 from app.models.subscription import PlanTier
 
 
@@ -75,8 +77,8 @@ PLANS: dict[PlanTier, Plan] = {
         display_name="Starter",
         packs_per_month=10,
         price_monthly_usd=19.0,
-        stripe_price_id_monthly="price_starter_monthly",   # Override in config
-        stripe_price_id_annual="price_starter_annual",
+        stripe_price_id_monthly=settings.stripe_price_starter_monthly,
+        stripe_price_id_annual=settings.stripe_price_starter_annual or None,
         company_intel=True,
         salary_data=True,
         networking=True,
@@ -88,8 +90,8 @@ PLANS: dict[PlanTier, Plan] = {
         display_name="Pro",
         packs_per_month=30,
         price_monthly_usd=49.0,
-        stripe_price_id_monthly="price_pro_monthly",
-        stripe_price_id_annual="price_pro_annual",
+        stripe_price_id_monthly=settings.stripe_price_pro_monthly,
+        stripe_price_id_annual=settings.stripe_price_pro_annual or None,
         company_intel=True,
         salary_data=True,
         networking=True,
@@ -101,8 +103,8 @@ PLANS: dict[PlanTier, Plan] = {
         display_name="Unlimited",
         packs_per_month=None,
         price_monthly_usd=99.0,
-        stripe_price_id_monthly="price_unlimited_monthly",
-        stripe_price_id_annual="price_unlimited_annual",
+        stripe_price_id_monthly=settings.stripe_price_unlimited_monthly,
+        stripe_price_id_annual=settings.stripe_price_unlimited_annual or None,
         company_intel=True,
         salary_data=True,
         networking=True,

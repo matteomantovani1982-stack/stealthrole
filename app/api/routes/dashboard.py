@@ -4,13 +4,68 @@ GET /api/v1/dashboard/summary
 """
 import structlog
 from fastapi import APIRouter
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from app.dependencies import DB, CurrentUserId
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/v1/dashboard", tags=["Dashboard"])
 
-@router.get("/summary", summary="Dashboard summary")
+
+# ── Response models ──────────────────────────────────────────────────────────
+
+class ProfileStrengthBreakdown(BaseModel):
+    """Profile strength scoring details."""
+    profile_completeness: float
+    sources_active: list[str]
+
+
+class ProfileStrength(BaseModel):
+    """User profile strength assessment."""
+    score: float
+    max: float
+    breakdown: dict
+    next_action: str
+
+
+class RecentApplication(BaseModel):
+    """Recent job application."""
+    id: str
+    role_title: str
+    company_name: str
+    status: str
+    pipeline_stage: str
+    keyword_match_score: float
+    created_at: str
+
+
+class RecentShadowApplication(BaseModel):
+    """Recent shadow (hidden market) application."""
+    id: str
+    company: str
+    hypothesis_role: str
+    status: str
+    confidence: float
+    created_at: str
+
+
+class DashboardSummaryResponse(BaseModel):
+    """Dashboard summary with opportunities, applications, and profile metrics."""
+    profile_strength: ProfileStrength
+    top_opportunities: list
+    radar_opportunities: list
+    recent_applications: list[RecentApplication]
+    recent_shadow_applications: list[RecentShadowApplication]
+    shadow_count: int
+    total_applications: int
+    total_shadow_applications: int
+    credit_balance: int
+    radar_total: int
+    profile_completeness: float
+    sources_active: list[str]
+
+
+@router.get("/summary", summary="Dashboard summary", response_model=DashboardSummaryResponse)
 async def dashboard_summary(current_user_id: CurrentUserId, db: DB) -> dict:
     from app.services.radar.opportunity_radar import run_radar
     from app.services.profile.profile_service import ProfileService

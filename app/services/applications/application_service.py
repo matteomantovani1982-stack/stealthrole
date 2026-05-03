@@ -78,11 +78,15 @@ class ApplicationService:
             return None
         return ApplicationResponse.model_validate(app)
 
-    async def list_all(self, user_id: str) -> list[ApplicationListItem]:
+    async def list_all(
+        self, user_id: str, *, limit: int = 100, offset: int = 0,
+    ) -> list[ApplicationListItem]:
         result = await self.db.execute(
             select(Application)
             .where(Application.user_id == user_id)
             .order_by(Application.date_applied.desc())
+            .limit(limit)
+            .offset(offset)
         )
         apps = result.scalars().all()
         return [ApplicationListItem.model_validate(a) for a in apps]

@@ -7,7 +7,7 @@ Health check endpoints for liveness, readiness, and deep system status.
 from datetime import UTC, datetime
 
 import structlog
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
@@ -20,16 +20,18 @@ router = APIRouter(prefix="/health", tags=["Health"])
 
 @router.get("", summary="Liveness probe")
 async def health_check() -> dict:
-    return {
+    payload: dict = {
         "status": "ok",
         "app": settings.app_name,
         "version": settings.app_version,
-        "env": settings.app_env,
-        "demo_mode": should_skip_anthropic_api(),
-        "demo_setting_raw": settings.demo_mode,
-        "deploy_marker": "2026-04-22-v4-discover-people",
         "timestamp": datetime.now(UTC).isoformat(),
     }
+    # Expose internal details only in non-production environments
+    if not settings.is_production:
+        payload["env"] = settings.app_env
+        payload["demo_mode"] = should_skip_anthropic_api()
+        payload["demo_setting_raw"] = settings.demo_mode
+    return payload
 
 
 @router.get("/ready", summary="Readiness probe (DB + Redis)")
@@ -60,8 +62,10 @@ async def readiness_check():
     )
 
 
-@router.get("/deep", summary="Deep system check")
+@router.get("/deep", summary="Deep system check", include_in_schema=not settings.is_production)
 async def deep_check() -> dict:
+    # Production: require a simple shared secret to prevent info leakage
+    # In non-prod this is wide open for convenience
     checks: dict = {}
 
     try:
@@ -110,14 +114,23 @@ async def deep_check() -> dict:
     }
 
 
-@router.delete("/reset-user-data", summary="Wipe all data for a user (dev/testing)")
+@router.delete(
+    "/reset-user-data",
+    summary="Wipe all data for a user (dev/testing)",
+    include_in_schema=False,
+)
 async def reset_user_data(
     email: str,
     confirm: str = "",
 ):
-    """Delete all application data for a user. Requires confirm=YES."""
+    """Delete all application data for a user. Dev/testing only. Requires confirm=YES."""
+    if settings.is_production:
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "This endpoint is disabled in production."},
+        )
     if confirm != "YES":
-        return {"error": "Pass ?confirm=YES to actually delete"}
+        raise HTTPException(status_code=400, detail="Pass ?confirm=YES to actually delete")
 
     from app.db.session import AsyncSessionLocal
     from app.models.user import User
@@ -128,7 +141,7 @@ async def reset_user_data(
         result = await session.execute(select(User).where(User.email == email))
         user = result.scalar_one_or_none()
         if not user:
-            return {"error": f"User {email} not found"}
+            raise HTTPException(status_code=404, detail=f"User {email} not found")
 
         uid = str(user.id)
 

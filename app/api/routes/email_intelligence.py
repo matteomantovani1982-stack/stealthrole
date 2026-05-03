@@ -20,6 +20,7 @@ from app.schemas.email_intelligence import (
     PatternsResponse,
     ScanTriggerResponse,
 )
+from app.schemas.common import EmailTimelineResponse
 from app.services.email_integration.intelligence_service import EmailIntelligenceService
 
 router = APIRouter(prefix="/api/v1/email-intelligence", tags=["Email Intelligence"])
@@ -128,6 +129,7 @@ async def get_writing_style(
 @router.get(
     "/timeline",
     summary="Get reconstructed application timeline from emails",
+    response_model=EmailTimelineResponse,
 )
 async def get_timeline(
     db: DB,

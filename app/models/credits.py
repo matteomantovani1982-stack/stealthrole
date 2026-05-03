@@ -7,12 +7,9 @@ Users buy credit packs or earn through subscriptions.
 Each action costs credits. Balance is enforced before execution.
 """
 
-import uuid
-from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDMixin

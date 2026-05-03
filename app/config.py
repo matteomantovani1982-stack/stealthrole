@@ -10,7 +10,7 @@ import os
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, PostgresDsn, RedisDsn, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -38,8 +38,8 @@ class Settings(BaseSettings):
     database_url: str = Field(
         default="postgresql+asyncpg://careeros:careeros@localhost:5432/careeros"
     )
-    database_pool_size: int = 5
-    database_max_overflow: int = 5
+    database_pool_size: int = 10
+    database_max_overflow: int = 10
 
     # ── Redis ──────────────────────────────────────────────
     redis_url: str = "redis://localhost:6379/0"
@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     s3_access_key_id: str = Field(default="")
     s3_secret_access_key: str = Field(default="")
     s3_bucket_name: str = "careeros"
-    s3_bucket: str = ""  # accepts S3_BUCKET env var too
+    s3_bucket: str = ""  # DEPRECATED alias — prefer S3_BUCKET_NAME; kept for backward compat
 
     @property
     def effective_s3_bucket(self) -> str:
@@ -106,6 +106,13 @@ class Settings(BaseSettings):
     stripe_secret_key: str = "sk_test_placeholder"
     stripe_publishable_key: str = "pk_test_placeholder"
     stripe_webhook_secret: str = "whsec_placeholder"
+    # Stripe Price IDs — override per environment. Empty = plan not available.
+    stripe_price_starter_monthly: str = ""
+    stripe_price_starter_annual: str = ""
+    stripe_price_pro_monthly: str = ""
+    stripe_price_pro_annual: str = ""
+    stripe_price_unlimited_monthly: str = ""
+    stripe_price_unlimited_annual: str = ""
 
     # ── Twilio / WhatsApp ─────────────────────────────────
     twilio_account_sid: str | None = None
@@ -159,6 +166,43 @@ class Settings(BaseSettings):
         if isinstance(v, str) and not v.strip():
             return None
         return v
+
+    @model_validator(mode="after")
+    def validate_production_settings(self) -> "Settings":
+        """Block startup if critical settings are missing in production."""
+        if self.app_env != "production":
+            return self
+        errors: list[str] = []
+        # SECRET_KEY must not be the dev default
+        if "not-used" in self.secret_key or "change-this" in self.secret_key:
+            errors.append(
+                "SECRET_KEY is still the development default. "
+                "Generate a real key: openssl rand -hex 32"
+            )
+        # ANTHROPIC_API_KEY required unless demo mode
+        if not self.anthropic_api_key and not self.demo_mode:
+            errors.append(
+                "ANTHROPIC_API_KEY is empty and DEMO_MODE is off. "
+                "Set ANTHROPIC_API_KEY or enable DEMO_MODE=true."
+            )
+        # ALLOWED_ORIGINS must be set (no wildcard CORS in prod)
+        if not self.allowed_origins.strip():
+            errors.append(
+                "ALLOWED_ORIGINS is empty in production. "
+                "Set to a comma-separated list of allowed frontend origins."
+            )
+        # Stripe keys must not be placeholders
+        if self.stripe_secret_key.startswith("sk_test_placeholder"):
+            errors.append(
+                "STRIPE_SECRET_KEY is still the placeholder. "
+                "Set a real Stripe secret key for production billing."
+            )
+        if errors:
+            raise ValueError(
+                "Production startup blocked — fix these config issues:\n  • "
+                + "\n  • ".join(errors)
+            )
+        return self
 
 
 def should_skip_anthropic_api() -> bool:

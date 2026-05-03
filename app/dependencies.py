@@ -13,12 +13,10 @@ Backward compatibility:
   so route signatures don't need to change immediately.
 """
 
-import uuid
-from collections.abc import AsyncGenerator
 from typing import Annotated
 
 import boto3
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 

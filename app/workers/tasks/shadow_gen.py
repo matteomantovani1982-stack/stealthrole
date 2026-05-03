@@ -16,7 +16,6 @@ Queue: llm (uses Claude API)
 
 import re
 import uuid
-from datetime import UTC, datetime
 
 import structlog
 from celery import Task
@@ -75,7 +74,7 @@ def generate_shadow_application(self: Task, shadow_id: str) -> dict:
         company = shadow.company
         signal_type = shadow.signal_type
         signal_context = shadow.signal_context or ""
-        radar_score = shadow.radar_score
+        _radar_score = shadow.radar_score
 
         # Load profile
         profile_dict = None

@@ -11,7 +11,10 @@ Signal types:
   - hiring_surge: spike in postings
 """
 
-from sqlalchemy import Boolean, Float, String, Text
+import uuid
+from datetime import datetime
+
+from sqlalchemy import Boolean, DateTime, Float, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -56,6 +59,50 @@ class HiddenSignal(Base, UUIDMixin, TimestampMixin):
 
     is_dismissed: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false",
+    )
+
+    # ── Signal Quality Filter (Phase 1 — Signal Intelligence Layer) ───────
+    quality_score: Mapped[float | None] = mapped_column(
+        Float, nullable=True,
+        comment="Composite quality score (0.0–1.0). Null for pre-feature signals.",
+    )
+    quality_confidence: Mapped[float | None] = mapped_column(
+        Float, nullable=True,
+        comment="Confidence component of quality score",
+    )
+    quality_recency: Mapped[float | None] = mapped_column(
+        Float, nullable=True,
+        comment="Recency component of quality score",
+    )
+    quality_relevance: Mapped[float | None] = mapped_column(
+        Float, nullable=True,
+        comment="User-specific relevance component of quality score",
+    )
+    quality_historical: Mapped[float | None] = mapped_column(
+        Float, nullable=True,
+        comment="Historical success rate component (blended user + global)",
+    )
+    quality_gate_result: Mapped[str | None] = mapped_column(
+        String(20), nullable=True,
+        comment="pass | conditional | store_only | reject",
+    )
+    quality_computed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+        comment="When quality score was computed",
+    )
+
+    # ── Prediction tracking ───────────────────────────────────────────────
+    prediction_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True,
+        comment="FK to predicted_opportunities when signal generates prediction",
+    )
+    outcome_tracked: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false",
+        comment="Whether this signal has been connected to a terminal outcome",
+    )
+    outcome_result: Mapped[str | None] = mapped_column(
+        String(20), nullable=True,
+        comment="interview | hire | rejection | no_response | null",
     )
 
     def __repr__(self) -> str:

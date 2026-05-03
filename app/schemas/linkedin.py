@@ -208,3 +208,40 @@ class IngestCompanyResponse(BaseModel):
     company_name: str
     connections_here: int = 0
     signals_count: int = 0
+
+
+# ── Generic operation responses ──────────────────────────────────────────────
+
+class MutualConnectionsResponse(BaseModel):
+    """Response from mutual connections ingestion."""
+    created: int = 0
+    updated: int = 0
+    total_processed: int = 0
+
+
+class NetworkScanResponse(BaseModel):
+    """Response from network scan ingestion."""
+    created: int = 0
+    updated: int = 0
+    total_processed: int = 0
+
+
+class DeletedCountResponse(BaseModel):
+    deleted: int = 0
+
+
+class LinkThreadResponse(BaseModel):
+    messages_linked: int = 0
+    thread_id: str = ""
+
+
+class AnalysisResponse(BaseModel):
+    """Generic response for analyze endpoints."""
+    analysis: dict = {}
+    status: str = "ok"
+
+
+class DedupResponse(BaseModel):
+    """Response from message dedup."""
+    duplicates_removed: int = 0
+    total_checked: int = 0

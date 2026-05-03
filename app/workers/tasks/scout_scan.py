@@ -11,7 +11,6 @@ Users see fresh results when they next open the Scout dashboard.
 """
 
 import uuid
-from datetime import UTC, datetime
 
 import structlog
 from celery import Task
@@ -230,7 +229,6 @@ def send_realtime_wa_alert(self: Task, user_id: str, opportunities: list) -> dic
     (prevents spam if user clicks Unleash multiple times).
     """
     from sqlalchemy import select
-    from datetime import timedelta
     from app.config import settings
     from app.models.user import User
 

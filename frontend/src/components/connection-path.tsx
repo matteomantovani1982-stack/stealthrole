@@ -1,4 +1,3 @@
-// @ts-nocheck
 "use client";
 
 import { useState, useEffect } from "react";
@@ -106,9 +105,9 @@ function useConnectionPath(company: string, role: string) {
 
       const mapped = mapApiToKeyPeople(data, company, role);
       setPeople(mapped);
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error("ConnectionPath load failed:", e);
-      setError(e.message);
+      setError(e instanceof Error ? e.message : "Failed to load connection paths");
       setPeople([]);
     }
     setLoading(false);

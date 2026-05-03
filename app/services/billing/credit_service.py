@@ -4,7 +4,6 @@ app/services/billing/credit_service.py
 Credit system — balance management, spending, purchasing, enforcement.
 """
 
-import uuid
 
 import structlog
 from sqlalchemy import select
@@ -47,8 +46,6 @@ class CreditService:
             bal = CreditBalance(user_id=user_id, balance=3)  # 3 free credits for new users
             self.db.add(bal)
             await self.db.flush()
-            await self.db.commit()
-            await self.db.refresh(bal)
         return bal
 
     async def check_and_spend(
@@ -80,8 +77,6 @@ class CreditService:
         )
         self.db.add(tx)
         await self.db.flush()
-        await self.db.commit()
-        await self.db.refresh(tx)
         return tx
 
     async def add_credits(
@@ -109,8 +104,6 @@ class CreditService:
         )
         self.db.add(tx)
         await self.db.flush()
-        await self.db.commit()
-        await self.db.refresh(tx)
         return tx
 
     async def refund(
@@ -126,13 +119,14 @@ class CreditService:
         )
 
     async def get_transactions(
-        self, user_id: str, limit: int = 50
+        self, user_id: str, *, limit: int = 50, offset: int = 0,
     ) -> list[CreditTransaction]:
         result = await self.db.execute(
             select(CreditTransaction)
             .where(CreditTransaction.user_id == user_id)
             .order_by(CreditTransaction.created_at.desc())
             .limit(limit)
+            .offset(offset)
         )
         return list(result.scalars().all())
 

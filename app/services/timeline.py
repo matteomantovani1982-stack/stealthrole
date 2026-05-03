@@ -6,7 +6,6 @@ Call from routes (async) or workers (sync).
 """
 
 import uuid
-from datetime import UTC, datetime
 
 
 async def log_event_async(db, job_run_id: uuid.UUID, event_type: str, title: str, detail: str | None = None):

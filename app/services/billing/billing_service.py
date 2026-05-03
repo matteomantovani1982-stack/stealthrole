@@ -26,7 +26,7 @@ from app.models.subscription import (
     SubscriptionStatus,
     UsageRecord,
 )
-from app.services.billing.plans import PLANS, PRICE_TO_TIER, get_plan
+from app.services.billing.plans import PRICE_TO_TIER, get_plan
 
 import structlog
 

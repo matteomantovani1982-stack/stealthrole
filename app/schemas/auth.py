@@ -7,7 +7,7 @@ Pydantic schemas for auth endpoints.
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field
 
 
 class RegisterRequest(BaseModel):
@@ -31,9 +31,17 @@ class TokenResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     expires_in: int = Field(
-        default=1800,
-        description="Access token lifetime in seconds (30 minutes)",
+        description="Access token lifetime in seconds",
     )
+
+    @classmethod
+    def from_tokens(cls, access_token: str, refresh_token: str) -> "TokenResponse":
+        from app.services.auth.tokens import ACCESS_TOKEN_EXPIRE_MINUTES
+        return cls(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        )
 
 
 class UserResponse(BaseModel):

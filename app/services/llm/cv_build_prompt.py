@@ -18,7 +18,6 @@ Why a separate schema (not EditPlan)?
   They require different rendering logic and different output formats.
 """
 
-from app.schemas.cv import ParsedCV
 
 
 # ── System prompts ────────────────────────────────────────────────────────────

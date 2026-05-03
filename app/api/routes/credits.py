@@ -11,7 +11,7 @@ Routes:
   GET    /api/v1/credits/pricing        Credit costs per action
 """
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 
 from app.dependencies import DB, CurrentUserId
 from app.schemas.credits import (
@@ -33,22 +33,40 @@ def _svc(db: DB) -> CreditService:
 @router.get("/balance", response_model=CreditBalanceResponse, summary="Get credit balance")
 async def get_balance(db: DB, user_id: CurrentUserId) -> CreditBalanceResponse:
     bal = await _svc(db).get_balance(user_id)
+    await db.commit()  # Commit if new balance was auto-provisioned
     return CreditBalanceResponse.model_validate(bal)
 
 
 @router.get("/transactions", response_model=list[CreditTransactionResponse], summary="Transaction history")
-async def get_transactions(db: DB, user_id: CurrentUserId) -> list[CreditTransactionResponse]:
-    txs = await _svc(db).get_transactions(user_id)
+async def get_transactions(
+    db: DB,
+    user_id: CurrentUserId,
+    limit: int = Query(default=50, ge=1, le=500, description="Max items to return"),
+    offset: int = Query(default=0, ge=0, description="Items to skip"),
+) -> list[CreditTransactionResponse]:
+    txs = await _svc(db).get_transactions(user_id, limit=limit, offset=offset)
     return [CreditTransactionResponse.model_validate(t) for t in txs]
 
 
-@router.post("/add", response_model=CreditTransactionResponse, summary="Add credits")
+@router.post(
+    "/add",
+    response_model=CreditTransactionResponse,
+    summary="Add credits (dev/admin only)",
+    include_in_schema=False,
+)
 async def add_credits(
     payload: AddCreditsRequest, db: DB, user_id: CurrentUserId
 ) -> CreditTransactionResponse:
+    from app.config import settings
+    if not getattr(settings, "demo_mode", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Credit grants are only available in demo mode.",
+        )
     tx = await _svc(db).add_credits(
         user_id, payload.amount, payload.transaction_type, payload.description,
     )
+    await db.commit()
     return CreditTransactionResponse.model_validate(tx)
 
 
@@ -65,6 +83,7 @@ async def spend_credits(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    await db.commit()
     return CreditTransactionResponse.model_validate(tx)
 
 

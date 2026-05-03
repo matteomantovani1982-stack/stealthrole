@@ -9,7 +9,7 @@ Design:
   Quota enforcement reads UsageRecord count within billing period.
 
 Plans (defined in app/services/billing/plans.py):
-  FREE     — 3 packs/month, no company intel, no positioning strategy
+  FREE     — 20 packs/month, full output
   STARTER  — 10 packs/month, full output
   PRO      — 30 packs/month, full output + priority queue
   UNLIMITED — no pack limit, full output + priority queue
@@ -22,10 +22,10 @@ Stripe integration:
 """
 
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 

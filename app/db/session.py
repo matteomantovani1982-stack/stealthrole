@@ -3,8 +3,15 @@ app/db/session.py
 
 Async SQLAlchemy engine and session factory.
 Never import this directly in routes — use dependencies.py instead.
+
+Pool defaults (override via DATABASE_POOL_SIZE / DATABASE_MAX_OVERFLOW env):
+  development:  pool_size=10, max_overflow=10  → 20 total conns
+  production:   set via env to match ECS task count × concurrency
+
+Pool health is logged at startup so you can verify sizing in CloudWatch.
 """
 
+import structlog
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import (
@@ -15,16 +22,25 @@ from sqlalchemy.ext.asyncio import (
 
 from app.config import settings
 
+logger = structlog.get_logger(__name__)
+
 # ── Engine ─────────────────────────────────────────────────────────────────
 engine = create_async_engine(
     settings.database_url,
     pool_size=settings.database_pool_size,
     max_overflow=settings.database_max_overflow,
     # Echo SQL only in development — never in production
-    echo=settings.is_development,
+    echo=settings.is_development and settings.debug,
     # Recycle connections after 30 minutes to avoid stale connections
     pool_recycle=1800,
     pool_pre_ping=True,
+)
+
+logger.info(
+    "db_pool_configured",
+    pool_size=settings.database_pool_size,
+    max_overflow=settings.database_max_overflow,
+    max_total=settings.database_pool_size + settings.database_max_overflow,
 )
 
 # ── Session factory ────────────────────────────────────────────────────────
@@ -57,20 +73,3 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 
-from contextlib import asynccontextmanager
-
-@asynccontextmanager
-async def get_async_db_for_sync():
-    """
-    Async DB session for use inside sync Celery tasks via asyncio.run().
-    Yields a session that auto-commits and closes.
-    """
-    async with AsyncSessionLocal() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()

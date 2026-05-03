@@ -22,7 +22,7 @@ This means a speculative opportunity with a perfect raw score of 100
 would display as 25. It cannot appear "high urgency" by accident.
 """
 
-from datetime import datetime, UTC
+from datetime import datetime
 
 from app.services.radar.types import (
     ScoreBreakdown,

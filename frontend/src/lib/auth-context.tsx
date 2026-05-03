@@ -13,6 +13,7 @@ import {
   getMe,
   login as apiLogin,
   register as apiRegister,
+  logoutServer,
   clearAllUserData,
   isAuthenticated,
   getCurrentUserId,
@@ -104,8 +105,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const logout = useCallback(() => {
-    // SECURITY: wipe ALL per-user data from localStorage and sessionStorage
-    clearAllUserData();
+    // SECURITY: revoke refresh token server-side, then wipe all local data
+    logoutServer(); // fire-and-forget — don't block UI
     setUser(null);
     router.push("/login");
   }, [router]);

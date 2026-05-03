@@ -37,8 +37,12 @@ def create_app() -> FastAPI:
     )
 
     # ── Middleware ─────────────────────────────────────────────────────────
+    from app.api.middleware.cache_control import CacheControlMiddleware
+    app.add_middleware(CacheControlMiddleware)
     app.add_middleware(GZipMiddleware, minimum_size=1000)
     # CORS — in dev allow all, in prod use ALLOWED_ORIGINS env var
+    if settings.is_production and not settings.allowed_origins.strip():
+        logger.warning("cors_wildcard_in_prod", msg="ALLOWED_ORIGINS is empty — CORS will fall back to FRONTEND_URL only")
     _origins = (
         ["*"] if settings.is_development
         else [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
@@ -174,6 +178,22 @@ def create_app() -> FastAPI:
     # Export routes — /api/v1/export
     from app.api.routes import export
     app.include_router(export.router)
+
+    # Action Engine routes — /api/v1/actions
+    from app.api.routes import actions
+    app.include_router(actions.router)
+
+    # Value / ROI Insights — /api/v1/insights
+    from app.api.routes import insights
+    app.include_router(insights.router)
+
+    # Quick Start (intelligence) — /api/v1/quick-start
+    from app.api.routes import quick_start
+    app.include_router(quick_start.router)
+
+    # Extension capture — /api/v1/extension
+    from app.api.routes import extension
+    app.include_router(extension.router)
 
     # ── Startup / shutdown events ──────────────────────────────────────────
     @app.on_event("startup")

@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from collections import defaultdict
 
 import structlog
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.application import Application

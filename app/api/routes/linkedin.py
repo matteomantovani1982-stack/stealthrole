@@ -183,9 +183,12 @@ async def list_connections(
     user_id: CurrentUserId,
     company: str | None = Query(default=None, description="Filter by company name"),
     recruiters_only: bool = Query(default=False),
+    limit: int = Query(default=200, ge=1, le=1000, description="Max items to return"),
+    offset: int = Query(default=0, ge=0, description="Items to skip"),
 ) -> ConnectionListResponse:
     connections = await _svc(db).list_connections(
         user_id=user_id, company=company, recruiters_only=recruiters_only,
+        limit=limit, offset=offset,
     )
     return ConnectionListResponse(
         connections=[ConnectionResponse.model_validate(c) for c in connections],

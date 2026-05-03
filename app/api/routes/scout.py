@@ -17,20 +17,44 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import structlog
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select, update, delete
+from sqlalchemy import select, update
 
 from app.config import settings
 from app.dependencies import CurrentUserId, DB
 from app.models.hidden_signal import HiddenSignal
 from app.models.saved_job import SavedJob
 from app.models.scout_result import ScoutResult
+from app.schemas.scout import (
+    DismissSignalResponse,
+    FreelanceResponse,
+    HiddenMarketResponse,
+    SavedJobItem,
+    SavedJobsResponse,
+    ScoutHistoryResponse,
+    ScoutJobsResponse,
+    SignalsResponse,
+    VacanciesResponse,
+)
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/v1/scout", tags=["Scout"])
 TIMEOUT = 12.0
 CACHE_TTL_MINUTES = 30
+
+
+# ── Response models ──────────────────────────────────────────────────────────
+
+class ScoutConfigResponse(BaseModel):
+    """Scout configuration showing which sources are active."""
+    adzuna: bool
+    jsearch: bool
+    serper: bool
+    claude: bool
+    signal_engine: bool
+    demo_mode: bool
+    predictor: bool
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -94,7 +118,7 @@ async def _get_profile_and_prefs(db: DB, user_id: str) -> tuple[dict, dict]:
 
 # ── Signal Intelligence endpoint ──────────────────────────────────────────────
 
-@router.get("/signals")
+@router.get("/signals", response_model=SignalsResponse)
 async def get_signals(
     current_user_id: CurrentUserId,
     db: DB,
@@ -233,7 +257,7 @@ async def get_signals(
 
 # ── History endpoint ──────────────────────────────────────────────────────
 
-@router.get("/history")
+@router.get("/history", response_model=ScoutHistoryResponse)
 async def get_scout_history(
     current_user_id: CurrentUserId,
     db: DB,
@@ -393,7 +417,7 @@ def _demo_jobs() -> list[dict]:
     ]
 
 
-@router.get("/jobs")
+@router.get("/jobs", response_model=ScoutJobsResponse)
 async def scout_jobs(
     current_user_id: CurrentUserId, db: DB,
     keywords: str = Query(default=""),
@@ -428,7 +452,7 @@ async def scout_jobs(
 
 # ── Hidden Market endpoint ────────────────────────────────────────────────────
 
-@router.get("/hidden-market")
+@router.get("/hidden-market", response_model=HiddenMarketResponse)
 async def get_hidden_market(
     current_user_id: CurrentUserId,
     db: DB,
@@ -462,7 +486,7 @@ async def get_hidden_market(
     }
 
 
-@router.patch("/hidden-market/{signal_id}/dismiss")
+@router.patch("/hidden-market/{signal_id}/dismiss", response_model=DismissSignalResponse)
 async def dismiss_hidden_signal(
     signal_id: _uuid.UUID,
     current_user_id: CurrentUserId,
@@ -518,7 +542,7 @@ def _job_to_dict(job: SavedJob) -> dict:
     }
 
 
-@router.post("/jobs/save", status_code=201)
+@router.post("/jobs/save", status_code=status.HTTP_201_CREATED, response_model=SavedJobItem)
 async def save_job(
     body: SaveJobRequest,
     current_user_id: CurrentUserId,
@@ -553,7 +577,7 @@ async def save_job(
     return _job_to_dict(job)
 
 
-@router.get("/jobs/saved")
+@router.get("/jobs/saved", response_model=SavedJobsResponse)
 async def list_saved_jobs(
     current_user_id: CurrentUserId,
     db: DB,
@@ -571,12 +595,12 @@ async def list_saved_jobs(
     }
 
 
-@router.delete("/jobs/saved/{saved_job_id}", status_code=200)
+@router.delete("/jobs/saved/{saved_job_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def unsave_job(
     saved_job_id: _uuid.UUID,
     current_user_id: CurrentUserId,
     db: DB,
-) -> dict:
+) -> None:
     """Remove a saved job."""
     q = select(SavedJob).where(
         SavedJob.id == saved_job_id,
@@ -587,10 +611,9 @@ async def unsave_job(
         raise HTTPException(status_code=404, detail="Saved job not found.")
     await db.delete(job)
     await db.commit()
-    return {"deleted": True, "id": str(saved_job_id)}
 
 
-@router.get("/config")
+@router.get("/config", response_model=ScoutConfigResponse)
 async def scout_config(current_user_id: CurrentUserId) -> dict:
     return {
         "adzuna": bool(settings.adzuna_app_id and settings.adzuna_app_key),
@@ -609,6 +632,7 @@ async def scout_config(current_user_id: CurrentUserId) -> dict:
     "/predictions",
     summary="Predict future hiring opportunities from news + financial signals",
     tags=["Scout"],
+    response_model=None,  # Dynamic structure from predictor service
 )
 async def get_predictions(
     current_user_id: CurrentUserId,
@@ -619,8 +643,11 @@ async def get_predictions(
     Scans financial journals, regulatory filings, and industry reports
     to predict companies that WILL hire before they post the job.
     """
-    from app.services.scout.opportunity_predictor import predict_opportunities
     from app.services.profile.profile_service import ProfileService
+    from app.services.scout.opportunity_predictor import (
+        predict_from_interpretations,
+        predict_opportunities,
+    )
 
     # Load user preferences
     svc = ProfileService(db)
@@ -632,26 +659,40 @@ async def get_predictions(
         import json
         try:
             ctx = json.loads(profile.global_context)
-            prefs = {"sectors": ctx.get("sectors", []), "roles": ctx.get("roles", [])}
+            prefs = {
+                "sectors": ctx.get("sectors", []),
+                "roles": ctx.get("roles", []),
+            }
         except Exception:
             pass
 
-    profile_dict = profile.to_prompt_dict() if profile else {}
-
-    # Run predictor in thread pool (blocking IO)
-    import asyncio
-    loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(
-        None,
-        lambda: predict_opportunities(prefs, profile_dict, max_results=limit),
+    profile_dict = (
+        profile.to_prompt_dict() if profile else {}
     )
+
+    # Try interpretation-based predictions first
+    result = await predict_from_interpretations(
+        db, current_user_id, prefs, profile_dict,
+        max_results=limit,
+    )
+
+    # Fall back to legacy article-based predictor
+    if result is None:
+        import asyncio
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: predict_opportunities(
+                prefs, profile_dict, max_results=limit,
+            ),
+        )
 
     return result
 
 
 # ── Current Vacancies (actual job listings from job boards) ──────────────────
 
-@router.get("/vacancies", summary="Search job boards for current vacancies matching profile")
+@router.get("/vacancies", summary="Search job boards for current vacancies matching profile", response_model=VacanciesResponse)
 async def current_vacancies(
     db: DB,
     user_id: CurrentUserId,
@@ -883,7 +924,7 @@ async def current_vacancies(
 
 # ── Freelance opportunities ──────────────────────────────────────────────────
 
-@router.get("/freelance", summary="Find freelance/contract opportunities matching profile")
+@router.get("/freelance", summary="Find freelance/contract opportunities matching profile", response_model=FreelanceResponse)
 async def freelance_opportunities(
     db: DB,
     user_id: CurrentUserId,
@@ -893,9 +934,9 @@ async def freelance_opportunities(
     profile, prefs = await _get_profile_and_prefs(db, user_id)
     roles = prefs.get("roles", ["CEO", "COO", "Strategy Consultant"])
     sectors = prefs.get("sectors", ["Technology"])
-    skills = profile.get("skills", [])[:10]
+    _skills = profile.get("skills", [])[:10]
 
-    role_str = " OR ".join(roles[:5])
+    _role_str = " OR ".join(roles[:5])
     sector_str = " ".join(sectors[:2]) if sectors else ""
 
     if not settings.serper_api_key:

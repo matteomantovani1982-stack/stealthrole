@@ -4,11 +4,10 @@ app/models/saved_job.py
 Persistent storage for jobs saved by users from scout results.
 """
 
-import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Integer, String, UniqueConstraint, func
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDMixin

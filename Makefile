@@ -116,11 +116,20 @@ test:
 test-fast:
 	$(COMPOSE) run --rm api pytest tests/ -v --tb=short -x
 
+test-cov:
+	$(COMPOSE) run --rm api pytest tests/ -v --tb=short --cov=app --cov-report=term-missing
+
 lint:
 	$(COMPOSE) run --rm api ruff check app/ tests/
 
 lint-fix:
 	$(COMPOSE) run --rm api ruff check --fix app/ tests/
+
+format:
+	$(COMPOSE) run --rm api ruff format app/ tests/
+
+typecheck:
+	$(COMPOSE) run --rm api mypy app/ --ignore-missing-imports
 
 
 # ── Production ────────────────────────────────────────────────────────────────

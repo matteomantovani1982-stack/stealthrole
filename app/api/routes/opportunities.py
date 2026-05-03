@@ -9,6 +9,7 @@ from fastapi import APIRouter, Query
 
 from app.dependencies import DB, CurrentUserId
 from app.api.routes.scout import _extract_prefs
+from app.schemas.common import OpportunityRadarResponse
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/v1/opportunities", tags=["OpportunityRadar"])
@@ -17,6 +18,7 @@ router = APIRouter(prefix="/api/v1/opportunities", tags=["OpportunityRadar"])
 @router.get(
     "/radar",
     summary="Get ranked opportunities from all sources",
+    response_model=OpportunityRadarResponse,
 )
 async def get_radar(
     current_user_id: CurrentUserId,

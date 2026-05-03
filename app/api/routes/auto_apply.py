@@ -14,7 +14,6 @@ Routes:
   GET    /api/v1/auto-apply/platforms               Supported ATS platforms
 """
 
-import uuid
 
 from fastapi import APIRouter, HTTPException, Query, status
 

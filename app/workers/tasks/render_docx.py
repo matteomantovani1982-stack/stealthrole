@@ -69,6 +69,8 @@ class RenderDocxTask(Task):
     name="app.workers.tasks.render_docx.render_docx_task",
     max_retries=2,
     default_retry_delay=15,
+    soft_time_limit=300,   # 5 min: raises SoftTimeLimitExceeded
+    time_limit=360,        # 6 min: hard kill
 )
 def render_docx_task(self: Task, job_run_id: str) -> dict:
     """
@@ -298,20 +300,31 @@ def render_docx_task(self: Task, job_run_id: str) -> dict:
 
     # ── Record usage (billing) ─────────────────────────────────────────
     try:
-        import asyncio
-        from app.db.session import get_async_db_for_sync
-        from app.services.billing.billing_service import BillingService
+        from app.models.subscription import Subscription, UsageRecord
+        from sqlalchemy import select
 
-        async def _record():
-            async with get_async_db_for_sync() as async_db:
-                svc = BillingService(db=async_db)
-                await svc.record_usage(
-                    user_id=uuid.UUID(user_id_str),
-                    job_run_id=job_run_uuid,
-                )
-                await async_db.commit()
+        with get_sync_db() as billing_db:
+            user_uuid = uuid.UUID(user_id_str) if isinstance(user_id_str, str) else user_id_str
 
-        asyncio.run(_record())
+            # Check for existing record (idempotent)
+            existing = billing_db.execute(
+                select(UsageRecord).where(UsageRecord.job_run_id == job_run_uuid)
+            ).scalar_one_or_none()
+            if not existing:
+                sub = billing_db.execute(
+                    select(Subscription).where(Subscription.user_id == user_uuid)
+                ).scalar_one_or_none()
+                if sub:
+                    record = UsageRecord(
+                        subscription_id=sub.id,
+                        user_id=user_uuid,
+                        job_run_id=job_run_uuid,
+                        plan_tier_at_time=sub.plan_tier,
+                        billing_period_start=sub.current_period_start,
+                        billing_period_end=sub.current_period_end,
+                    )
+                    billing_db.add(record)
+                    billing_db.commit()
         log.info("usage_recorded", job_run_id=job_run_id)
     except Exception as e:
         # Usage recording failure must never fail the job run
@@ -406,7 +419,6 @@ def _load_template(storage, template_slug: str | None, log) -> bytes | None:
         log.info("no_template_slug_using_generated_fallback")
         return None
 
-    from app.config import settings
     s3_key = f"templates/{template_slug}.docx"
     try:
         template_bytes = storage.download_bytes(s3_key)

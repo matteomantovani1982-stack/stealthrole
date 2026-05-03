@@ -17,7 +17,6 @@ TTL = configurable per task type (default 24h, classification 7d)
 """
 
 import hashlib
-import json
 
 import structlog
 

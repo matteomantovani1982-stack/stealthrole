@@ -16,7 +16,7 @@ Step 5: Haiku for insight generation (optional, cached)
 
 import re
 from collections import defaultdict
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import structlog
 from sqlalchemy import select
@@ -25,7 +25,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.email_account import EmailAccount
 from app.models.email_intelligence import EmailIntelligence
 from app.models.email_scan import EmailScan
-from app.services.email_integration.extractor import extract_signal
 
 logger = structlog.get_logger(__name__)
 
@@ -232,7 +231,7 @@ def _compute_patterns(timeline: list[dict], scans: list[EmailScan]) -> dict:
     total_apps = len(by_company)
     interviews = stage_counts.get("interview", 0)
     offers = stage_counts.get("offer", 0)
-    rejections = stage_counts.get("rejected", 0)
+    _rejections = stage_counts.get("rejected", 0)
 
     return {
         "avg_response_days": round(sum(response_days) / len(response_days), 1) if response_days else None,

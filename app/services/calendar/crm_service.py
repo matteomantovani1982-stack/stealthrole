@@ -9,13 +9,12 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from sqlalchemy import select, func, and_
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.application import Application
 from app.models.application_timeline import ApplicationTimeline
 from app.models.calendar_event import CalendarEvent
-from app.models.email_account import EmailAccount
 
 logger = structlog.get_logger(__name__)
 

@@ -7,7 +7,8 @@ import structlog
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Query
-from sqlalchemy import func, select, cast, Date
+from pydantic import BaseModel
+from sqlalchemy import func, select
 from app.dependencies import DB, CurrentUserId
 from app.models.job_run import JobRun
 from app.models.shadow_application import ShadowApplication
@@ -16,7 +17,34 @@ logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/v1/analytics", tags=["Analytics"])
 
 
-@router.get("/summary", summary="Application analytics summary")
+# ── Response models ──────────────────────────────────────────────────────────
+
+class AnalyticsSummaryResponse(BaseModel):
+    """Aggregated analytics for applications and shadow applications."""
+    total_applications: int
+    by_stage: dict[str, int]
+    response_rate: float
+    avg_keyword_score: float
+    total_shadows: int
+    shadow_by_status: dict[str, int]
+    shadow_by_signal: dict[str, int]
+    avg_shadow_confidence: float | None
+
+
+class WeeklyTrend(BaseModel):
+    """Weekly activity trend."""
+    week: str
+    count: int
+
+
+class AnalyticsTrendsResponse(BaseModel):
+    """Weekly trends for applications and shadows."""
+    weeks: int
+    applications: list[WeeklyTrend]
+    shadows: list[WeeklyTrend]
+
+
+@router.get("/summary", summary="Application analytics summary", response_model=AnalyticsSummaryResponse)
 async def analytics_summary(current_user_id: CurrentUserId, db: DB) -> dict:
     # ── Job run metrics ───────────────────────────────────────────────
     total = (await db.execute(select(func.count()).where(JobRun.user_id == current_user_id))).scalar() or 0
@@ -70,7 +98,7 @@ async def analytics_summary(current_user_id: CurrentUserId, db: DB) -> dict:
     }
 
 
-@router.get("/trends", summary="Weekly activity trends")
+@router.get("/trends", summary="Weekly activity trends", response_model=AnalyticsTrendsResponse)
 async def analytics_trends(
     current_user_id: CurrentUserId,
     db: DB,

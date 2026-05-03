@@ -1,4 +1,3 @@
-// @ts-nocheck
 "use client";
 
 import { useEffect, useState } from "react";
@@ -19,6 +18,19 @@ interface Connection {
   location: string | null;
 }
 
+interface WarmPath {
+  target_company: string;
+  strength: string;
+  connections_there: string[];
+  strategy: string;
+}
+
+interface RecruiterStrategy {
+  recruiter_name: string;
+  company: string;
+  action: string;
+}
+
 interface AIInsights {
   network_strength: string;
   top_industries: string[];
@@ -26,6 +38,8 @@ interface AIInsights {
   blind_spots: string[];
   recommendations: string[];
   warm_intro_potential: string;
+  warm_paths?: WarmPath[];
+  recruiter_strategy?: RecruiterStrategy[];
 }
 
 export default function LinkedInIntelligenceTab() {
@@ -180,11 +194,11 @@ export default function LinkedInIntelligenceTab() {
             </div>
           )}
 
-          {aiInsights.warm_paths?.length > 0 && (
+          {(aiInsights.warm_paths?.length ?? 0) > 0 && (
             <div>
               <div className="text-[11px] font-medium text-emerald-600 uppercase mb-2">Warm Paths to Jobs</div>
               <div className="space-y-3">
-                {aiInsights.warm_paths.map((wp, i) => (
+                {aiInsights.warm_paths!.map((wp, i) => (
                   <div key={i} className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-sm font-semibold text-ink-900">{wp.target_company}</span>
@@ -200,11 +214,11 @@ export default function LinkedInIntelligenceTab() {
             </div>
           )}
 
-          {aiInsights.recruiter_strategy?.length > 0 && (
+          {(aiInsights.recruiter_strategy?.length ?? 0) > 0 && (
             <div>
               <div className="text-[11px] font-medium text-blue-600 uppercase mb-2">Recruiter Engagement Plan</div>
               <div className="space-y-2">
-                {aiInsights.recruiter_strategy.map((rs, i) => (
+                {aiInsights.recruiter_strategy!.map((rs, i) => (
                   <div key={i} className="bg-blue-50 border border-blue-200 rounded-lg p-3">
                     <div className="text-sm font-semibold text-ink-900">{rs.recruiter_name} <span className="font-normal text-ink-400">at {rs.company}</span></div>
                     <div className="text-[12px] text-ink-700 mt-0.5">{rs.action}</div>

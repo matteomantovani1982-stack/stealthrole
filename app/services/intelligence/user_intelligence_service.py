@@ -7,7 +7,6 @@ behavioral profile with actionable insights.
 Zero LLM cost — all rule-based computation.
 """
 
-import uuid
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
@@ -17,13 +16,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.application import Application
 from app.models.application_timeline import ApplicationTimeline
-from app.models.candidate_profile import CandidateProfile
 from app.models.cv import CV
 from app.models.email_intelligence import EmailIntelligence
 from app.models.interview import InterviewRound
 from app.models.linkedin_connection import LinkedInConnection
 from app.models.user_intelligence import UserIntelligence
-from app.models.warm_intro import WarmIntro
 
 logger = structlog.get_logger(__name__)
 

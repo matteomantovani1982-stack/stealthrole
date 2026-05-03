@@ -9,7 +9,7 @@ GET /api/v1/admin/costs — total cost today / week / month, broken down by feat
 from datetime import datetime, timedelta, UTC
 
 import structlog
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from sqlalchemy import select
 
 from app.dependencies import DB, CurrentUser

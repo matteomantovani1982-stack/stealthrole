@@ -95,18 +95,27 @@ async function refreshAccessToken(): Promise<boolean> {
   refreshChain = (async (): Promise<boolean> => {
     try {
       const rt = localStorage.getItem("sr_refresh");
-      if (!rt) return false;
+      if (!rt) {
+        clearAllUserData();
+        return false;
+      }
       const res = await fetch(`${API_BASE}/auth/refresh`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refresh_token: rt }),
       });
-      if (!res.ok) return false;
+      if (!res.ok) {
+        // Refresh rejected (expired, reused, revoked) — clear all state
+        clearAllUserData();
+        redirectToLoginUnlessAlreadyThere();
+        return false;
+      }
       const data = await res.json();
       if (data.access_token) setToken(data.access_token);
       if (data.refresh_token) localStorage.setItem("sr_refresh", data.refresh_token);
       return true;
     } catch {
+      // Network error — don't clear (might be temporary)
       return false;
     } finally {
       refreshChain = null;
@@ -176,10 +185,9 @@ async function request<T>(
       redirectToLoginUnlessAlreadyThere();
     }
     const body = await res.json().catch(() => ({}));
-    // Backend custom errors use {error, type} (app/api/middleware/error_handler.py);
-    // FastAPI's stock errors use {detail}. Accept either.
+    // Backend errors use {detail} (standardized in error_handler.py).
     throw new Error(
-      formatApiError(body.detail) || formatApiError(body.error) || "Invalid email or password"
+      formatApiError(body.detail) || formatApiError(body.error) || "Authentication required"
     );
   }
 
@@ -223,9 +231,12 @@ export interface User {
   email: string;
   full_name: string | null;
   is_verified: boolean;
+  is_active: boolean;
   whatsapp_number?: string | null;
   whatsapp_verified?: boolean;
   whatsapp_alert_mode?: string | null;
+  notification_preferences: Record<string, unknown> | null;
+  created_at: string;
 }
 
 export async function login(email: string, password: string) {
@@ -269,6 +280,19 @@ export async function getMe(): Promise<User> {
   return request<User>("/auth/me");
 }
 
+/**
+ * Call POST /auth/logout to revoke the refresh token server-side,
+ * then clear all local state. Fire-and-forget — don't block UI on failure.
+ */
+export async function logoutServer(): Promise<void> {
+  try {
+    await authFetch(`${API_BASE}/auth/logout`, { method: "POST" });
+  } catch {
+    // Best-effort: server may be unreachable — local cleanup still happens
+  }
+  clearAllUserData();
+}
+
 // ── Dashboard ────────────────────────────────────────────────────────────────
 
 export interface DashboardSummary {
@@ -280,12 +304,15 @@ export interface DashboardSummary {
   };
   top_opportunities: unknown[];
   radar_opportunities: unknown[];
-  recent_applications: unknown[];
-  recent_shadow_applications: unknown[];
+  recent_applications: Record<string, unknown>[];
+  recent_shadow_applications: Record<string, unknown>[];
+  shadow_count: number;
   total_applications: number;
   total_shadow_applications: number;
+  credit_balance: number;
+  radar_total: number;
   profile_completeness: number;
-  sources_active: number;
+  sources_active: string[];
 }
 
 export async function getDashboard(): Promise<DashboardSummary> {
@@ -422,7 +449,9 @@ export interface ScoutSignals {
   signals_detected: number;
   sources_searched: number;
   is_demo: boolean;
+  engine_version: string;
   scored_by: string;
+  cached: boolean;
 }
 
 export async function getScoutSignals(): Promise<ScoutSignals> {
@@ -436,11 +465,11 @@ export interface HiddenSignal {
   confidence: number;
   likely_roles: string[];
   reasoning: string;
-  source_url: string;
-  source_name: string;
+  source_url: string | null;
+  source_name: string | null;
+  is_dismissed: boolean;
   evidence_tier?: string;
-  signal_data?: Record<string, unknown>;
-  created_at: string;
+  created_at: string | null;
 }
 
 export async function getHiddenMarket(): Promise<{
@@ -452,7 +481,7 @@ export async function getHiddenMarket(): Promise<{
 
 // ── CV Upload ────────────────────────────────────────────────────────────────
 
-export async function uploadCV(file: File): Promise<{ id: string; status: string }> {
+export async function uploadCV(file: File): Promise<{ id: string; status: string; original_filename: string; file_size_bytes: number; mime_type: string; created_at: string }> {
   const form = new FormData();
   form.append("file", file);
   const res = await authFetch(`${API_BASE}/cvs`, {
@@ -467,7 +496,7 @@ export async function uploadCV(file: File): Promise<{ id: string; status: string
   return res.json();
 }
 
-export async function listCVs(): Promise<{ id: string; original_filename: string; status: string; quality_score: number | null }[]> {
+export async function listCVs(): Promise<{ id: string; original_filename: string; status: string; quality_score: number | null; build_mode: string | null }[]> {
   return request("/cvs") || [];
 }
 
@@ -536,6 +565,8 @@ export interface ExperienceEntry {
   contribution: string | null;
   outcomes: string | null;
   methods: string | null;
+  hidden: string | null;
+  freeform: string | null;
   is_complete: boolean;
   fields_completed: number;
   extracted_signals: Record<string, unknown> | null;
@@ -544,13 +575,14 @@ export interface ExperienceEntry {
 export interface CandidateProfile {
   id: string;
   headline: string | null;
-  // location lives inside global_context (no DB column on CandidateProfile);
-  // read via JSON.parse(global_context).location instead.
+  location: string | null;
   status: string;
   global_context: string | null;
   preferences: Record<string, unknown> | null;
   experiences: ExperienceEntry[];
   cv_id: string | null;
+  is_ready: boolean;
+  version: number;
   created_at: string;
   updated_at: string;
 }
@@ -770,9 +802,36 @@ export async function listEmailAccounts(): Promise<{ accounts: unknown[]; total:
   return request("/email-integration/accounts");
 }
 
+// ── Billing ─────────────────────────────────────────────────────────────────
+
+export interface BillingStatus {
+  plan_tier: string;
+  plan_display_name: string;
+  status: string;
+  is_active: boolean;
+  is_paid: boolean;
+  packs_per_month: number | null;
+  used_this_period: number;
+  remaining: number | null;
+  features: {
+    company_intel: boolean;
+    salary_data: boolean;
+    networking: boolean;
+    positioning: boolean;
+    priority_queue: boolean;
+  };
+  current_period_start: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+}
+
+export async function getBillingStatus(): Promise<BillingStatus> {
+  return request("/billing/status");
+}
+
 // ── Credits ──────────────────────────────────────────────────────────────────
 
-export async function getCreditBalance(): Promise<{ balance: number; lifetime_purchased: number; lifetime_spent: number }> {
+export async function getCreditBalance(): Promise<{ balance: number; lifetime_purchased: number; lifetime_spent: number; lifetime_earned: number }> {
   return request("/credits/balance");
 }
 

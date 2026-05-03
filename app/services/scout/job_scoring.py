@@ -9,7 +9,7 @@ Rule-based — zero LLM cost.
 """
 
 import re
-from datetime import datetime, UTC, timedelta
+from datetime import datetime, UTC
 
 import structlog
 

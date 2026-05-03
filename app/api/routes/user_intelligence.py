@@ -8,7 +8,7 @@ Routes:
   GET    /api/v1/intelligence             Get current intelligence profile
 """
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException
 
 from app.dependencies import DB, CurrentUserId
 from app.schemas.user_intelligence import UserIntelligenceResponse

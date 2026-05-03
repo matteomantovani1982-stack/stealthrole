@@ -97,7 +97,7 @@ def fetch_mena_funding_signals(
             for round_data in data.get("data", []):
                 company_name = round_data.get("startup_name", "Unknown")
                 amount = round_data.get("amount")
-                currency = round_data.get("currency", "USD")
+                _currency = round_data.get("currency", "USD")
                 round_type = round_data.get("funding_type", "unknown")
                 announced = round_data.get("announced_date", "")
                 country = round_data.get("country", "")

@@ -141,7 +141,7 @@ def fetch_funding_signals(
                 permalink = org.get("permalink", "")
 
                 amount = props.get("money_raised", {}).get("value")
-                currency = props.get("money_raised", {}).get("currency", "USD")
+                _currency = props.get("money_raised", {}).get("currency", "USD")
                 round_type = props.get("investment_type", "unknown")
                 announced = props.get("announced_on", "")
 
@@ -210,7 +210,7 @@ def fetch_leadership_signals(
         return []
 
     signals = []
-    cutoff = (datetime.now(UTC) - timedelta(days=days_back)).strftime("%Y-%m-%d")
+    _cutoff = (datetime.now(UTC) - timedelta(days=days_back)).strftime("%Y-%m-%d")
 
     try:
         with httpx.Client(timeout=TIMEOUT) as client:

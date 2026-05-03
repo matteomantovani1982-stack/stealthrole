@@ -17,7 +17,6 @@ import re
 
 import structlog
 
-from app.config import settings
 from app.services.shadow.shadow_schema import OutreachMessages, ShadowPack
 
 logger = structlog.get_logger(__name__)

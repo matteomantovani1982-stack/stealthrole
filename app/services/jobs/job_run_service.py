@@ -1,4 +1,3 @@
-import asyncio
 """
 app/services/jobs/job_run_service.py
 
@@ -12,6 +11,7 @@ Responsibilities:
 - Generate pre-signed download URLs for completed runs
 """
 
+import asyncio
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
@@ -19,7 +19,6 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.middleware.error_handler import NotFoundError, ValidationError
-from app.config import settings
 from app.models.cv import CV, CVStatus
 from app.models.job_run import JobRun, JobRunStatus
 from app.schemas.job_run import (
@@ -251,13 +250,16 @@ class JobRunService:
             ),
         )
 
-    async def list_runs(self, user_id: str) -> list[JobRunListItem]:
+    async def list_runs(
+        self, user_id: str, *, limit: int = 50, offset: int = 0,
+    ) -> list[JobRunListItem]:
         """List all runs for a user, newest first."""
         result = await self._db.execute(
             select(JobRun)
             .where(JobRun.user_id == user_id)
             .order_by(JobRun.created_at.desc())
-            .limit(50)
+            .limit(limit)
+            .offset(offset)
         )
         runs = result.scalars().all()
         return [

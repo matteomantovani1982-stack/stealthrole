@@ -22,6 +22,7 @@ from app.services.shadow.shadow_schema import (
     ShadowGenerateRequest,
     ShadowGenerateResponse,
 )
+from app.schemas.common import ShadowListResponse, DeletedResponse, StageUpdateResponse
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/v1/shadow", tags=["Shadow Applications"])
@@ -91,6 +92,7 @@ async def generate_shadow(
 @router.get(
     "",
     summary="List shadow applications",
+    response_model=ShadowListResponse,
 )
 async def list_shadows(
     current_user_id: CurrentUserId,
@@ -171,6 +173,7 @@ async def get_shadow(
 @router.delete(
     "/{shadow_id}",
     summary="Delete a shadow application",
+    response_model=DeletedResponse,
 )
 async def delete_shadow(
     shadow_id: uuid.UUID,
@@ -200,6 +203,7 @@ VALID_SHADOW_STAGES = {"created", "sent", "responded", "interview", "offer", "re
 @router.patch(
     "/{shadow_id}/stage",
     summary="Update shadow application pipeline stage",
+    response_model=StageUpdateResponse,
 )
 async def update_shadow_stage(
     shadow_id: uuid.UUID,

@@ -11,7 +11,6 @@ Evidence tiers control what users see by default:
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
 
 
 # ── Seniority taxonomy ───────────────────────────────────────────────────────

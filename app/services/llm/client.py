@@ -23,7 +23,7 @@ Two call modes:
 import json
 import re
 import time
-from typing import Any, TypeVar
+from typing import TypeVar
 from pydantic import BaseModel
 
 import anthropic
@@ -313,6 +313,36 @@ def _extract_from_prompt(prompt: str, hints: list[str], default: str) -> str:
     return default
 
 
+def _extract_jd_first_line_entity(jd: str, entity: str = "company") -> str:
+    """
+    Fallback extractor: grab the company or role from the first non-empty
+    lines of JD text.  LinkedIn postings typically start with:
+      "Company Name · Location" or "Role Title at Company Name"
+    """
+    if not jd or not jd.strip():
+        return ""
+    first_line = jd.strip().splitlines()[0].strip()[:200]
+    if not first_line:
+        return ""
+
+    # Pattern: "Role at Company" or "Role - Company"
+    at_match = re.match(r"^(.{3,60}?)\s+(?:at|[-–—@])\s+(.{2,80})", first_line, re.IGNORECASE)
+    if at_match:
+        if entity == "role":
+            return at_match.group(1).strip().rstrip(".,")
+        return at_match.group(2).strip().rstrip(".,")
+
+    # Pattern: "Company · Role" or "Company | Role"
+    sep_match = re.match(r"^(.{2,60}?)\s*[·|]\s*(.{3,80})", first_line)
+    if sep_match:
+        if entity == "role":
+            return sep_match.group(2).strip().rstrip(".,")
+        return sep_match.group(1).strip().rstrip(".,")
+
+    # Last resort: return first line truncated (likely company or role heading)
+    return first_line[:80].strip().rstrip(".,") if entity == "company" else ""
+
+
 def _extract_cv_and_jd_from_user_prompt(user_prompt: str) -> tuple[str, str]:
     """
     Split prompts from build_edit_plan_user_prompt / build_report_pack_user_prompt
@@ -525,12 +555,15 @@ def _build_demo_edit_plan_from_prompt(user_prompt: str) -> dict:
 def _build_demo_report_pack(user_prompt: str) -> dict:
     """Demo intelligence pack: fill sections from parsed CV + JD text in the prompt."""
     cv, jd = _extract_cv_and_jd_from_user_prompt(user_prompt)
+    # Extract company/role from the JD section specifically — NOT the full
+    # prompt, which starts with the CV and matches CV phrases like
+    # "company valuation by 15X" before reaching the actual company name.
     company = _extract_from_prompt(
-        user_prompt, ["company", "employer", "organisation", "organization"], "this employer"
-    )
+        jd, ["company", "employer", "organisation", "organization"], ""
+    ) or _extract_jd_first_line_entity(jd) or "this employer"
     role = _extract_from_prompt(
-        user_prompt, ["role", "position", "title", "job title", "applying for"], "this role"
-    )
+        jd, ["role", "position", "title", "job title", "applying for"], ""
+    ) or _extract_jd_first_line_entity(jd, entity="role") or "this role"
     jd_short = " ".join(jd.split())[:900] if jd.strip() else _extract_from_prompt(
         user_prompt, ["JOB DESCRIPTION"], ""
     )

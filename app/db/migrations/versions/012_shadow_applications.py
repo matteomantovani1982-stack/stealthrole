@@ -6,7 +6,7 @@ Create Date: 2026-03-18
 """
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID
 
 revision = '012_shadow_applications'
 down_revision = '011_scout_results'

@@ -1,4 +1,3 @@
-// @ts-nocheck
 "use client";
 
 import { useEffect, useState } from "react";
@@ -134,8 +133,8 @@ export default function EmailIntelligenceTab() {
             const data = await res.json();
             if (btn) btn.textContent = res.ok ? "Scan started! Refresh in 60s..." : `Error: ${data.detail || res.status}`;
             if (res.ok) setTimeout(() => window.location.reload(), 60000);
-          } catch (err) {
-            if (btn) btn.textContent = `Failed: ${err}`;
+          } catch (err: unknown) {
+            if (btn) btn.textContent = `Failed: ${err instanceof Error ? err.message : "Unknown error"}`;
           }
         }} id="rescan-btn" className="px-4 py-2 text-[12px] font-semibold text-[#7F8CFF] bg-[#7F8CFF]/10 rounded-lg hover:bg-[#7F8CFF]/20 transition-colors">
           Re-scan Emails
@@ -144,7 +143,7 @@ export default function EmailIntelligenceTab() {
       {/* Stats row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatBox label="Applications Found" value={data?.applications_reconstructed || 0} />
-        <StatBox label="Response Rate" value={`${patterns?.response_rate_pct || 0}%`} accent={patterns?.response_rate_pct > 25} />
+        <StatBox label="Response Rate" value={`${patterns?.response_rate_pct || 0}%`} accent={(patterns?.response_rate_pct ?? 0) > 25} />
         <StatBox label="Avg. Reply Time" value={patterns?.avg_response_days ? `${patterns.avg_response_days}d` : "—"} />
         <StatBox label="Emails Scanned" value={data?.total_emails_scanned || 0} />
       </div>
@@ -188,7 +187,7 @@ export default function EmailIntelligenceTab() {
                 {Object.entries(patterns.rejection_stage_distribution).map(([stage, count]) => {
                   const total = Object.values(patterns.rejection_stage_distribution).reduce((a, b) => a + b, 0);
                   const pct = total > 0 ? (count / total) * 100 : 0;
-                  const colors = { applied: "bg-blue-400", interview: "bg-amber-400", offer: "bg-green-400", rejected: "bg-red-400", unknown: "bg-surface-300" };
+                  const colors: Record<string, string> = { applied: "bg-blue-400", interview: "bg-amber-400", offer: "bg-green-400", rejected: "bg-red-400", unknown: "bg-surface-300" };
                   return pct > 0 ? <div key={stage} className={`${colors[stage] || "bg-surface-300"} relative group`} style={{ width: `${pct}%` }} title={`${stage}: ${count}`} /> : null;
                 })}
               </div>

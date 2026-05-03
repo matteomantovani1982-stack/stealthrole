@@ -18,6 +18,7 @@ from sqlalchemy import select
 from app.dependencies import DB, CurrentUserId, S3Client
 from app.models.cv import CV, CVStatus
 from app.models.candidate_profile import CandidateProfile, ProfileStatus
+from app.schemas.common import QuickstartResponse
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/v1/quickstart", tags=["Quick Start"])
@@ -38,6 +39,7 @@ def _content_type_from_filename(filename: str, fallback: str | None) -> str:
     "/upload-and-populate",
     status_code=status.HTTP_200_OK,
     summary="Upload CV → parse → extract profile → auto-populate. One call.",
+    response_model=QuickstartResponse,
 )
 async def upload_and_populate(
     db: DB,

@@ -1,4 +1,3 @@
-// @ts-nocheck
 "use client";
 
 import { useEffect, useState } from "react";
@@ -66,7 +65,7 @@ export default function FindWayInPanel({ company, role, headers, applicationId, 
         setResult(null);
         setApiError(`Contacts could not load (${res.status}). ${t.slice(0, 280) || "Check that the API is running and you are logged in."}`);
       }
-    } catch (err) {
+    } catch (err: unknown) {
       console.error("[SR] find-way-in error:", err);
       setResult(null);
       setApiError("Network error while loading contacts. Check your connection and that the backend is running.");

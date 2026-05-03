@@ -20,7 +20,6 @@ Keeping prompts here (not inline in tasks) means:
   - Readable and reviewable as a standalone file
 """
 
-import json
 from app.schemas.cv import ParsedCV
 
 

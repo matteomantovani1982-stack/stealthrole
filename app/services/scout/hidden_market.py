@@ -11,7 +11,6 @@ Each detected signal is stored in the hidden_signals table and returned
 to the dashboard / OpportunityRadar / WhatsApp alerts.
 """
 
-import hashlib
 import json
 import re
 from collections import Counter
@@ -181,6 +180,68 @@ class HiddenMarketService:
             logger.error("hidden_market_persist_failed", error=str(e))
             await self.db.rollback()
             return []
+
+        # ── Signal Quality Filter (post-persist scoring) ────────────
+        try:
+            from app.services.intelligence.signal_quality import (
+                SignalQualityFilter,
+            )
+
+            qf = SignalQualityFilter(self.db)
+            results = await qf.score_batch(new_signals, user_id)
+
+            # Remove rejected signals, keep the rest
+            filtered: list[HiddenSignal] = []
+            for sig, qr in zip(new_signals, results):
+                if qr.gate == "reject":
+                    await self.db.delete(sig)
+                else:
+                    filtered.append(sig)
+
+            if len(filtered) < len(new_signals):
+                await self.db.commit()
+                logger.info(
+                    "quality_filter_applied",
+                    user_id=user_id,
+                    total=len(new_signals),
+                    passed=len(filtered),
+                    rejected=len(new_signals) - len(filtered),
+                )
+
+            new_signals = filtered
+        except Exception as e:
+            # Quality filter is non-fatal — return unfiltered
+            logger.warning(
+                "quality_filter_failed",
+                user_id=user_id,
+                error=str(e),
+            )
+
+        # ── Signal Interpretation (post-quality-filter) ─────────────
+        try:
+            from app.services.intelligence.signal_interpretation import (
+                SignalInterpretationEngine,
+            )
+
+            engine = SignalInterpretationEngine(self.db)
+            interps = await engine.interpret_batch(
+                new_signals, user_id,
+            )
+            if interps:
+                await self.db.commit()
+                logger.info(
+                    "interpretation_applied",
+                    user_id=user_id,
+                    signals=len(new_signals),
+                    interpreted=len(interps),
+                )
+        except Exception as e:
+            # Interpretation is non-fatal
+            logger.warning(
+                "interpretation_failed",
+                user_id=user_id,
+                error=str(e),
+            )
 
         return new_signals
 

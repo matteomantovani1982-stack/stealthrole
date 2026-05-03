@@ -19,7 +19,6 @@ After PARSED, the orchestrator task (Sprint 5+) will chain to:
 """
 
 import uuid
-from datetime import UTC, datetime
 
 import structlog
 from celery import Task
@@ -129,7 +128,7 @@ def parse_cv_task(self: Task, cv_id: str) -> dict:
 
         # Capture S3 info before closing DB session
         s3_key = cv.s3_key
-        s3_bucket = cv.s3_bucket
+        _s3_bucket = cv.s3_bucket
 
     # ── Step 2: Download DOCX from S3 ─────────────────────────────────────
     try:

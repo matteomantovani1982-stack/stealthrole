@@ -37,7 +37,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db_session as get_db
 from app.models.user import User
-from app.services.auth.auth_service import AuthService
 from app.services.auth.password import hash_password
 from app.services.email.service import get_email_service
 from app.services.email.tokens import (

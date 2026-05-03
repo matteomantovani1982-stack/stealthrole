@@ -12,7 +12,7 @@ import structlog
 from app.services.radar.adapters import adapt_scout_job, adapt_signal_card
 from app.services.radar.dedup import dedup_and_merge
 from app.services.radar.scorer import score_opportunity
-from app.services.radar.types import RadarOpportunity, ScoreBreakdown
+from app.services.radar.types import RadarOpportunity
 
 logger = structlog.get_logger(__name__)
 

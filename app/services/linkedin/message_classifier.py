@@ -22,7 +22,6 @@ When enabled (flag flipped later):
 
 from __future__ import annotations
 
-import re
 import structlog
 
 from app.config import settings

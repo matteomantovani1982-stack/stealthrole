@@ -16,9 +16,8 @@ Design rules enforced here:
 """
 
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
 from app.dependencies import DB, CurrentUserId, S3Client

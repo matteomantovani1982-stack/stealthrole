@@ -91,23 +91,56 @@ services:
       timeout: 10s
       retries: 3
       start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+        reservations:
+          memory: 512M
 
   worker_default:
     <<: *worker-base
     command: celery -A app.workers.celery_app.celery worker -Q default --concurrency=4 --loglevel=info
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 256M
 
   worker_llm:
     <<: *worker-base
     command: celery -A app.workers.celery_app.celery worker -Q llm --concurrency=2 --loglevel=info
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 256M
 
   worker_rendering:
     <<: *worker-base
     command: celery -A app.workers.celery_app.celery worker -Q rendering --concurrency=4 --loglevel=info
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+          cpus: "2.0"
+        reservations:
+          memory: 512M
 
   beat:
     <<: *worker-base
     command: celery -A app.workers.celery_app.celery beat --loglevel=info
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.25"
 
   postgres:
     image: postgres:16-alpine
@@ -123,6 +156,13 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "2.0"
+        reservations:
+          memory: 1G
 
   redis:
     image: redis:7-alpine
@@ -135,6 +175,13 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: "1.0"
+        reservations:
+          memory: 128M
 
   nginx:
     image: nginx:1.25-alpine

@@ -14,7 +14,6 @@ Create Date: 2025-01-05 00:00:00
 """
 
 from alembic import op
-import sqlalchemy as sa
 
 revision = "005"
 down_revision = "004"

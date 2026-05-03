@@ -16,6 +16,33 @@ logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/v1/whatsapp", tags=["WhatsApp"])
 
 
+# ── Response models ──────────────────────────────────────────────────────────
+
+class WhatsAppVerifyResponse(BaseModel):
+    """Verification code sent response."""
+    message: str
+
+
+class WhatsAppConfirmResponse(BaseModel):
+    """WhatsApp confirmation response."""
+    status: str
+    whatsapp_number: str
+
+
+class WhatsAppSendResponse(BaseModel):
+    """WhatsApp message send response."""
+    status: str
+    message_sid: str
+    to: str | None = None
+
+
+class WhatsAppAlertResponse(BaseModel):
+    """Opportunity alert send response."""
+    status: str
+    message_sid: str
+    message: str | None = None
+
+
 def _twiml(text: str) -> Response:
     """Return a TwiML XML response wrapping a message body."""
     xml = (
@@ -77,7 +104,7 @@ def _normalize_phone(phone: str) -> str:
     return p
 
 
-@router.post("/verify", summary="Send WhatsApp verification code")
+@router.post("/verify", summary="Send WhatsApp verification code", response_model=WhatsAppVerifyResponse)
 async def verify_whatsapp(payload: WhatsAppVerifyRequest, current_user: CurrentUser, db: DB) -> dict:
     _require_twilio()
     from app.services.whatsapp.verification import WhatsAppVerification, VerificationError
@@ -101,7 +128,7 @@ async def verify_whatsapp(payload: WhatsAppVerifyRequest, current_user: CurrentU
     return {"message": "Verification code sent. Check your WhatsApp."}
 
 
-@router.post("/confirm", summary="Confirm WhatsApp verification")
+@router.post("/confirm", summary="Confirm WhatsApp verification", response_model=WhatsAppConfirmResponse)
 async def confirm_whatsapp(payload: WhatsAppConfirmRequest, current_user: CurrentUser, db: DB) -> dict:
     _require_twilio()
     from app.services.whatsapp.verification import WhatsAppVerification, VerificationError
@@ -139,7 +166,7 @@ class WhatsAppSendRequest(BaseModel):
     phone_number: str | None = None  # If None, uses the user's verified number
 
 
-@router.post("/send", summary="Send a WhatsApp message to the user")
+@router.post("/send", summary="Send a WhatsApp message to the user", response_model=WhatsAppSendResponse)
 async def send_whatsapp(
     payload: WhatsAppSendRequest,
     current_user: CurrentUser,
@@ -169,7 +196,7 @@ async def send_whatsapp(
         raise HTTPException(status_code=500, detail=f"Send failed: {str(e)}")
 
 
-@router.post("/send-test", summary="Send a test WhatsApp alert")
+@router.post("/send-test", summary="Send a test WhatsApp alert", response_model=WhatsAppSendResponse)
 async def send_test_whatsapp(
     current_user: CurrentUser,
     db: DB,
@@ -210,7 +237,7 @@ class OpportunityAlertRequest(BaseModel):
     app_url: str | None = None
 
 
-@router.post("/alert-opportunity", summary="Send a formatted opportunity alert via WhatsApp")
+@router.post("/alert-opportunity", summary="Send a formatted opportunity alert via WhatsApp", response_model=WhatsAppAlertResponse)
 async def send_opportunity_alert(
     payload: OpportunityAlertRequest,
     current_user: CurrentUser,

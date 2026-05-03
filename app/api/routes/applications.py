@@ -105,8 +105,10 @@ async def create_application(
 async def list_applications(
     db: DB,
     user_id: CurrentUserId,
+    limit: int = Query(default=100, ge=1, le=500, description="Max items to return"),
+    offset: int = Query(default=0, ge=0, description="Items to skip"),
 ) -> list[ApplicationListItem]:
-    return await _svc(db).list_all(user_id=user_id)
+    return await _svc(db).list_all(user_id=user_id, limit=limit, offset=offset)
 
 
 # ── Board (Kanban view) ──────────────────────────────────────────────────────

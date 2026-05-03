@@ -11,11 +11,10 @@ currently gated by the ENABLE_LINKEDIN_MSG_CLASSIFY env var (default: off)
 to avoid burning LLM credits during early testing.
 """
 
-import uuid
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDMixin

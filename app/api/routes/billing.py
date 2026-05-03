@@ -11,6 +11,8 @@ Routes:
   POST /api/v1/billing/webhook              — Stripe webhook receiver (no auth)
 """
 
+from datetime import datetime
+
 import structlog
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
@@ -18,8 +20,7 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.dependencies import DB, CurrentUser
-from app.models.subscription import PlanTier
-from app.services.billing.billing_service import BillingService, QuotaExceededError
+from app.services.billing.billing_service import BillingService
 from app.services.billing.plans import PLANS
 
 logger = structlog.get_logger(__name__)
@@ -66,6 +67,23 @@ class PlanResponse(BaseModel):
     features: PlanFeatures
 
 
+class BillingStatusResponse(BaseModel):
+    """Current subscription state + usage for the UI dashboard."""
+    plan_tier: str
+    plan_display_name: str
+    status: str
+    is_active: bool
+    is_paid: bool
+    packs_per_month: int | None
+    used_this_period: int
+    remaining: int | None
+    features: PlanFeatures
+    current_period_start: datetime | None = None
+    current_period_end: datetime | None = None
+    cancel_at_period_end: bool = False
+    stripe_customer_id: str | None = None
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get(
@@ -95,6 +113,7 @@ async def list_plans() -> list[PlanResponse]:
 
 @router.get(
     "/status",
+    response_model=BillingStatusResponse,
     summary="Get current subscription and usage",
 )
 async def get_billing_status(db: DB, current_user: CurrentUser) -> dict:
@@ -204,7 +223,7 @@ async def stripe_webhook(
         logger.error("webhook_processing_failed", extra={"error": str(e)})
         # Return 200 anyway — Stripe will retry on 4xx/5xx, not on 200
         # Log the error for manual investigation
-        return {"status": "error", "detail": str(e)}
+        return {"detail": f"Webhook processing failed: {e}", "status": "error"}
 
     return {"status": "ok", "result": result}
 
@@ -212,13 +231,20 @@ async def stripe_webhook(
 @router.post(
     "/dev/grant-credits",
     summary="DEV ONLY — grant free packs for testing",
-    include_in_schema=True,
+    include_in_schema=False,
 )
 async def dev_grant_credits(
     db: DB,
     current_user: CurrentUser,
 ) -> dict:
     """Grant Pro plan for 30 days — dev/demo use only."""
+    from app.config import settings as _settings
+    if not getattr(_settings, "demo_mode", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This endpoint is only available in demo mode.",
+        )
+
     from app.models.subscription import Subscription, PlanTier
     from sqlalchemy import select
     from datetime import UTC, datetime, timedelta

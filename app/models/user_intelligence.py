@@ -13,7 +13,9 @@ Combines signals from all data sources:
 Updated periodically or on-demand. One record per user.
 """
 
-from sqlalchemy import Float, Integer, String, Text
+from datetime import datetime
+
+from sqlalchemy import DateTime, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -35,7 +37,7 @@ class UserIntelligence(Base, UUIDMixin, TimestampMixin):
     )
     strength_breakdown: Mapped[dict | None] = mapped_column(
         JSONB, nullable=True,
-        comment='{"cv": 80, "profile": 70, "linkedin": 40, "email": 0, "applications": 60}',
+        comment="Breakdown by data source (cv, profile, linkedin, email, etc.)",
     )
 
     # ── Behavioral insights ───────────────────────────────────────────────
@@ -88,5 +90,76 @@ class UserIntelligence(Base, UUIDMixin, TimestampMixin):
         comment="Actionable recommendations based on all intelligence",
     )
 
+    # ── Hybrid Learning Profile (Signal Intelligence Layer) ──────────────
+    learning_profile: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True,
+        comment="Per-user learning state across all dimensions with sample counts",
+    )
+    # Schema:
+    # {
+    #   "signal_effectiveness": {
+    #     "funding": {"success_rate": 0.42, "sample_count": 12,
+    #                 "last_updated": "..."},
+    #     "leadership": {"success_rate": 0.28, "sample_count": 5,
+    #                    "last_updated": "..."},
+    #     ...
+    #   },
+    #   "contact_type": {
+    #     "recruiter": {"response_rate": 0.55, "conversion_rate": 0.18,
+    #                   "sample_count": 20, ...},
+    #     "hiring_manager": {"response_rate": 0.30, "conversion_rate": 0.40,
+    #                        "sample_count": 8, ...},
+    #     ...
+    #   },
+    #   "path_success": {
+    #     "warm_intro": {"success_rate": 0.45, "sample_count": 10, ...},
+    #     "direct_apply": {"success_rate": 0.12, "sample_count": 30, ...},
+    #     ...
+    #   },
+    #   "timing": {
+    #     "best_day": "Tuesday",
+    #     "best_time_window": "09:00-11:00",
+    #     "pre_post_ratio": 0.65,
+    #     ...
+    #   },
+    #   "overrides": {
+    #     "signal_type:funding": true,
+    #     "company:CompanyX": true,
+    #     ...
+    #   }
+    # }
+
+    learning_sample_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0",
+        comment="Total tracked outcomes (determines blend weight tier)",
+    )
+
+    learning_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+        comment="Last time any learning dimension was updated",
+    )
+
+    short_term_memory: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True,
+        comment="Last 10 actions with outcomes for fast feedback detection",
+    )
+    # Schema:
+    # [
+    #   {
+    #     "event_type": "outreach_sent",
+    #     "company": "Careem",
+    #     "path_type": "warm_intro",
+    #     "contact_type": "hiring_manager",
+    #     "signal_type": "funding",
+    #     "outcome": "reply_received",
+    #     "success_score": 0.30,
+    #     "timestamp": "2026-05-01T10:00:00Z"
+    #   },
+    #   ...
+    # ]
+
     def __repr__(self) -> str:
-        return f"<UserIntelligence user={self.user_id} strength={self.profile_strength}>"
+        return (
+            f"<UserIntelligence user={self.user_id} "
+            f"strength={self.profile_strength}>"
+        )

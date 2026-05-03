@@ -18,7 +18,6 @@ import hashlib
 import hmac
 import json
 import time
-from typing import Any
 
 import httpx
 
@@ -144,9 +143,10 @@ class StripeClient:
           - Timestamp is more than 5 minutes old (replay attack protection)
         """
         try:
-            parts = {k: v for k, v in (p.split("=", 1) for p in sig_header.split(","))}
-            timestamp = parts.get("t")
-            signatures = [v for k, v in parts.items() if k == "v1"]
+            # Parse as list of tuples — Stripe may send multiple v1 signatures
+            pairs = [p.split("=", 1) for p in sig_header.split(",")]
+            timestamp = next((v for k, v in pairs if k == "t"), None)
+            signatures = [v for k, v in pairs if k == "v1"]
         except (ValueError, AttributeError):
             raise StripeError("Invalid Stripe-Signature header format", 400)
 

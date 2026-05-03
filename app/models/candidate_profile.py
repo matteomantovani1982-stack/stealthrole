@@ -32,19 +32,15 @@ Versioning:
 """
 
 import uuid
-from datetime import UTC, datetime
 from enum import Enum
-from typing import Any
 
 from sqlalchemy import (
     Boolean,
-    DateTime,
     ForeignKey,
     Integer,
     String,
     Text,
     UniqueConstraint,
-    func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -109,6 +105,12 @@ class CandidateProfile(Base, UUIDMixin, TimestampMixin):
 
     # Unpublished achievements, skills, side projects not on CV
     global_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Candidate's preferred location / region
+    location: Mapped[str | None] = mapped_column(
+        String(255), nullable=True,
+        comment="Candidate preferred location / region",
+    )
 
     # Reference CV for formatting template
     preferences: Mapped[dict | None] = mapped_column(

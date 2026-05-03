@@ -61,9 +61,11 @@ def get_sync_db() -> Generator[Session, None, None]:
         with get_sync_db() as db:
             cv = db.get(CV, cv_id)
             ...
-            db.commit()
+            db.commit()   # Explicit commit recommended
 
-    Automatically rolls back on exception and always closes.
+    Auto-commits on clean exit (safety net — prevents data loss if commit
+    is forgotten). Rolls back on exception and always closes.
+    Explicit db.commit() calls inside the block are safe (no-op if clean).
     """
     session = _SyncSessionLocal()
     try:

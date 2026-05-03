@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.middleware.error_handler import NotFoundError
 from app.config import settings
 from app.models.cv import CV, CVStatus
-from app.schemas.cv import CVCreate, CVListItem, CVStatusResponse, CVUploadResponse
+from app.schemas.cv import CVListItem, CVStatusResponse, CVUploadResponse
 from app.services.ingest.storage import (
     S3StorageService,
     build_cv_s3_key,

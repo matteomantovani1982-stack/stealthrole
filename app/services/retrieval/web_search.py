@@ -19,10 +19,7 @@ If retrieval fails entirely, the LLM uses its training knowledge.
 The RetrievalResult.partial_failure flag signals degraded quality.
 """
 
-import json
-import time
 from dataclasses import dataclass, field
-from typing import Any
 
 import httpx
 

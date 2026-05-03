@@ -18,7 +18,6 @@ Never import FastAPI or SQLAlchemy here — pure storage logic only.
 
 import hashlib
 import uuid
-from datetime import datetime, UTC
 from pathlib import Path
 
 import boto3

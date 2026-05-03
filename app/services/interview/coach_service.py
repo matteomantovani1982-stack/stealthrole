@@ -15,7 +15,6 @@ interview data when available.
 """
 
 import uuid
-from datetime import UTC, datetime
 
 import structlog
 from sqlalchemy import select, func

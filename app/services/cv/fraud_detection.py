@@ -14,7 +14,6 @@ Rule-based — zero LLM cost. Returns a trust score + list of flags.
 
 import re
 from datetime import datetime
-from typing import Any
 
 import structlog
 

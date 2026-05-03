@@ -67,15 +67,11 @@ async def check_feature_positioning(db: DB, current_user: CurrentUser) -> None:
     if not plan.positioning:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "error": "feature_not_available",
-                "message": (
-                    "Positioning Strategy is not available on the Free plan. "
-                    "Upgrade to Starter or higher."
-                ),
-                "feature": "positioning",
-                "upgrade_url": "/billing/checkout",
-            },
+            detail=(
+                "Positioning Strategy is not available on the Free plan. "
+                "Upgrade to Starter or higher."
+            ),
+            headers={"X-Feature": "positioning"},
         )
 
 

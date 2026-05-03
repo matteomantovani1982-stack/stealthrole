@@ -5,10 +5,9 @@ Persistent storage for Scout signal engine results.
 Allows caching of expensive signal scans and historical trend tracking.
 """
 
-import uuid
 
 from sqlalchemy import Boolean, Integer, String
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDMixin

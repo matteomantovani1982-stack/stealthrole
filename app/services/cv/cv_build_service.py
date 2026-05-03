@@ -22,7 +22,6 @@ Integration point:
 
 import json
 import re
-import uuid
 
 import structlog
 
@@ -104,7 +103,12 @@ class CVBuildService:
         return built_cv
 
     def _parse_built_cv(self, raw: str, mode: str) -> dict:
-        """Parse and minimally validate the LLM JSON response."""
+        """Parse and minimally validate the LLM JSON response.
+
+        If 'name' or 'sections' are missing, attempts to salvage by
+        injecting sensible defaults so the pipeline doesn't crash on
+        edge-case LLM responses or demo-mode mismatches.
+        """
         text = re.sub(r"^```(?:json)?\s*", "", raw.strip())
         text = re.sub(r"\s*```$", "", text).strip()
 
@@ -113,13 +117,55 @@ class CVBuildService:
         except json.JSONDecodeError as e:
             raise ValueError(f"CV build ({mode}): could not parse JSON: {e}") from e
 
-        # Minimal validation
-        required = ["name", "sections"]
-        missing = [f for f in required if f not in data]
-        if missing:
-            raise ValueError(f"CV build ({mode}): missing required fields: {missing}")
+        # ── Salvage missing top-level fields instead of crashing ─────────
+        if "name" not in data:
+            # Try common alternative keys the LLM might have used
+            data["name"] = (
+                data.get("full_name")
+                or data.get("candidate_name")
+                or data.get("contact", {}).get("name")
+                or "Candidate"
+            )
+            logger.warning("cv_build_missing_name", mode=mode, salvaged_name=data["name"])
+
+        if "sections" not in data:
+            # If the LLM returned experience/skills at top level, wrap them
+            sections = []
+            if "experience" in data:
+                sections.append({
+                    "section_type": "experience",
+                    "title": "Professional Experience",
+                    "entries": data["experience"] if isinstance(data["experience"], list) else [],
+                })
+            if "skills" in data:
+                sections.append({
+                    "section_type": "skills",
+                    "title": "Skills & Expertise",
+                    "categories": data["skills"] if isinstance(data["skills"], list) else [],
+                })
+            if "education" in data:
+                sections.append({
+                    "section_type": "education",
+                    "title": "Education",
+                    "entries": data["education"] if isinstance(data["education"], list) else [],
+                })
+            if not sections:
+                # Absolute fallback — one empty experience section so renderer doesn't crash
+                sections.append({
+                    "section_type": "experience",
+                    "title": "Professional Experience",
+                    "entries": [{
+                        "role": "See profile for details",
+                        "company": "",
+                        "start_date": "",
+                        "end_date": "",
+                        "bullets": ["CV content could not be fully generated. Please retry or switch build mode."],
+                    }],
+                })
+            data["sections"] = sections
+            logger.warning("cv_build_missing_sections", mode=mode, salvaged_count=len(sections))
 
         if not data.get("sections"):
-            raise ValueError(f"CV build ({mode}): sections array is empty")
+            raise ValueError(f"CV build ({mode}): sections array is empty after salvage")
 
         return data

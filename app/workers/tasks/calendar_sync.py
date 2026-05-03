@@ -174,7 +174,7 @@ def check_followup_reminders(self: Task) -> dict:
 
     with get_sync_db() as db:
         # Find all overdue follow-ups not yet sent
-        result = db.execute(
+        _result = db.execute(
             select(ApplicationTimeline, Application, User)
             .join(Application, ApplicationTimeline.application_id == Application.id)
             .join(User, Application.user_id == db.bind.url.database)  # This won't work — simplified

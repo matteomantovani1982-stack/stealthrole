@@ -31,7 +31,6 @@ Processing:
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from datetime import datetime
 
 import httpx
 import structlog
@@ -68,7 +67,7 @@ class PredictedOpportunity:
 def _build_queries(region: str, sectors: list[str], roles: list[str]) -> dict[str, list[str]]:
     """Build targeted search queries for each intelligence layer."""
     sec = " ".join(sectors[:3]) if sectors else "tech fintech"
-    role_kw = " ".join(roles[:2]) if roles else "operations leadership"
+    _role_kw = " ".join(roles[:2]) if roles else "operations leadership"
 
     return {
         "financial_events": [
@@ -413,7 +412,12 @@ def predict_opportunities(
     }
 
 
-def _fallback_predictions(region: str, sectors: list[str], roles: list[str], max_results: int) -> dict:
+def _fallback_predictions(
+    region: str,
+    sectors: list[str],
+    roles: list[str],
+    max_results: int,
+) -> dict:
     """Return empty predictions when Serper is unavailable."""
     logger.warning("predictor_fallback_no_serper")
     return {
@@ -421,5 +425,188 @@ def _fallback_predictions(region: str, sectors: list[str], roles: list[str], max
         "sources_scanned": 0,
         "layers_queried": [],
         "is_demo": True,
-        "empty_reason": "Predicted opportunities require market scanning to be active. Connect your email and import LinkedIn connections to activate this feature.",
+        "empty_reason": (
+            "Predicted opportunities require market scanning "
+            "to be active."
+        ),
     }
+
+
+# ── Interpretation-based prediction (Phase 4) ───────────────────────
+
+async def predict_from_interpretations(
+    db,  # AsyncSession
+    user_id: str,
+    preferences: dict,
+    user_profile: dict,
+    max_results: int = 20,
+) -> dict | None:
+    """Build predictions from existing SignalInterpretation records.
+
+    Returns a predictions dict (same shape as
+    ``predict_opportunities``) when interpretations exist, or
+    ``None`` to signal the caller to fall back to the legacy
+    article-based predictor.
+
+    Parameters
+    ----------
+    db : AsyncSession
+    user_id : str
+    preferences : dict
+        User's target roles / sectors / regions.
+    user_profile : dict
+        Profile dict for fit context.
+    max_results : int
+    """
+    from datetime import datetime as dt
+    from datetime import timedelta, timezone
+
+    from sqlalchemy import select
+
+    from app.models.hidden_signal import HiddenSignal
+    from app.models.signal_interpretation import (
+        SignalInterpretation,
+    )
+
+    # Fetch recent interpretations (last 24 h) with company names
+    cutoff = dt.now(timezone.utc) - timedelta(hours=24)
+    q = (
+        select(
+            SignalInterpretation,
+            HiddenSignal.company_name,
+            HiddenSignal.source_url,
+            HiddenSignal.source_name,
+        )
+        .join(
+            HiddenSignal,
+            HiddenSignal.id == SignalInterpretation.signal_id,
+        )
+        .where(
+            SignalInterpretation.user_id == user_id,
+            SignalInterpretation.created_at >= cutoff,
+        )
+        .order_by(
+            SignalInterpretation.interpretation_confidence.desc(),
+        )
+        .limit(50)
+    )
+    rows = (await db.execute(q)).all()
+
+    if not rows:
+        return None  # fall back to legacy
+
+    predictions = _interpretations_to_predictions(rows)
+
+    # Deduplicate by company — keep highest confidence
+    by_company: dict[str, dict] = {}
+    for pred in predictions:
+        key = pred["company"].lower().strip()
+        if (
+            key not in by_company
+            or pred["confidence"] > by_company[key]["confidence"]
+        ):
+            by_company[key] = pred
+
+    sorted_preds = sorted(
+        by_company.values(),
+        key=lambda p: p["confidence"],
+        reverse=True,
+    )[:max_results]
+
+    logger.info(
+        "predictor_from_interpretations",
+        user_id=user_id,
+        interpretations=len(rows),
+        predictions=len(sorted_preds),
+    )
+
+    return {
+        "predictions": sorted_preds,
+        "sources_scanned": len(rows),
+        "layers_queried": ["signal_interpretation"],
+        "is_demo": False,
+        "engine": "interpretation",
+    }
+
+
+def _interpretations_to_predictions(
+    rows: list[tuple],
+) -> list[dict]:
+    """Convert (SignalInterpretation, company, url, source) tuples
+    into prediction dicts."""
+    results: list[dict] = []
+
+    for row in rows:
+        interp = row[0]
+        company_name = row[1] or "Unknown"
+        source_url = row[2] or ""
+        source_name = row[3] or "signal_interpretation"
+
+        roles = interp.predicted_roles or []
+        if not roles:
+            continue
+
+        # Pick the highest-confidence predicted role
+        best_role = max(
+            roles, key=lambda r: r.get("confidence", 0),
+        )
+        role_title = best_role.get("role", "Senior Role")
+        raw_timeline = best_role.get("timeline", "3_6_months")
+        urgency = best_role.get("urgency", "likely")
+        role_conf = best_role.get("confidence", 0.5)
+
+        # Combine interpretation + role confidence
+        interp_conf = interp.interpretation_confidence or 0.5
+        combined = (interp_conf * 0.6) + (role_conf * 0.4)
+
+        # Structured reasoning
+        reasoning = (
+            f"{interp.business_change} "
+            f"{interp.org_impact} "
+            f"{interp.hiring_reason}"
+        )
+
+        # Format timeline
+        timeline = _format_timeline(raw_timeline)
+
+        # Action with hiring owner context
+        owner = interp.hiring_owner_title or "hiring manager"
+        action = (
+            f"Research {company_name}, identify the "
+            f"{owner}, and position yourself for the "
+            f"{role_title} role"
+        )
+
+        results.append({
+            "company": company_name,
+            "predicted_role": role_title,
+            "confidence": round(combined * 100),
+            "timeline": timeline,
+            "urgency": urgency,
+            "trigger_event": interp.business_change[:150],
+            "trigger_type": interp.trigger_type,
+            "reasoning": reasoning[:500],
+            "decision_maker": interp.hiring_owner_title or "",
+            "recommended_action": action,
+            "source_url": source_url,
+            "source_name": source_name,
+            "published_date": "",
+            "signals": [interp.trigger_type],
+            "rule_id": interp.rule_id,
+            "interpretation_id": str(interp.id),
+        })
+
+    return results
+
+
+_TIMELINE_MAP = {
+    "immediate": "immediate",
+    "1_3_months": "1-3 months",
+    "3_6_months": "3-6 months",
+    "6_12_months": "6-12 months",
+}
+
+
+def _format_timeline(raw: str) -> str:
+    """Normalise timeline codes for display."""
+    return _TIMELINE_MAP.get(raw, raw.replace("_", " "))

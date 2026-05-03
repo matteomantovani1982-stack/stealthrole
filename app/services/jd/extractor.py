@@ -24,7 +24,6 @@ If fetch fails entirely, raises JDExtractionError with a user-friendly message.
 """
 
 import re
-from typing import Optional
 
 import httpx
 import structlog

@@ -12,6 +12,7 @@ from sqlalchemy import func, select, update
 
 from app.dependencies import DB, CurrentUser
 from app.models.user import User
+from app.schemas.common import ReferralStatsResponse, ReferralApplyResponse
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/v1/referral", tags=["Referral"])
@@ -26,7 +27,7 @@ class ApplyReferralRequest(BaseModel):
     referral_code: str
 
 
-@router.get("/stats", summary="Referral statistics")
+@router.get("/stats", summary="Referral statistics", response_model=ReferralStatsResponse)
 async def referral_stats(current_user: CurrentUser, db: DB) -> dict:
     # Lazy referral code generation: create on first access
     if not current_user.referral_code:
@@ -62,7 +63,7 @@ async def referral_stats(current_user: CurrentUser, db: DB) -> dict:
     }
 
 
-@router.post("/apply", summary="Apply a referral code")
+@router.post("/apply", summary="Apply a referral code", response_model=ReferralApplyResponse)
 async def apply_referral(
     payload: ApplyReferralRequest,
     current_user: CurrentUser,

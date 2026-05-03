@@ -9,14 +9,20 @@ Routes:
   POST /api/v1/auth/refresh    — rotate refresh token, returns new token pair
   POST /api/v1/auth/logout     — revoke session
   GET  /api/v1/auth/me         — current user info
+  PATCH /api/v1/auth/me        — update profile
+  POST /api/v1/auth/change-password — change password
+  GET  /api/v1/auth/me/notifications — get notification prefs
+  PUT  /api/v1/auth/me/notifications — update notification prefs
+  POST /api/v1/auth/google     — Google OAuth login
+  GET  /api/v1/auth/google/url — get Google OAuth URL
 """
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
-from app.dependencies import DB
+from app.api.middleware.rate_limiter import rate_limit
+from app.dependencies import DB, CurrentUser
 from app.schemas.auth import (
     LoginRequest,
     MessageResponse,
@@ -34,7 +40,6 @@ from app.services.auth.auth_service import AuthError, AuthService
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
-bearer = HTTPBearer(auto_error=False)
 
 
 def _service(db: DB) -> AuthService:
@@ -45,6 +50,15 @@ def _auth_error_to_http(e: AuthError) -> HTTPException:
     return HTTPException(status_code=e.status_code, detail=e.message)
 
 
+# ── Response models for previously untyped endpoints ─────────────────────────
+
+class NotificationPrefsResponse(BaseModel):
+    notification_preferences: dict
+
+class GoogleAuthUrlResponse(BaseModel):
+    auth_url: str
+
+
 # ── Register ──────────────────────────────────────────────────────────────────
 
 @router.post(
@@ -53,7 +67,11 @@ def _auth_error_to_http(e: AuthError) -> HTTPException:
     response_model=RegisterResponse,
     summary="Create a new account",
 )
-async def register(payload: RegisterRequest, db: DB) -> RegisterResponse:
+async def register(
+    payload: RegisterRequest,
+    db: DB,
+    _rl: None = Depends(rate_limit("register", max_calls=5, window_seconds=60)),
+) -> RegisterResponse:
     svc = _service(db)
     try:
         user = await svc.register(
@@ -117,7 +135,11 @@ async def register(payload: RegisterRequest, db: DB) -> RegisterResponse:
     response_model=TokenResponse,
     summary="Authenticate and receive tokens",
 )
-async def login(payload: LoginRequest, db: DB) -> TokenResponse:
+async def login(
+    payload: LoginRequest,
+    db: DB,
+    _rl: None = Depends(rate_limit("login", max_calls=10, window_seconds=60)),
+) -> TokenResponse:
     svc = _service(db)
     try:
         _, access_token, refresh_token = await svc.login(
@@ -128,7 +150,7 @@ async def login(payload: LoginRequest, db: DB) -> TokenResponse:
     except AuthError as e:
         raise _auth_error_to_http(e)
 
-    return TokenResponse(access_token=access_token, refresh_token=refresh_token)
+    return TokenResponse.from_tokens(access_token, refresh_token)
 
 
 # ── Refresh ───────────────────────────────────────────────────────────────────
@@ -138,7 +160,11 @@ async def login(payload: LoginRequest, db: DB) -> TokenResponse:
     response_model=TokenResponse,
     summary="Rotate refresh token and get new access token",
 )
-async def refresh(payload: RefreshRequest, db: DB) -> TokenResponse:
+async def refresh(
+    payload: RefreshRequest,
+    db: DB,
+    _rl: None = Depends(rate_limit("refresh", max_calls=20, window_seconds=60)),
+) -> TokenResponse:
     svc = _service(db)
     try:
         access_token, refresh_token = await svc.refresh(payload.refresh_token)
@@ -146,7 +172,7 @@ async def refresh(payload: RefreshRequest, db: DB) -> TokenResponse:
     except AuthError as e:
         raise _auth_error_to_http(e)
 
-    return TokenResponse(access_token=access_token, refresh_token=refresh_token)
+    return TokenResponse.from_tokens(access_token, refresh_token)
 
 
 # ── Logout ────────────────────────────────────────────────────────────────────
@@ -156,21 +182,10 @@ async def refresh(payload: RefreshRequest, db: DB) -> TokenResponse:
     response_model=MessageResponse,
     summary="Revoke current session",
 )
-async def logout(
-    db: DB,
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
-) -> MessageResponse:
-    if not credentials:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
+async def logout(db: DB, current_user: CurrentUser) -> MessageResponse:
     svc = _service(db)
-    try:
-        user = await svc.get_current_user_from_token(credentials.credentials)
-        await svc.logout(user.id)
-        await db.commit()
-    except AuthError as e:
-        raise _auth_error_to_http(e)
-
+    await svc.logout(current_user.id)
+    await db.commit()
     return MessageResponse(message="Logged out successfully.")
 
 
@@ -181,20 +196,8 @@ async def logout(
     response_model=UserResponse,
     summary="Get current user info",
 )
-async def me(
-    db: DB,
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
-) -> UserResponse:
-    if not credentials:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    svc = _service(db)
-    try:
-        user = await svc.get_current_user_from_token(credentials.credentials)
-    except AuthError as e:
-        raise _auth_error_to_http(e)
-
-    return UserResponse.model_validate(user)
+async def me(current_user: CurrentUser) -> UserResponse:
+    return UserResponse.model_validate(current_user)
 
 
 # ── Update profile ────────────────────────────────────────────────────────────
@@ -207,21 +210,13 @@ async def me(
 async def update_me(
     payload: UpdateProfileRequest,
     db: DB,
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+    current_user: CurrentUser,
 ) -> UserResponse:
-    if not credentials:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    svc = _service(db)
-    try:
-        user = await svc.get_current_user_from_token(credentials.credentials)
-    except AuthError as e:
-        raise _auth_error_to_http(e)
-
     if payload.full_name is not None:
-        user.full_name = payload.full_name
+        current_user.full_name = payload.full_name
     await db.flush()
     await db.commit()
-    return UserResponse.model_validate(user)
+    return UserResponse.model_validate(current_user)
 
 
 class NotificationPrefsRequest(BaseModel):
@@ -233,54 +228,37 @@ class NotificationPrefsRequest(BaseModel):
 
 @router.put(
     "/me/notifications",
+    response_model=NotificationPrefsResponse,
     summary="Update notification preferences",
 )
 async def update_notification_preferences(
     payload: NotificationPrefsRequest,
     db: DB,
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
-) -> dict:
-    if not credentials:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    svc = _service(db)
-    try:
-        user = await svc.get_current_user_from_token(credentials.credentials)
-    except AuthError as e:
-        raise _auth_error_to_http(e)
-
-    current = dict(user.notification_preferences or {})
+    current_user: CurrentUser,
+) -> NotificationPrefsResponse:
+    current = dict(current_user.notification_preferences or {})
     updates = payload.model_dump(exclude_none=True)
     current.update(updates)
     # Assign a new dict to force SQLAlchemy JSONB mutation detection
-    user.notification_preferences = dict(current)
+    current_user.notification_preferences = dict(current)
     await db.flush()
     await db.commit()
-    return {"notification_preferences": user.notification_preferences}
+    return NotificationPrefsResponse(notification_preferences=current_user.notification_preferences)
 
 
 @router.get(
     "/me/notifications",
+    response_model=NotificationPrefsResponse,
     summary="Get notification preferences",
 )
-async def get_notification_preferences(
-    db: DB,
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
-) -> dict:
-    if not credentials:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    svc = _service(db)
-    try:
-        user = await svc.get_current_user_from_token(credentials.credentials)
-    except AuthError as e:
-        raise _auth_error_to_http(e)
-
-    prefs = user.notification_preferences or {
+async def get_notification_preferences(current_user: CurrentUser) -> NotificationPrefsResponse:
+    prefs = current_user.notification_preferences or {
         "pack_complete_email": True,
         "scout_digest_email": True,
         "hidden_market_email": True,
         "shadow_ready_email": True,
     }
-    return {"notification_preferences": prefs}
+    return NotificationPrefsResponse(notification_preferences=prefs)
 
 
 @router.post(
@@ -291,22 +269,22 @@ async def get_notification_preferences(
 async def change_password(
     payload: ChangePasswordRequest,
     db: DB,
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+    current_user: CurrentUser,
 ) -> MessageResponse:
-    if not credentials:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    svc = _service(db)
-    try:
-        user = await svc.get_current_user_from_token(credentials.credentials)
-    except AuthError as e:
-        raise _auth_error_to_http(e)
+    # OAuth users don't have a password — block change-password
+    if current_user.password_hash == "OAUTH_NO_PASSWORD":
+        raise HTTPException(
+            status_code=400,
+            detail="Password change is not available for accounts created via Google login. "
+                   "Use your Google account to sign in.",
+        )
 
     # Verify current password
     from app.services.auth.password import hash_password, verify_password
-    if not verify_password(payload.current_password, user.password_hash):
-        raise HTTPException(status_code=400, detail={"error": "Current password is incorrect"})
+    if not verify_password(payload.current_password, current_user.password_hash):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
 
-    user.password_hash = hash_password(payload.new_password)
+    current_user.password_hash = hash_password(payload.new_password)
     await db.flush()
     await db.commit()
     return MessageResponse(message="Password updated successfully.")
@@ -333,7 +311,11 @@ class OAuthLoginResponse(BaseModel):
     response_model=OAuthLoginResponse,
     summary="Log in or register via Google OAuth",
 )
-async def google_login(payload: GoogleLoginRequest, db: DB) -> OAuthLoginResponse:
+async def google_login(
+    payload: GoogleLoginRequest,
+    db: DB,
+    _rl: None = Depends(rate_limit("google_oauth", max_calls=10, window_seconds=60)),
+) -> OAuthLoginResponse:
     """
     Exchange a Google OAuth code for StealthRole tokens.
     Auto-creates account if user doesn't exist.
@@ -398,9 +380,10 @@ async def google_login(payload: GoogleLoginRequest, db: DB) -> OAuthLoginRespons
 
 @router.get(
     "/google/url",
+    response_model=GoogleAuthUrlResponse,
     summary="Get Google OAuth URL for login",
 )
-async def google_login_url() -> dict:
+async def google_login_url() -> GoogleAuthUrlResponse:
     """Return the Google OAuth consent URL for the frontend to redirect to."""
     from app.config import settings
     import httpx
@@ -419,4 +402,4 @@ async def google_login_url() -> dict:
         "state": "google_login",
     }
     url = str(httpx.URL("https://accounts.google.com/o/oauth2/v2/auth", params=params))
-    return {"auth_url": url}
+    return GoogleAuthUrlResponse(auth_url=url)

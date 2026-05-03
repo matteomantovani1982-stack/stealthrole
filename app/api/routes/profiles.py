@@ -19,13 +19,11 @@ Routes:
 """
 
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, Header, status
+from fastapi import APIRouter, status
 
 from app.dependencies import DB, CurrentUserId, CurrentUser
 from app.schemas.candidate_profile import (
-    ApplicationProfileOverrides,
     CandidateProfileCreate,
     CandidateProfileListItem,
     CandidateProfileResponse,
@@ -35,6 +33,7 @@ from app.schemas.candidate_profile import (
     ExperienceEntryUpdate,
     IntakeQuestionsResponse,
 )
+from app.schemas.common import ProfileStrengthResponse
 from app.services.profile.profile_service import ProfileService
 from app.services.profile.strength_scorer import score_profile
 
@@ -239,6 +238,7 @@ async def reorder_experiences(
 @router.get(
     "/api/v1/profile/strength",
     summary="Get profile strength score",
+    response_model=ProfileStrengthResponse,
 )
 async def get_profile_strength(
     current_user: CurrentUser,

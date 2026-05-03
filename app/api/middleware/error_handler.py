@@ -137,6 +137,13 @@ def register_error_handlers(app: FastAPI) -> None:
             error=str(exc),
             exc_info=True,
         )
+        # Forward to Sentry explicitly (the integration usually does this,
+        # but the exception handler swallows the exception before Sentry sees it)
+        try:
+            import sentry_sdk
+            sentry_sdk.capture_exception(exc)
+        except Exception:
+            pass
         payload = {"detail": "An unexpected error occurred.", "type": "InternalError"}
         # In local/dev, expose raw exception to speed up debugging.
         if settings.is_development or settings.debug:

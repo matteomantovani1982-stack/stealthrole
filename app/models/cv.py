@@ -11,11 +11,10 @@ with the same base CV). The parsed_content stores the extracted node map
 produced by the ingest service — this is what the LLM reads.
 """
 
-import uuid
 from enum import StrEnum
 
 from sqlalchemy import BigInteger, Integer, String, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDMixin

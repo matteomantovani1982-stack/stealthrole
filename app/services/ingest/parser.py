@@ -23,12 +23,8 @@ worker. Do not use async/await here.
 """
 
 import io
-import re
-from dataclasses import dataclass, field
 
 from docx import Document
-from docx.oxml.ns import qn
-from docx.shared import Pt
 
 from app.schemas.cv import ParsedCV, ParsedNode, ParsedSection
 
@@ -129,8 +125,6 @@ class DOCXParser:
         # ── Collect ALL paragraphs including those inside tables ───────────
         # doc.paragraphs only returns top-level paragraphs — misses table cells.
         # Many professional CVs use table layouts, so we must walk the XML.
-        from docx.oxml.ns import qn as _qn
-        from lxml import etree as _etree
 
         all_paras = []
         body = doc.element.body

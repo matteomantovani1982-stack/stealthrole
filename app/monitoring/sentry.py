@@ -22,6 +22,8 @@ Environment tags automatically set:
     - server_name: hostname
 """
 
+import logging
+
 import structlog
 
 logger = structlog.get_logger(__name__)

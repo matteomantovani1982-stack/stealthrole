@@ -206,7 +206,13 @@ class LinkedInService:
     # ── Queries ───────────────────────────────────────────────────────────
 
     async def list_connections(
-        self, user_id: str, company: str | None = None, recruiters_only: bool = False,
+        self,
+        user_id: str,
+        company: str | None = None,
+        recruiters_only: bool = False,
+        *,
+        limit: int = 200,
+        offset: int = 0,
     ) -> list[LinkedInConnection]:
         query = select(LinkedInConnection).where(
             LinkedInConnection.user_id == user_id
@@ -217,7 +223,7 @@ class LinkedInService:
             )
         if recruiters_only:
             query = query.where(LinkedInConnection.is_recruiter == True)  # noqa: E712
-        query = query.order_by(LinkedInConnection.full_name)
+        query = query.order_by(LinkedInConnection.full_name).limit(limit).offset(offset)
         result = await self.db.execute(query)
         return list(result.scalars().all())
 

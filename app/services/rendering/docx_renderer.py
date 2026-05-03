@@ -35,9 +35,7 @@ Limitations (future work):
 
 import copy
 import io
-import uuid
 from dataclasses import dataclass
-from typing import Any
 
 from docx import Document
 from docx.oxml import OxmlElement

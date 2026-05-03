@@ -17,9 +17,7 @@ Design:
 """
 
 import uuid
-from typing import Annotated
-
-from fastapi import APIRouter, Header, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
 
 from app.dependencies import DB, CurrentUserId, CurrentUser, S3Client
@@ -30,6 +28,7 @@ from app.schemas.job_run import (
     JobRunResponse,
     JobRunStatusResponse,
 )
+from app.schemas.common import StageUpdateResponse, TimelineResponse
 from app.services.ingest.storage import S3StorageService
 from app.services.jobs.job_run_service import JobRunService
 
@@ -120,9 +119,11 @@ async def list_job_runs(
     db: DB,
     s3_client: S3Client,
     x_user_id: CurrentUserId,
+    limit: int = Query(default=50, ge=1, le=200, description="Max items to return"),
+    offset: int = Query(default=0, ge=0, description="Items to skip"),
 ) -> list[JobRunListItem]:
     service = _make_service(db=db, s3_client=s3_client)
-    return await service.list_runs(user_id=x_user_id)
+    return await service.list_runs(user_id=x_user_id, limit=limit, offset=offset)
 
 
 @router.get(
@@ -176,6 +177,7 @@ class PipelineUpdateRequest(BaseModel):
 @router.patch(
     "/{run_id}/stage",
     summary="Update pipeline stage for a job run",
+    response_model=StageUpdateResponse,
 )
 async def update_pipeline_stage(
     run_id: uuid.UUID,
@@ -226,6 +228,7 @@ async def update_pipeline_stage(
     "/{job_run_id}/timeline",
     summary="Get application timeline events",
     description="Returns chronological timeline events for a job run.",
+    response_model=TimelineResponse,
 )
 async def get_job_timeline(
     job_run_id: uuid.UUID,

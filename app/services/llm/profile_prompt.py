@@ -20,7 +20,6 @@ The PositioningStrategy is the product's core differentiator:
   - Your positioning headline (one sentence)
 """
 
-from app.schemas.candidate_profile import INTAKE_QUESTIONS
 from app.schemas.cv import ParsedCV
 
 

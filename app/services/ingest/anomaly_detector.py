@@ -115,7 +115,7 @@ def _estimate_career_years(exp: dict) -> float | None:
     # gives < 3 years of experience.
     # Simpler: just check if the role itself is < 3 years duration from start
     grad_year = start.year - 22  # rough estimate
-    years_experience = start.year - (grad_year + 22)
+    _years_experience = start.year - (grad_year + 22)
     # Better heuristic: flag if start_date is recent (within 3 years of "now")
     # and title is senior. Use the experience entry's own start date.
     end = _parse_date(exp.get("end_date"))

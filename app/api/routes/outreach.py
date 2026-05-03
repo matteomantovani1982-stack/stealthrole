@@ -6,6 +6,7 @@ import structlog
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from app.dependencies import DB, CurrentUser
+from app.schemas.common import OutreachResponse
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/v1/outreach", tags=["Outreach"])
@@ -18,7 +19,10 @@ class OutreachRequest(BaseModel):
     jd_text: str | None = Field(default=None, max_length=20000)
     tone: str = Field(default="confident", pattern=r"^(confident|formal|casual)$")
 
-@router.post("/generate", summary="Generate outreach messages")
+
+# ── Response models ──────────────────────────────────────────────────────────
+
+@router.post("/generate", summary="Generate outreach messages", response_model=OutreachResponse)
 async def generate_outreach(payload: OutreachRequest, current_user: CurrentUser, db: DB) -> dict:
     from app.services.profile.profile_service import ProfileService
     svc = ProfileService(db)
@@ -44,7 +48,6 @@ async def generate_outreach(payload: OutreachRequest, current_user: CurrentUser,
     elif payload.jd_url and payload.jd_url.strip():
         try:
             from app.services.jd.extractor import JDExtractor
-            import asyncio
             extractor = JDExtractor()
             jd_text = await extractor.extract(payload.jd_url.strip())
         except Exception as e:

@@ -101,7 +101,7 @@ class GmailProvider(EmailProvider):
         }
         if state:
             params["state"] = state
-        qs = "&".join(f"{k}={httpx.URL('', params={k: v}).params}" for k, v in params.items())
+        _qs = "&".join(f"{k}={httpx.URL('', params={k: v}).params}" for k, v in params.items())
         # Use httpx to build proper query string
         return str(httpx.URL(self.OAUTH_URL, params=params))
 
