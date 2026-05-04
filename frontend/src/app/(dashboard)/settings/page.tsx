@@ -1,97 +1,136 @@
 "use client";
 
 import { useState } from "react";
-import { useAuth } from "@/lib/auth-context";
-import { SR } from "@/lib/constants";
+
+const AC = {
+  bg: "#f6f7fb",
+  panel: "#ffffff",
+  panel2: "#fafbfd",
+  border: "rgba(15,18,40,0.08)",
+  border2: "rgba(15,18,40,0.14)",
+  divider: "rgba(15,18,40,0.06)",
+  ink: "#0c1030",
+  ink2: "rgba(12,16,48,0.82)",
+  ink3: "rgba(12,16,48,0.58)",
+  ink4: "rgba(12,16,48,0.40)",
+  ink5: "rgba(12,16,48,0.22)",
+  brand: "#5B6CFF",
+  brand2: "#4754E8",
+  brand3: "#7F60E8",
+  brandTint: "rgba(91,108,255,0.08)",
+  brandTint2: "rgba(91,108,255,0.14)",
+  good: "#16a34a",
+  warn: "#ca8a04",
+  bad: "#dc2626",
+};
 
 type TabId = "integrations" | "notifications" | "privacy" | "account" | "security";
 
-interface Session {
-  device: string;
-  lastActive: string;
-  location: string;
-}
-
 export default function SettingsPage() {
-  const { user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<TabId>("integrations");
-
-  // Notification states
-  const [notificationStates, setNotificationStates] = useState({
-    newMatches: true,
-    applicationStatus: true,
-    scoutDigest: true,
-    marketing: false,
+  const [integrationStates, setIntegrationStates] = useState({
+    linkedin: true,
+    gmail: true,
+    calendar: true,
+    whatsapp: false,
   });
-  const [notificationChannel, setNotificationChannel] = useState<"email" | "push" | "both">("email");
-
-  // Privacy states
+  const [notifyStates, setNotifyStates] = useState({
+    fundingEvents: true,
+    leadershipChanges: true,
+    realestate: true,
+    hiringBoom: true,
+    productLaunches: true,
+    velocityChanges: false,
+    distressSignals: false,
+  });
+  const [frequencyState, setFrequencyState] = useState("4h");
   const [privacyStates, setPrivacyStates] = useState({
-    stealthMode: true,
-    shareData: false,
-    contactSuggestions: true,
+    blockEmployer: true,
+    anonRecruiters: true,
+    publicProfile: false,
+    hideLocation: true,
+    allowExport: true,
+  });
+  const [addOnStates, setAddOnStates] = useState({
+    companies: false,
+    scans: false,
+    ghostwriting: false,
+    intros: false,
   });
 
-  // Account data
-  const [createdDate] = useState("February 14, 2024");
-
-  // Security states
-  const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
-  const [sessions] = useState<Session[]>([
-    { device: "Chrome on macOS", lastActive: "Today at 2:45 PM", location: "San Francisco, CA" },
-    { device: "Safari on iPhone", lastActive: "Yesterday at 9:30 AM", location: "San Francisco, CA" },
-  ]);
-
-  const toggleNotification = (key: keyof typeof notificationStates) => {
-    setNotificationStates(prev => ({ ...prev, [key]: !prev[key] }));
+  const cardStyle = {
+    background: AC.panel,
+    border: `1px solid ${AC.border}`,
+    borderRadius: 12,
+    boxShadow: "0 1px 2px rgba(15,18,40,0.03)"
   };
 
-  const togglePrivacy = (key: keyof typeof privacyStates) => {
-    setPrivacyStates(prev => ({ ...prev, [key]: !prev[key] }));
+  const titleBarStyle = {
+    background: AC.panel2,
+    padding: "12px 16px",
+    borderBottom: `1px solid ${AC.divider}`,
+    fontSize: 11,
+    fontWeight: 600,
+    color: AC.ink3,
+    textTransform: "uppercase" as const,
+    letterSpacing: 0.4
   };
+
+  const contentStyle = { padding: 18 };
 
   const renderToggle = (enabled: boolean, onChange: () => void) => (
     <button
       onClick={onChange}
       style={{
-        width: 40,
-        height: 22,
-        borderRadius: 11,
-        backgroundColor: enabled ? "#4D8EF5" : "#E5E7EB",
+        width: 34,
+        height: 20,
+        borderRadius: 999,
+        background: enabled ? `linear-gradient(90deg, ${AC.brand2} 0%, ${AC.brand3} 100%)` : AC.border2,
         border: "none",
         cursor: "pointer",
-        transition: "background-color 0.2s",
         position: "relative",
-        display: "flex",
-        alignItems: "center",
-        paddingLeft: enabled ? 2 : 0,
-        paddingRight: enabled ? 0 : 2,
+        transition: "all 0.2s"
       }}
     >
       <div
         style={{
-          width: 18,
-          height: 18,
-          borderRadius: 9,
-          backgroundColor: "white",
-          marginLeft: enabled ? "auto" : 0,
-          marginRight: enabled ? 0 : "auto",
-          transition: "margin 0.2s",
+          width: 16,
+          height: 16,
+          borderRadius: "50%",
+          background: "#fff",
+          position: "absolute",
+          top: 2,
+          right: enabled ? 2 : "auto",
+          left: enabled ? "auto" : 2,
+          transition: "all 0.2s",
+          boxShadow: "0 1px 3px rgba(0,0,0,0.1)"
         }}
       />
     </button>
   );
 
   return (
-    <div style={{ minHeight: "100vh", backgroundColor: "#FFFFFF", color: "#1F2937", padding: "48px 40px" }}>
+    <div style={{ background: AC.bg, minHeight: "100vh", fontFamily: '"Inter, system-ui, sans-serif"' }}>
       {/* Header */}
-      <div style={{ marginBottom: 48 }}>
-        <h1 style={{ fontSize: 28, fontWeight: 600, marginBottom: 8 }}>Settings</h1>
-        <p style={{ fontSize: 14, color: "#6B7280" }}>Manage integrations and preferences.</p>
+      <div style={{
+        padding: "28px 36px 22px",
+        background: `linear-gradient(135deg, ${AC.brand} 0%, ${AC.brand3} 100%)`
+      }}>
+        <div style={{ maxWidth: 1440, margin: "0 auto" }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.7)", letterSpacing: 1, marginBottom: 12, fontFamily: "'JetBrains Mono', monospace" }}>
+            SETTINGS · INTEGRATIONS
+          </div>
+          <h1 style={{ fontSize: 28, fontWeight: 600, color: "#fff", margin: "0 0 4px 0" }}>
+            Settings
+          </h1>
+          <p style={{ fontSize: 13, color: "rgba(255,255,255,0.8)", margin: 0 }}>
+            Manage integrations, privacy, and account.
+          </p>
+        </div>
       </div>
 
       {/* Tabs */}
-      <div style={{ borderBottom: `1px solid ${SR.border}`, marginBottom: 32, display: "flex", gap: 32 }}>
+      <div style={{ maxWidth: 1440, margin: "0 auto", padding: "0 36px", borderBottom: `1px solid ${AC.border}`, display: "flex", gap: 32 }}>
         {(["integrations", "notifications", "privacy", "account", "security"] as TabId[]).map(tab => (
           <button
             key={tab}
@@ -99,308 +138,111 @@ export default function SettingsPage() {
             style={{
               padding: "12px 0",
               border: "none",
-              backgroundColor: "transparent",
+              background: "transparent",
               cursor: "pointer",
-              fontSize: 14,
-              fontWeight: 500,
-              color: activeTab === tab ? "#4D8EF5" : "#9CA3AF",
-              borderBottom: activeTab === tab ? "2px solid #4D8EF5" : "none",
+              fontSize: 12,
+              fontWeight: 600,
+              color: activeTab === tab ? AC.brand : AC.ink4,
+              borderBottom: activeTab === tab ? `2px solid ${AC.brand}` : "none",
               transition: "all 0.2s",
-              textTransform: "capitalize",
+              textTransform: "capitalize"
             }}
           >
-            {tab === "integrations" && "Integrations"}
-            {tab === "notifications" && "Notifications"}
-            {tab === "privacy" && "Privacy"}
-            {tab === "account" && "Account"}
-            {tab === "security" && "Security"}
+            {tab}
           </button>
         ))}
       </div>
 
-      {/* Tab Content */}
-      <div style={{
-        backgroundColor: "#FFFFFF",
-        border: `1px solid ${SR.border}`,
-        borderRadius: 14,
-        padding: 24,
-      }}>
+      {/* Content */}
+      <div style={{ maxWidth: 1440, margin: "0 auto", padding: "24px 36px 32px" }}>
 
         {/* INTEGRATIONS TAB */}
         {activeTab === "integrations" && (
-          <div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-              {/* LinkedIn Extension */}
-              <div style={{
-                border: `1px solid ${SR.border}`,
-                borderRadius: 12,
-                padding: 20,
-                display: "flex",
-                flexDirection: "column",
-              }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
-                  <div style={{
-                    width: 48,
-                    height: 48,
-                    borderRadius: 8,
-                    backgroundColor: "#0A66C2",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "white",
-                    fontSize: 20,
-                  }}>
-                    in
+          <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+            <div style={cardStyle}>
+              <div style={titleBarStyle}>Integrations</div>
+              <div style={contentStyle}>
+                {[
+                  { id: "linkedin", name: "LinkedIn Extension", desc: "Sync connections & insights", icon: "in", bg: "#0A66C2" },
+                  { id: "gmail", name: "Gmail & Outlook", desc: "Email sync & detection", icon: "✉", bg: "#EA4335" },
+                  { id: "calendar", name: "Calendar", desc: "Interview scheduling", icon: "📅", bg: "#4F46E5" },
+                  { id: "whatsapp", name: "WhatsApp", desc: "Opportunity alerts", icon: "💬", bg: "#25D366" }
+                ].map((int: any) => (
+                  <div key={int.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: 12, marginBottom: 12, borderBottom: `1px solid ${AC.divider}` }}>
+                    <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                      <div style={{
+                        width: 36,
+                        height: 36,
+                        borderRadius: 8,
+                        background: int.bg,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        color: "#fff",
+                        fontSize: 16
+                      }}>
+                        {int.icon}
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: AC.ink }}>{int.name}</div>
+                        <div style={{ fontSize: 11, color: AC.ink4 }}>{int.desc}</div>
+                      </div>
+                    </div>
+                    {renderToggle(integrationStates[int.id as keyof typeof integrationStates], () => { const key = int.id as keyof typeof integrationStates; setIntegrationStates(prev => ({ ...prev, [key]: !prev[key] })); })}
                   </div>
-                  <div style={{ flex: 1 }}>
-                    <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>LinkedIn Extension</h3>
-                    <p style={{ fontSize: 12, color: "#6B7280", margin: "4px 0 0 0" }}>Sync connections & insights</p>
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: "auto", paddingTop: 12 }}>
-                  <span style={{
-                    backgroundColor: "#D1FAE5",
-                    color: "#065F46",
-                    padding: "4px 12px",
-                    borderRadius: 20,
-                    fontSize: 12,
-                    fontWeight: 500,
-                  }}>
-                    Connected
-                  </span>
-                  <button style={{
-                    marginLeft: "auto",
-                    padding: "8px 16px",
-                    backgroundColor: "transparent",
-                    border: `1px solid #EF4444`,
-                    color: "#EF4444",
-                    borderRadius: 8,
-                    fontSize: 12,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    transition: "background-color 0.2s",
-                  }}
-                  onMouseOver={e => (e.currentTarget.style.backgroundColor = "rgba(239, 68, 68, 0.05)")}
-                  onMouseOut={e => (e.currentTarget.style.backgroundColor = "transparent")}
-                  >
-                    Disconnect
-                  </button>
-                </div>
+                ))}
               </div>
+            </div>
 
-              {/* Gmail */}
-              <div style={{
-                border: `1px solid ${SR.border}`,
-                borderRadius: 12,
-                padding: 20,
-                display: "flex",
-                flexDirection: "column",
-              }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
-                  <div style={{
-                    width: 48,
-                    height: 48,
-                    borderRadius: 8,
-                    backgroundColor: "#EA4335",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "white",
-                    fontSize: 20,
-                  }}>
-                    G
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Gmail</h3>
-                    <p style={{ fontSize: 12, color: "#6B7280", margin: "4px 0 0 0" }}>Email sync & detection</p>
+            <div style={cardStyle}>
+              <div style={titleBarStyle}>Scan & Precog</div>
+              <div style={contentStyle}>
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: AC.ink4, marginBottom: 8, textTransform: "uppercase" }}>Frequency</div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {[
+                      { id: "12h", label: "Every 12h" },
+                      { id: "4h", label: "Every 4h" },
+                      { id: "1h", label: "Hourly" },
+                      { id: "rt", label: "Real-time" }
+                    ].map(opt => (
+                      <button
+                        key={opt.id}
+                        onClick={() => setFrequencyState(opt.id)}
+                        style={{
+                          padding: "6px 12px",
+                          border: `1px solid ${frequencyState === opt.id ? AC.brand : AC.border}`,
+                          background: frequencyState === opt.id ? AC.brandTint : "transparent",
+                          color: frequencyState === opt.id ? AC.brand : AC.ink4,
+                          borderRadius: 6,
+                          fontSize: 11,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          transition: "all 0.2s"
+                        }}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: "auto", paddingTop: 12 }}>
-                  <span style={{
-                    backgroundColor: "#F3F4F6",
-                    color: "#6B7280",
-                    padding: "4px 12px",
-                    borderRadius: 20,
-                    fontSize: 12,
-                    fontWeight: 500,
-                  }}>
-                    Not connected
-                  </span>
-                  <button style={{
-                    marginLeft: "auto",
-                    padding: "8px 16px",
-                    backgroundColor: "#EA4335",
-                    color: "white",
-                    border: "none",
-                    borderRadius: 8,
-                    fontSize: 12,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    transition: "background-color 0.2s",
-                  }}
-                  onMouseOver={e => (e.currentTarget.style.backgroundColor = "#D33B27")}
-                  onMouseOut={e => (e.currentTarget.style.backgroundColor = "#EA4335")}
-                  >
-                    Connect
-                  </button>
-                </div>
-              </div>
 
-              {/* Outlook */}
-              <div style={{
-                border: `1px solid ${SR.border}`,
-                borderRadius: 12,
-                padding: 20,
-                display: "flex",
-                flexDirection: "column",
-              }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
-                  <div style={{
-                    width: 48,
-                    height: 48,
-                    borderRadius: 8,
-                    backgroundColor: "#0078D4",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "white",
-                    fontSize: 20,
-                  }}>
-                    O
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Outlook</h3>
-                    <p style={{ fontSize: 12, color: "#6B7280", margin: "4px 0 0 0" }}>Email sync & detection</p>
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: "auto", paddingTop: 12 }}>
-                  <span style={{
-                    backgroundColor: "#F3F4F6",
-                    color: "#6B7280",
-                    padding: "4px 12px",
-                    borderRadius: 20,
-                    fontSize: 12,
-                    fontWeight: 500,
-                  }}>
-                    Not connected
-                  </span>
-                  <button style={{
-                    marginLeft: "auto",
-                    padding: "8px 16px",
-                    backgroundColor: "#0078D4",
-                    color: "white",
-                    border: "none",
-                    borderRadius: 8,
-                    fontSize: 12,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    transition: "background-color 0.2s",
-                  }}
-                  onMouseOver={e => (e.currentTarget.style.backgroundColor = "#005A9E")}
-                  onMouseOut={e => (e.currentTarget.style.backgroundColor = "#0078D4")}
-                  >
-                    Connect
-                  </button>
-                </div>
-              </div>
-
-              {/* Calendar */}
-              <div style={{
-                border: `1px solid ${SR.border}`,
-                borderRadius: 12,
-                padding: 20,
-                display: "flex",
-                flexDirection: "column",
-              }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
-                  <div style={{
-                    width: 48,
-                    height: 48,
-                    borderRadius: 8,
-                    backgroundColor: "#4F46E5",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "white",
-                    fontSize: 20,
-                  }}>
-                    📅
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Calendar</h3>
-                    <p style={{ fontSize: 12, color: "#6B7280", margin: "4px 0 0 0" }}>Interview scheduling</p>
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: "auto", paddingTop: 12 }}>
-                  <span style={{
-                    backgroundColor: "#F3F4F6",
-                    color: "#6B7280",
-                    padding: "4px 12px",
-                    borderRadius: 20,
-                    fontSize: 12,
-                    fontWeight: 500,
-                  }}>
-                    Not connected
-                  </span>
-                  <button style={{
-                    marginLeft: "auto",
-                    padding: "8px 16px",
-                    backgroundColor: "#4F46E5",
-                    color: "white",
-                    border: "none",
-                    borderRadius: 8,
-                    fontSize: 12,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    transition: "background-color 0.2s",
-                  }}
-                  onMouseOver={e => (e.currentTarget.style.backgroundColor = "#4338CA")}
-                  onMouseOut={e => (e.currentTarget.style.backgroundColor = "#4F46E5")}
-                  >
-                    Connect
-                  </button>
-                </div>
-              </div>
-
-              {/* WhatsApp */}
-              <div style={{
-                border: `1px solid ${SR.border}`,
-                borderRadius: 12,
-                padding: 20,
-                display: "flex",
-                flexDirection: "column",
-                gridColumn: "span 2",
-              }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
-                  <div style={{
-                    width: 48,
-                    height: 48,
-                    borderRadius: 8,
-                    backgroundColor: "#25D366",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "white",
-                    fontSize: 20,
-                  }}>
-                    💬
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>WhatsApp</h3>
-                    <p style={{ fontSize: 12, color: "#6B7280", margin: "4px 0 0 0" }}>Opportunity alerts</p>
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: "auto", paddingTop: 12 }}>
-                  <span style={{
-                    backgroundColor: "#F3F4F6",
-                    color: "#6B7280",
-                    padding: "4px 12px",
-                    borderRadius: 20,
-                    fontSize: 12,
-                    fontWeight: 500,
-                  }}>
-                    Coming soon
-                  </span>
+                <div style={{ fontSize: 11, fontWeight: 600, color: AC.ink4, marginBottom: 8, textTransform: "uppercase" }}>Active Triggers</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {[
+                    { id: "fundingEvents", label: "Funding events" },
+                    { id: "leadershipChanges", label: "Leadership changes" },
+                    { id: "realestate", label: "Real-estate signals" },
+                    { id: "hiringBoom", label: "Hiring surges" },
+                    { id: "productLaunches", label: "Product launches" },
+                    { id: "velocityChanges", label: "Velocity changes" },
+                    { id: "distressSignals", label: "Distress signals" }
+                  ].map(trigger => (
+                    <div key={trigger.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div style={{ fontSize: 12, color: AC.ink }}>{trigger.label}</div>
+                      {renderToggle(notifyStates[trigger.id as keyof typeof notifyStates], () => { const key = trigger.id as keyof typeof notifyStates; setNotifyStates(prev => ({ ...prev, [key]: !prev[key] })); })}
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
@@ -409,67 +251,55 @@ export default function SettingsPage() {
 
         {/* NOTIFICATIONS TAB */}
         {activeTab === "notifications" && (
-          <div style={{ maxWidth: 500 }}>
-            <div style={{ marginBottom: 32 }}>
-              <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Email Notifications</h3>
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={cardStyle}>
+            <div style={titleBarStyle}>Notifications</div>
+            <div style={contentStyle}>
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: AC.ink4, marginBottom: 12, textTransform: "uppercase" }}>Daily Briefing</div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <p style={{ fontSize: 14, fontWeight: 500, margin: 0, marginBottom: 4 }}>New matches found</p>
-                    <p style={{ fontSize: 12, color: "#6B7280", margin: 0 }}>When relevant opportunities appear</p>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <div style={{ fontSize: 20 }}>📧</div>
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: AC.ink }}>Email at 8:00 AM</div>
+                      <div style={{ fontSize: 11, color: AC.ink4 }}>Daily briefing digest</div>
+                    </div>
                   </div>
-                  {renderToggle(notificationStates.newMatches, () => toggleNotification("newMatches"))}
-                </div>
-                <div style={{ height: 1, backgroundColor: SR.border }} />
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <p style={{ fontSize: 14, fontWeight: 500, margin: 0, marginBottom: 4 }}>Application status changes</p>
-                    <p style={{ fontSize: 12, color: "#6B7280", margin: 0 }}>Updates on your applications</p>
-                  </div>
-                  {renderToggle(notificationStates.applicationStatus, () => toggleNotification("applicationStatus"))}
-                </div>
-                <div style={{ height: 1, backgroundColor: SR.border }} />
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <p style={{ fontSize: 14, fontWeight: 500, margin: 0, marginBottom: 4 }}>Scout weekly digest</p>
-                    <p style={{ fontSize: 12, color: "#6B7280", margin: 0 }}>Summary of your network activity</p>
-                  </div>
-                  {renderToggle(notificationStates.scoutDigest, () => toggleNotification("scoutDigest"))}
-                </div>
-                <div style={{ height: 1, backgroundColor: SR.border }} />
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <p style={{ fontSize: 14, fontWeight: 500, margin: 0, marginBottom: 4 }}>Marketing emails</p>
-                    <p style={{ fontSize: 12, color: "#6B7280", margin: 0 }}>New features and updates</p>
-                  </div>
-                  {renderToggle(notificationStates.marketing, () => toggleNotification("marketing"))}
+                  {renderToggle(true, () => {})}
                 </div>
               </div>
-            </div>
 
-            <div>
-              <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Notification Channel</h3>
-              <div style={{ display: "flex", gap: 8 }}>
-                {(["email", "push", "both"] as const).map(channel => (
-                  <button
-                    key={channel}
-                    onClick={() => setNotificationChannel(channel)}
-                    style={{
-                      padding: "8px 16px",
-                      border: `1px solid ${notificationChannel === channel ? "#4D8EF5" : SR.border}`,
-                      borderRadius: 8,
-                      backgroundColor: notificationChannel === channel ? "#DBEAFE" : "#FFFFFF",
-                      color: notificationChannel === channel ? "#4D8EF5" : "#6B7280",
-                      fontSize: 12,
-                      fontWeight: 500,
-                      cursor: "pointer",
-                      transition: "all 0.2s",
-                      textTransform: "capitalize",
-                    }}
-                  >
-                    {channel}
-                  </button>
-                ))}
+              <div style={{ borderTop: `1px solid ${AC.divider}`, paddingTop: 20 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: AC.ink4, marginBottom: 12, textTransform: "uppercase" }}>Real-time Alerts</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
+                  {[
+                    { label: "New opportunities matching profile" },
+                    { label: "Application status changes" },
+                    { label: "Recruiter outreach" },
+                    { label: "Network activity"}
+                  ].map((alert, idx) => (
+                    <div key={idx} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div style={{ fontSize: 12, color: AC.ink }}>{alert.label}</div>
+                      {renderToggle(idx < 2, () => {})}
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ fontSize: 11, fontWeight: 600, color: AC.ink4, marginBottom: 12, textTransform: "uppercase" }}>Channels</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {["Email", "Push", "SMS", "Slack", "Webhook"].map(ch => (
+                    <span key={ch} style={{
+                      padding: "5px 10px",
+                      borderRadius: 6,
+                      fontSize: 11,
+                      fontWeight: 600,
+                      background: AC.brandTint,
+                      color: AC.brand,
+                      cursor: "pointer"
+                    }}>
+                      {ch}
+                    </span>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
@@ -477,74 +307,82 @@ export default function SettingsPage() {
 
         {/* PRIVACY TAB */}
         {activeTab === "privacy" && (
-          <div style={{ maxWidth: 500 }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                <div style={{ flex: 1 }}>
-                  <p style={{ fontSize: 14, fontWeight: 500, margin: 0, marginBottom: 4 }}>Stealth mode</p>
-                  <p style={{ fontSize: 12, color: "#6B7280", margin: 0 }}>Your profile won't appear in public searches</p>
-                </div>
-                {renderToggle(privacyStates.stealthMode, () => togglePrivacy("stealthMode"))}
+          <div style={cardStyle}>
+            <div style={titleBarStyle}>Stealth & Privacy</div>
+            <div style={{ ...contentStyle, borderTop: `1px solid ${AC.divider}`, marginTop: 0, paddingTop: 14 }}>
+              <div style={{ background: AC.brandTint2, border: `1px solid ${AC.brand}`, borderRadius: 6, padding: 10, marginBottom: 16, fontSize: 11, color: AC.brand, fontWeight: 500 }}>
+                Stealth mode is on — your current employer cannot see your activity.
               </div>
-              <div style={{ height: 1, backgroundColor: SR.border }} />
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                <div style={{ flex: 1 }}>
-                  <p style={{ fontSize: 14, fontWeight: 500, margin: 0, marginBottom: 4 }}>Share anonymized data for Scout improvements</p>
-                  <p style={{ fontSize: 12, color: "#6B7280", margin: 0 }}>Help us improve recommendations</p>
+              {[
+                { id: "blockEmployer", label: "Block current employer" },
+                { id: "anonRecruiters", label: "Anonymous to recruiters" },
+                { id: "publicProfile", label: "Public profile" },
+                { id: "hideLocation", label: "Hide location precision" },
+                { id: "allowExport", label: "Allow data export" }
+              ].map(priv => (
+                <div key={priv.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: 10, marginBottom: 10, borderBottom: `1px solid ${AC.divider}` }}>
+                  <div style={{ fontSize: 12, color: AC.ink }}>{priv.label}</div>
+                  {renderToggle(privacyStates[priv.id as keyof typeof privacyStates], () => { const key = priv.id as keyof typeof privacyStates; setPrivacyStates(prev => ({ ...prev, [key]: !prev[key] })); })}
                 </div>
-                {renderToggle(privacyStates.shareData, () => togglePrivacy("shareData"))}
-              </div>
-              <div style={{ height: 1, backgroundColor: SR.border }} />
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                <div style={{ flex: 1 }}>
-                  <p style={{ fontSize: 14, fontWeight: 500, margin: 0, marginBottom: 4 }}>Allow contact suggestions</p>
-                  <p style={{ fontSize: 12, color: "#6B7280", margin: 0 }}>Recommend people to connect with</p>
-                </div>
-                {renderToggle(privacyStates.contactSuggestions, () => togglePrivacy("contactSuggestions"))}
-              </div>
+              ))}
             </div>
           </div>
         )}
 
         {/* ACCOUNT TAB */}
         {activeTab === "account" && (
-          <div style={{ maxWidth: 500 }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              <div>
-                <label style={{ fontSize: 12, fontWeight: 600, color: "#6B7280", display: "block", marginBottom: 8 }}>EMAIL</label>
-                <p style={{ fontSize: 14, margin: 0 }}>{user?.email || "—"}</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+            <div style={cardStyle}>
+              <div style={titleBarStyle}>Account</div>
+              <div style={contentStyle}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: AC.ink4, marginBottom: 6, textTransform: "uppercase" }}>Email</div>
+                    <input type="text" placeholder="alex@notion.com" style={{ width: "100%", padding: "8px 12px", border: `1px solid ${AC.border}`, borderRadius: 6, fontSize: 12, background: AC.panel2 }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: AC.ink4, marginBottom: 6, textTransform: "uppercase" }}>Password</div>
+                    <input type="password" placeholder="••••••••" style={{ width: "100%", padding: "8px 12px", border: `1px solid ${AC.border}`, borderRadius: 6, fontSize: 12, background: AC.panel2 }} />
+                  </div>
+                </div>
               </div>
-              <div>
-                <label style={{ fontSize: 12, fontWeight: 600, color: "#6B7280", display: "block", marginBottom: 8 }}>FULL NAME</label>
-                <p style={{ fontSize: 14, margin: 0 }}>{user?.full_name || "—"}</p>
+            </div>
+
+            <div style={cardStyle}>
+              <div style={titleBarStyle}>Two-Factor Authentication</div>
+              <div style={contentStyle}>
+                {[
+                  { id: "auth", label: "Authenticator app", status: true },
+                  { id: "sms", label: "SMS backup codes", status: false },
+                  { id: "hw", label: "Hardware security key", status: false }
+                ].map(twofa => (
+                  <div key={twofa.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: 10, marginBottom: 10, borderBottom: `1px solid ${AC.divider}` }}>
+                    <div style={{ fontSize: 12, color: AC.ink }}>{twofa.label}</div>
+                    {renderToggle(twofa.status, () => {})}
+                  </div>
+                ))}
               </div>
-              <div>
-                <label style={{ fontSize: 12, fontWeight: 600, color: "#6B7280", display: "block", marginBottom: 8 }}>CREATED DATE</label>
-                <p style={{ fontSize: 14, margin: 0 }}>{createdDate}</p>
-              </div>
-              <div style={{ marginTop: 24 }}>
-                <button
-                  onClick={() => {
-                    if (confirm("Are you sure? This cannot be undone.")) {
-                      logout();
-                    }
-                  }}
-                  style={{
-                    padding: "10px 16px",
-                    backgroundColor: "#FEE2E2",
-                    color: "#DC2626",
-                    border: `1px solid #FECACA`,
-                    borderRadius: 8,
-                    fontSize: 14,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    transition: "background-color 0.2s",
-                  }}
-                  onMouseOver={e => (e.currentTarget.style.backgroundColor = "#FCA5A5")}
-                  onMouseOut={e => (e.currentTarget.style.backgroundColor = "#FEE2E2")}
-                >
-                  Delete Account
-                </button>
+            </div>
+
+            <div style={cardStyle}>
+              <div style={titleBarStyle}>Active Sessions</div>
+              <div style={contentStyle}>
+                {[
+                  { device: "Chrome on macOS", browser: "Chrome · 95.0", lastActive: "Today at 2:45 PM" },
+                  { device: "Safari on iPhone", browser: "Safari · iOS 15", lastActive: "Yesterday at 9:30 AM" },
+                  { device: "Firefox on Windows", browser: "Firefox · 96.0", lastActive: "3 days ago" }
+                ].map((sess, idx) => (
+                  <div key={idx} style={{ paddingBottom: 10, marginBottom: 10, borderBottom: idx < 2 ? `1px solid ${AC.divider}` : "none" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: AC.ink }}>{sess.device}</div>
+                        <div style={{ fontSize: 11, color: AC.ink4 }}>{sess.browser}</div>
+                        <div style={{ fontSize: 10, color: AC.ink4, marginTop: 2 }}>{sess.lastActive}</div>
+                      </div>
+                      <button style={{ fontSize: 11, color: AC.bad, cursor: "pointer", background: "none", border: "none", fontWeight: 600 }}>Sign out</button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
@@ -552,87 +390,18 @@ export default function SettingsPage() {
 
         {/* SECURITY TAB */}
         {activeTab === "security" && (
-          <div>
-            <div style={{ marginBottom: 32 }}>
-              <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Two-Factor Authentication</h3>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <p style={{ fontSize: 14, fontWeight: 500, margin: 0, marginBottom: 4 }}>
-                    {twoFactorEnabled ? "Enabled" : "Not enabled"}
-                  </p>
-                  <p style={{ fontSize: 12, color: "#6B7280", margin: 0 }}>Add an extra security layer</p>
-                </div>
-                <button
-                  onClick={() => setTwoFactorEnabled(!twoFactorEnabled)}
-                  style={{
-                    padding: "10px 16px",
-                    backgroundColor: twoFactorEnabled ? "#FEE2E2" : "#DBEAFE",
-                    color: twoFactorEnabled ? "#DC2626" : "#4D8EF5",
-                    border: `1px solid ${twoFactorEnabled ? "#FECACA" : "#BFDBFE"}`,
-                    borderRadius: 8,
-                    fontSize: 12,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    transition: "all 0.2s",
-                  }}
-                  onMouseOver={e => {
-                    e.currentTarget.style.backgroundColor = twoFactorEnabled ? "#FCA5A5" : "#93C5FD";
-                  }}
-                  onMouseOut={e => {
-                    e.currentTarget.style.backgroundColor = twoFactorEnabled ? "#FEE2E2" : "#DBEAFE";
-                  }}
-                >
-                  {twoFactorEnabled ? "Disable" : "Enable"}
-                </button>
+          <div style={cardStyle}>
+            <div style={titleBarStyle}>Security</div>
+            <div style={contentStyle}>
+              <div style={{ background: AC.brandTint, border: `1px solid ${AC.brand}`, borderRadius: 6, padding: 12, marginBottom: 16, fontSize: 11, color: AC.brand }}>
+                Your account security level: Strong
               </div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: AC.ink4, marginBottom: 12, textTransform: "uppercase" }}>Last Password Change</div>
+              <div style={{ fontSize: 12, color: AC.ink, marginBottom: 20 }}>2 months ago</div>
+              <button style={{ padding: "10px 16px", background: AC.brand, color: "#fff", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                Change password
+              </button>
             </div>
-
-            <div style={{ marginBottom: 32 }}>
-              <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Active Sessions</h3>
-              <div style={{ border: `1px solid ${SR.border}`, borderRadius: 8, overflow: "hidden" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr style={{ backgroundColor: "#F9FAFB" }}>
-                      <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 12, fontWeight: 600, color: "#6B7280", borderBottom: `1px solid ${SR.border}` }}>Device</th>
-                      <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 12, fontWeight: 600, color: "#6B7280", borderBottom: `1px solid ${SR.border}` }}>Last Active</th>
-                      <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 12, fontWeight: 600, color: "#6B7280", borderBottom: `1px solid ${SR.border}` }}>Location</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sessions.map((session, idx) => (
-                      <tr key={idx} style={{ borderBottom: idx < sessions.length - 1 ? `1px solid ${SR.border}` : "none" }}>
-                        <td style={{ padding: "12px 16px", fontSize: 13 }}>{session.device}</td>
-                        <td style={{ padding: "12px 16px", fontSize: 13, color: "#6B7280" }}>{session.lastActive}</td>
-                        <td style={{ padding: "12px 16px", fontSize: 13, color: "#6B7280" }}>{session.location}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <button
-              onClick={() => {
-                if (confirm("Sign out all sessions?")) {
-                  logout();
-                }
-              }}
-              style={{
-                padding: "10px 16px",
-                backgroundColor: "#FEE2E2",
-                color: "#DC2626",
-                border: `1px solid #FECACA`,
-                borderRadius: 8,
-                fontSize: 14,
-                fontWeight: 600,
-                cursor: "pointer",
-                transition: "background-color 0.2s",
-              }}
-              onMouseOver={e => (e.currentTarget.style.backgroundColor = "#FCA5A5")}
-              onMouseOut={e => (e.currentTarget.style.backgroundColor = "#FEE2E2")}
-            >
-              Sign Out All Sessions
-            </button>
           </div>
         )}
 

@@ -3,68 +3,92 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
-import { SR } from "@/lib/constants";
 
-/* ── Mock timeline data (replaced by API when credits active) ── */
+/* ── Design tokens (sr-home-timeline) ── */
+const HT = {
+  bg: "#f4f5fb",
+  panel: "#ffffff",
+  panelSoft: "#fafbff",
+  border: "rgba(15,18,40,0.08)",
+  border2: "rgba(15,18,40,0.14)",
+  divider: "rgba(15,18,40,0.06)",
+  ink: "#0c1030",
+  ink2: "rgba(12,16,48,0.82)",
+  ink3: "rgba(12,16,48,0.62)",
+  ink4: "rgba(12,16,48,0.45)",
+  ink5: "rgba(12,16,48,0.30)",
+  brand: "#5B6CFF",
+  brand2: "#7F8CFF",
+  brandDeep: "#4754E8",
+  violet: "#9F7AEA",
+  brandTint: "rgba(91,108,255,0.08)",
+  brandTint2: "rgba(91,108,255,0.14)",
+  green: "#22c55e",
+  amber: "#fbbf24",
+  red: "#ef4444",
+};
+
+/* ── Mock timeline data ── */
 const TIMELINE_ITEMS = [
   {
     n: 1,
-    when: "TODAY",
-    title: "Review new matches",
-    sub: "Scout found 3 new roles",
-    why: "Fresh roles matching your profile landed overnight. Early movers get recruiter attention.",
-    impact: { label: "HIGHEST IMPACT", color: SR.green },
-    primary: { label: "Open Scout", href: "/scout", icon: "→" },
-    secondary: { label: "View matches" },
-    pinColor: SR.green,
+    when: "TODAY · ~9h window",
+    title: "Contact Maya Patel",
+    sub: "Linear · Head of Talent",
+    why: "Series C just closed + leadership hiring + warm intro path through Tom Moor.",
+    impact: { label: "HIGHEST IMPACT", color: HT.green },
+    primary: { label: "Open LinkedIn message", icon: "→" },
+    secondary: { label: "View warm intro path" },
+    pinColor: HT.green,
   },
   {
     n: 2,
-    when: "TODAY",
-    title: "Complete your profile",
-    sub: "Profile strength: 60%",
-    why: "A complete profile powers better matches, stronger packs, and smarter Scout recommendations.",
-    impact: { label: "HIGH IMPACT", color: SR.brand },
-    primary: { label: "Open profile", href: "/profile", icon: "⚡" },
-    secondary: { label: "Why this matters" },
-    pinColor: SR.brand,
+    when: "TODAY · before 6pm",
+    title: "Build CV pack for Stripe",
+    sub: "Stripe · Director of Product, Atlas",
+    why: "Old manager Will recommended you directly. Posting opens Wed; pack-first applicants get the call.",
+    impact: { label: "HIGH IMPACT", color: HT.brand },
+    primary: { label: "Generate pack", icon: "⚡" },
+    secondary: { label: "Open dossier" },
+    pinColor: HT.brand,
   },
   {
     n: 3,
-    when: "THIS WEEK",
-    title: "Upload your CV",
-    sub: "Train the Scout on your background",
-    why: "The Scout needs your CV to understand your experience and generate tailored application packs.",
-    impact: { label: "MEDIUM IMPACT", color: SR.violet },
-    primary: { label: "Upload CV", href: "/profile", icon: "✎" },
-    secondary: { label: "Learn more" },
-    pinColor: SR.violet,
+    when: "TOMORROW",
+    title: "Follow up with recruiter",
+    sub: "Sarah Chen · Sequoia Talent",
+    why: "Replied 3 days ago about three stealth portcos. Window closes if you wait the week.",
+    impact: { label: "MEDIUM IMPACT", color: HT.violet },
+    primary: { label: "Draft reply", icon: "✎" },
+    secondary: { label: "View thread" },
+    pinColor: HT.violet,
   },
   {
     n: 4,
-    when: "NEXT WEEK",
-    title: "Explore the hidden market",
-    sub: "Hiring signals before public postings",
-    why: "Scout monitors funding rounds, leadership changes, and expansion signals to predict roles before they go live.",
-    impact: { label: "WATCH", color: SR.amber },
-    primary: { label: "Open Scout", href: "/scout", icon: "+" },
-    secondary: { label: "How it works" },
-    pinColor: SR.amber,
+    when: "THIS WEEK",
+    title: "Monitor Careem expansion",
+    sub: "Careem · NYC bureau opening",
+    why: "Expansion signal detected — PM hires expected within 2–4 weeks. Not active yet, just watch.",
+    impact: { label: "LOW · WATCH", color: HT.amber },
+    primary: { label: "Add to watchlist", icon: "+" },
+    secondary: { label: "Open intel" },
+    pinColor: HT.amber,
   },
 ];
 
+/* ── Scout's Read data ── */
 const SCOUTS_READ = {
-  headline: "Get started by completing your profile.",
-  body: "The Scout works best when it knows you. Upload your CV, fill in your experience, and set your target criteria. Once your profile is complete, the Scout will start surfacing roles, signals, and warm intro paths tailored to you.",
+  headline: "Linear is your move this week.",
+  body: "Three signals stack: a Series C close, a Head of Product req opened, and Karri asked Maya to reach out to you specifically. Your match is the strongest in the radar (94). Move on Maya before the public posting goes live.",
   bullets: [
-    { l: "Profile strength", v: "60%" },
-    { l: "CV uploaded", v: "Not yet" },
-    { l: "Target set", v: "Partial" },
-    { l: "Scout status", v: "Waiting" },
+    { l: "Strongest match", v: "Linear · 94" },
+    { l: "Warm path", v: "Tom Moor · 1° · ⭑⭑⭑" },
+    { l: "Window closes", v: "~9h" },
+    { l: "Predicted by Scout", v: "3 days early" },
   ],
   secondary: [
-    "Upload your CV to unlock AI-powered pack generation.",
-    "Set your target criteria to start receiving matched roles.",
+    "Stripe Atlas Director req is opening Wed — start the pack today.",
+    "Ramp NYC expansion is real but slow; no action this week.",
   ],
 };
 
@@ -76,7 +100,7 @@ export default function HomePage() {
   const dayName = now.toLocaleDateString("en-US", { weekday: "long" }).toUpperCase();
   const dateStr = now.toLocaleDateString("en-US", { day: "2-digit", month: "short" }).toUpperCase();
   const timeStr = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
-  const firstName = user?.full_name?.split(" ")[0] || user?.email?.split("@")[0] || "there";
+  const firstName = user?.full_name?.split(" ")[0] || user?.email?.split("@")[0] || "Alex";
 
   const greetingText =
     now.getHours() < 12 ? "Good morning" : now.getHours() < 18 ? "Good afternoon" : "Good evening";
@@ -88,14 +112,15 @@ export default function HomePage() {
         overflow: "hidden",
         display: "flex",
         flexDirection: "column",
-        fontFamily: "Inter, system-ui, -apple-system, sans-serif",
+        fontFamily: "Inter, system-ui, sans-serif",
+        backgroundColor: HT.bg,
       }}
     >
-      {/* Greeting row */}
+      {/* ── GREETING ROW ── */}
       <div
         style={{
           display: "flex",
-          alignItems: "center",
+          alignItems: "flex-start",
           justifyContent: "space-between",
           padding: "22px 32px 14px",
         }}
@@ -103,47 +128,71 @@ export default function HomePage() {
         <div>
           <div
             style={{
-              fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+              fontFamily: "'JetBrains Mono', monospace",
               fontSize: 10,
-              color: SR.ink4,
+              color: HT.ink4,
               letterSpacing: 1.4,
               fontWeight: 600,
               marginBottom: 4,
             }}
           >
-            {dayName} &middot; {dateStr} &middot; {timeStr}
+            {dayName} · {dateStr} · {timeStr}
           </div>
-          <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: -0.5, lineHeight: 1.1, color: SR.ink }}>
+          <div
+            style={{
+              fontSize: 24,
+              fontWeight: 700,
+              letterSpacing: -0.5,
+              lineHeight: 1.1,
+              color: HT.ink,
+              marginBottom: 2,
+            }}
+          >
             {greetingText}, {firstName}.
           </div>
-          <div style={{ fontSize: 13, color: SR.ink3, marginTop: 2 }}>
-            Here is your career action timeline.
-          </div>
+          <div style={{ fontSize: 13, color: HT.ink3 }}>Here is your career action timeline.</div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 2 }}>
           <span
             style={{
               display: "inline-flex",
               alignItems: "center",
               gap: 6,
-              padding: "4px 11px",
+              padding: "6px 12px",
               borderRadius: 999,
-              background: "rgba(34,197,94,0.10)",
-              border: "1px solid rgba(34,197,94,0.25)",
-              color: SR.green,
+              backgroundColor: "rgba(34,197,94,0.10)",
+              border: `1px solid ${HT.green}40`,
+              color: HT.green,
               fontSize: 11.5,
-              fontWeight: 500,
+              fontWeight: 600,
             }}
           >
-            <span style={{ width: 6, height: 6, borderRadius: "50%", background: SR.green }} />
+            <span style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: HT.green }} />
             Sweep active
+          </span>
+          <span
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 11,
+              color: HT.ink5,
+              letterSpacing: 0.6,
+            }}
+          >
+            last sweep · 6m ago
           </span>
         </div>
       </div>
 
-      {/* Two shortcut cards */}
-      <div style={{ padding: "0 32px 18px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-        {/* Unleash the Scout */}
+      {/* ── SHORTCUT CARDS (2-column grid) ── */}
+      <div
+        style={{
+          padding: "0 32px 18px",
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 14,
+        }}
+      >
+        {/* Card 1: Unleash the Scout (gradient) */}
         <Link href="/scout" style={{ textDecoration: "none", display: "block" }}>
           <div
             style={{
@@ -151,12 +200,13 @@ export default function HomePage() {
               padding: "18px 22px",
               borderRadius: 14,
               overflow: "hidden",
-              background: `linear-gradient(135deg, ${SR.brandDeep} 0%, ${SR.brand} 50%, ${SR.violet} 100%)`,
-              boxShadow: "0 14px 32px rgba(91,108,255,0.32), inset 0 1px 0 rgba(255,255,255,0.18)",
+              background: `linear-gradient(135deg, ${HT.brandDeep} 0%, ${HT.brand} 50%, ${HT.violet} 100%)`,
+              boxShadow: `0 14px 32px rgba(91,108,255,0.32), inset 0 1px 0 rgba(255,255,255,0.18)`,
               cursor: "pointer",
               color: "#fff",
             }}
           >
+            {/* Radial glow circle */}
             <div
               style={{
                 position: "absolute",
@@ -168,11 +218,11 @@ export default function HomePage() {
                 background: "radial-gradient(circle, rgba(255,255,255,0.20), transparent 70%)",
               }}
             />
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", position: "relative", zIndex: 1 }}>
               <div style={{ flex: 1 }}>
                 <div
                   style={{
-                    fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+                    fontFamily: "'JetBrains Mono', monospace",
                     fontSize: 9.5,
                     letterSpacing: 1.4,
                     opacity: 0.78,
@@ -182,10 +232,10 @@ export default function HomePage() {
                 >
                   JOB SCOUT
                 </div>
-                <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: -0.4, lineHeight: 1.15, marginBottom: 5 }}>
+                <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: -0.4, lineHeight: 1.15, marginBottom: 6 }}>
                   Unleash the Scout
                 </div>
-                <div style={{ fontSize: 12.5, lineHeight: 1.45, opacity: 0.88, maxWidth: 380 }}>
+                <div style={{ fontSize: 12.5, lineHeight: 1.45, opacity: 0.88 }}>
                   Discover open, predicted, and hidden roles before others.
                 </div>
               </div>
@@ -194,79 +244,78 @@ export default function HomePage() {
                   width: 38,
                   height: 38,
                   borderRadius: 10,
-                  background: "rgba(255,255,255,0.16)",
+                  backgroundColor: "rgba(255,255,255,0.16)",
                   border: "1px solid rgba(255,255,255,0.25)",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
                   fontSize: 18,
                   fontWeight: 600,
+                  cursor: "pointer",
                 }}
               >
-                &rarr;
+                →
               </div>
             </div>
           </div>
         </Link>
 
-        {/* Applications */}
+        {/* Card 2: Open my pipeline (white) */}
         <Link href="/applications" style={{ textDecoration: "none", display: "block" }}>
           <div
             style={{
               position: "relative",
               padding: "18px 22px",
               borderRadius: 14,
-              overflow: "hidden",
-              background: SR.panel,
-              border: `1px solid ${SR.border2}`,
+              backgroundColor: HT.panel,
+              border: `1px solid ${HT.border2}`,
               boxShadow: "0 6px 18px rgba(15,18,40,0.06)",
               cursor: "pointer",
-              borderLeft: `4px solid ${SR.brand}`,
+              borderLeft: `4px solid ${HT.brand}`,
             }}
           >
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div style={{ flex: 1 }}>
                 <div
                   style={{
-                    fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+                    fontFamily: "'JetBrains Mono', monospace",
                     fontSize: 9.5,
                     letterSpacing: 1.4,
-                    color: SR.brand,
+                    color: HT.brand,
                     fontWeight: 700,
                     marginBottom: 8,
                   }}
                 >
                   APPLICATIONS
                 </div>
-                <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: -0.4, lineHeight: 1.15, marginBottom: 5, color: SR.ink }}>
+                <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: -0.4, lineHeight: 1.15, marginBottom: 6, color: HT.ink }}>
                   Open my pipeline
                 </div>
-                <div style={{ fontSize: 12.5, lineHeight: 1.45, color: SR.ink3, maxWidth: 380 }}>
-                  Track applications, interviews, packs, and next actions.
-                </div>
+                <div style={{ fontSize: 12.5, lineHeight: 1.45, color: HT.ink3 }}>Track applications, interviews, packs, and next actions.</div>
               </div>
               <div
                 style={{
                   width: 38,
                   height: 38,
                   borderRadius: 10,
-                  background: SR.brandTint2,
-                  color: SR.brand,
+                  backgroundColor: HT.brandTint2,
+                  color: HT.brand,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
                   fontSize: 18,
                   fontWeight: 600,
+                  cursor: "pointer",
                 }}
               >
-                &rarr;
+                →
               </div>
             </div>
           </div>
         </Link>
       </div>
 
-      {/* Main: timeline + scout's read */}
+      {/* ── MAIN AREA: Timeline (left) + Scout's Read (right) ── */}
       <div
         style={{
           flex: 1,
@@ -277,124 +326,166 @@ export default function HomePage() {
           minHeight: 0,
         }}
       >
-        {/* TIMELINE panel */}
+        {/* LEFT: ACTION TIMELINE PANEL */}
         <div
           style={{
-            background: SR.panel,
-            border: `1px solid ${SR.border}`,
+            backgroundColor: HT.panel,
+            border: `1px solid ${HT.border}`,
             borderRadius: 14,
             boxShadow: "0 1px 2px rgba(15,18,40,0.03)",
-            padding: "20px 22px 22px",
+            padding: "20px 22px",
             display: "flex",
             flexDirection: "column",
             minHeight: 0,
           }}
         >
+          {/* Header */}
           <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", marginBottom: 18 }}>
             <div>
               <div
                 style={{
-                  fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+                  fontFamily: "'JetBrains Mono', monospace",
                   fontSize: 9.5,
-                  color: SR.ink4,
+                  color: HT.ink4,
                   letterSpacing: 1.4,
-                  fontWeight: 600,
+                  fontWeight: 700,
                   marginBottom: 5,
                 }}
               >
-                YOUR ACTION TIMELINE
+                YOUR ACTION TIMELINE · MAY 03 → MAY 09
               </div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: SR.ink, letterSpacing: -0.3 }}>
-                {TIMELINE_ITEMS.length} moves ranked for you
+              <div style={{ fontSize: 18, fontWeight: 700, letterSpacing: -0.3, color: HT.ink }}>
+                4 moves the Scout ranked for this week
               </div>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 6,
+                  border: `1px solid ${HT.border2}`,
+                  backgroundColor: HT.panel,
+                  color: HT.ink3,
+                  fontSize: 11.5,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                }}
+              >
+                This week
+              </button>
+              <button
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 6,
+                  border: `1px solid ${HT.border2}`,
+                  backgroundColor: HT.panelSoft,
+                  color: HT.ink4,
+                  fontSize: 11.5,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                }}
+              >
+                Next week
+              </button>
             </div>
           </div>
 
-          {/* Track with pins */}
-          <div style={{ position: "relative", marginBottom: 14 }}>
-            <div
-              style={{
-                position: "absolute",
-                left: 18,
-                right: 18,
-                top: 11,
-                height: 2,
-                background: `linear-gradient(90deg, ${SR.green} 0%, ${SR.brand} 35%, ${SR.violet} 65%, ${SR.amber} 100%)`,
-                borderRadius: 2,
-                opacity: 0.45,
-              }}
-            />
-            <div style={{ display: "grid", gridTemplateColumns: `repeat(${TIMELINE_ITEMS.length}, 1fr)`, position: "relative" }}>
-              {TIMELINE_ITEMS.map((it, i) => (
+          {/* GRADIENT TRACK */}
+          <div
+            style={{
+              height: 3,
+              borderRadius: 2,
+              background: `linear-gradient(90deg, ${HT.green} 0%, ${HT.brand} 35%, ${HT.violet} 65%, ${HT.amber} 100%)`,
+              marginBottom: 24,
+            }}
+          />
+
+          {/* PIN ROW */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: `repeat(${TIMELINE_ITEMS.length}, 1fr)`,
+              gap: 0,
+              marginBottom: 14,
+            }}
+          >
+            {TIMELINE_ITEMS.map((it, i) => (
+              <div
+                key={i}
+                onClick={() => setActive(i)}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  cursor: "pointer",
+                }}
+              >
                 <div
-                  key={i}
-                  onClick={() => setActive(i)}
                   style={{
+                    width: 24,
+                    height: 24,
+                    borderRadius: "50%",
+                    backgroundColor: active === i ? it.pinColor : HT.panel,
+                    border: `2px solid ${it.pinColor}`,
+                    boxShadow:
+                      active === i
+                        ? `0 0 0 5px ${it.pinColor}26, 0 6px 14px rgba(15,18,40,0.10)`
+                        : "none",
                     display: "flex",
-                    flexDirection: "column",
                     alignItems: "center",
-                    cursor: "pointer",
-                    position: "relative",
-                    zIndex: 1,
+                    justifyContent: "center",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    color: active === i ? HT.panel : it.pinColor,
+                    fontFamily: "'JetBrains Mono', monospace",
+                    transition: "all 0.15s ease",
                   }}
                 >
-                  <div
-                    style={{
-                      width: 24,
-                      height: 24,
-                      borderRadius: "50%",
-                      background: SR.panel,
-                      border: `2px solid ${it.pinColor}`,
-                      boxShadow: active === i ? `0 0 0 5px ${it.pinColor}26, 0 6px 14px rgba(15,18,40,0.10)` : "none",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: 11,
-                      fontWeight: 700,
-                      color: it.pinColor,
-                      fontFamily: "'JetBrains Mono', ui-monospace, monospace",
-                      transition: "all .15s",
-                    }}
-                  >
-                    {it.n}
-                  </div>
-                  <div
-                    style={{
-                      fontFamily: "'JetBrains Mono', ui-monospace, monospace",
-                      fontSize: 9.5,
-                      color: active === i ? it.pinColor : SR.ink4,
-                      letterSpacing: 1.1,
-                      fontWeight: 600,
-                      marginTop: 7,
-                      textAlign: "center",
-                    }}
-                  >
-                    {it.when}
-                  </div>
+                  {it.n}
                 </div>
-              ))}
-            </div>
+                <div
+                  style={{
+                    fontFamily: "'JetBrains Mono', monospace",
+                    fontSize: 9.5,
+                    color: active === i ? it.pinColor : HT.ink5,
+                    letterSpacing: 1.1,
+                    fontWeight: 600,
+                    marginTop: 7,
+                    textAlign: "center",
+                  }}
+                >
+                  {it.when.split(" · ")[0]}
+                </div>
+              </div>
+            ))}
           </div>
 
-          {/* Item cards */}
-          <div style={{ flex: 1, display: "grid", gridTemplateColumns: `repeat(${TIMELINE_ITEMS.length}, 1fr)`, gap: 12, minHeight: 0 }}>
+          {/* CARDS ROW */}
+          <div
+            style={{
+              flex: 1,
+              display: "grid",
+              gridTemplateColumns: `repeat(${TIMELINE_ITEMS.length}, 1fr)`,
+              gap: 10,
+              minHeight: 0,
+            }}
+          >
             {TIMELINE_ITEMS.map((it, i) => {
-              const sel = active === i;
+              const isActive = active === i;
               return (
                 <div
                   key={i}
                   onClick={() => setActive(i)}
                   style={{
-                    position: "relative",
                     display: "flex",
                     flexDirection: "column",
-                    background: sel ? SR.panel : SR.panelSoft,
-                    border: `1px solid ${sel ? "rgba(91,108,255,0.32)" : SR.border}`,
-                    borderRadius: 11,
-                    padding: "14px 14px 14px",
-                    boxShadow: sel ? `0 8px 22px rgba(91,108,255,0.12), inset 0 0 0 1px rgba(91,108,255,0.10)` : "none",
+                    backgroundColor: isActive ? HT.panel : HT.panelSoft,
+                    border: isActive ? `1px solid rgba(91,108,255,0.32)` : `1px solid ${HT.border}`,
+                    borderRadius: 10,
+                    padding: "14px 14px 16px",
+                    boxShadow: isActive ? `0 8px 22px rgba(91,108,255,0.12), inset 0 0 0 1px rgba(91,108,255,0.10)` : "none",
                     cursor: "pointer",
-                    transition: "all .15s",
+                    transition: "all 0.15s ease",
                   }}
                 >
                   {/* Impact badge */}
@@ -404,215 +495,263 @@ export default function HomePage() {
                       alignSelf: "flex-start",
                       alignItems: "center",
                       gap: 5,
-                      padding: "2.5px 8px",
+                      padding: "3px 8px",
                       borderRadius: 4,
-                      background: `${it.impact.color}1A`,
+                      backgroundColor: `${it.impact.color}24`,
                       color: it.impact.color,
-                      fontSize: 9.5,
+                      fontSize: 9,
                       fontWeight: 700,
-                      letterSpacing: 0.7,
+                      letterSpacing: 0.6,
+                      textTransform: "uppercase",
                       marginBottom: 9,
                     }}
                   >
-                    <span style={{ width: 5, height: 5, borderRadius: "50%", background: it.impact.color }} />
+                    <span
+                      style={{
+                        width: 5,
+                        height: 5,
+                        borderRadius: "50%",
+                        backgroundColor: it.impact.color,
+                      }}
+                    />
                     {it.impact.label}
                   </div>
 
-                  <div style={{ fontSize: 14.5, fontWeight: 700, color: SR.ink, lineHeight: 1.25, letterSpacing: -0.2, marginBottom: 3 }}>
+                  {/* Title */}
+                  <div
+                    style={{
+                      fontSize: 14,
+                      fontWeight: 600,
+                      letterSpacing: -0.2,
+                      color: HT.ink,
+                      marginBottom: 3,
+                    }}
+                  >
                     {it.title}
                   </div>
-                  <div style={{ fontSize: 11.5, color: SR.ink3, marginBottom: 9 }}>{it.sub}</div>
 
-                  <div style={{ fontSize: 11.5, color: SR.ink2, lineHeight: 1.5, marginBottom: 12, flex: 1 }}>
-                    <span
+                  {/* Subtitle */}
+                  <div
+                    style={{
+                      fontSize: 11.5,
+                      color: HT.ink3,
+                      marginBottom: 9,
+                    }}
+                  >
+                    {it.sub}
+                  </div>
+
+                  {/* WHY section */}
+                  <div
+                    style={{
+                      flex: 1,
+                      marginBottom: 12,
+                      paddingTop: 8,
+                      borderTop: `1px solid ${HT.divider}`,
+                    }}
+                  >
+                    <div
                       style={{
-                        fontFamily: "'JetBrains Mono', ui-monospace, monospace",
-                        fontSize: 9.5,
-                        color: SR.ink4,
-                        letterSpacing: 0.8,
+                        fontFamily: "'JetBrains Mono', monospace",
+                        fontSize: 8.5,
+                        letterSpacing: 1,
+                        color: HT.ink5,
                         fontWeight: 700,
-                        marginRight: 4,
+                        marginBottom: 4,
                       }}
                     >
-                      WHY
-                    </span>
-                    {it.why}
+                      WHY NOW
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        color: HT.ink3,
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      {it.why}
+                    </div>
                   </div>
 
-                  {/* Actions */}
-                  <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-                    <Link
-                      href={it.primary.href}
-                      style={{
-                        width: "100%",
-                        padding: "9px 12px",
-                        borderRadius: 8,
-                        border: "none",
-                        background: `linear-gradient(135deg, ${SR.brandDeep}, ${SR.violet})`,
-                        color: "#fff",
-                        fontSize: 12,
-                        fontWeight: 600,
-                        cursor: "pointer",
-                        boxShadow: "0 6px 14px rgba(91,108,255,0.25)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: 6,
-                        textDecoration: "none",
-                      }}
-                    >
-                      <span>{it.primary.label}</span>
-                      <span style={{ opacity: 0.85 }}>{it.primary.icon}</span>
-                    </Link>
-                    <button
-                      style={{
-                        width: "100%",
-                        padding: "8px 12px",
-                        borderRadius: 8,
-                        border: `1px solid ${SR.border2}`,
-                        background: SR.panel,
-                        color: SR.ink2,
-                        fontSize: 11.5,
-                        fontWeight: 500,
-                        cursor: "pointer",
-                      }}
-                    >
-                      {it.secondary.label}
-                    </button>
-                  </div>
+                  {/* Primary button */}
+                  <button
+                    style={{
+                      width: "100%",
+                      padding: "7px 10px",
+                      borderRadius: 7,
+                      border: `1px solid ${it.impact.color}`,
+                      backgroundColor: `${it.impact.color}20`,
+                      color: it.impact.color,
+                      fontSize: 11.5,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      marginBottom: 8,
+                      transition: "all 0.15s ease",
+                    }}
+                  >
+                    {it.primary.label} {it.primary.icon}
+                  </button>
+
+                  {/* Secondary button */}
+                  <button
+                    style={{
+                      width: "100%",
+                      padding: "7px 10px",
+                      borderRadius: 7,
+                      border: "none",
+                      backgroundColor: "transparent",
+                      color: HT.ink4,
+                      fontSize: 11,
+                      fontWeight: 500,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {it.secondary.label}
+                  </button>
                 </div>
               );
             })}
           </div>
         </div>
 
-        {/* SCOUT'S READ panel */}
+        {/* RIGHT: SCOUT'S READ PANEL */}
         <div
           style={{
-            background: SR.panel,
-            border: `1px solid ${SR.border}`,
+            backgroundColor: HT.panel,
+            border: `1px solid ${HT.border}`,
             borderRadius: 14,
             boxShadow: "0 1px 2px rgba(15,18,40,0.03)",
-            padding: "20px 20px 20px",
+            padding: "22px 20px",
             display: "flex",
             flexDirection: "column",
             minHeight: 0,
-            overflow: "hidden",
+            overflow: "auto",
           }}
         >
-          {/* Heading */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          {/* Header */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
             <span
               style={{
-                width: 18,
-                height: 18,
-                borderRadius: 5,
-                background: `linear-gradient(135deg, ${SR.brandDeep}, ${SR.violet})`,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "#fff",
-                fontSize: 10,
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: 9,
+                color: HT.brand,
+                letterSpacing: 1.6,
                 fontWeight: 700,
-                fontFamily: "'JetBrains Mono', ui-monospace, monospace",
               }}
             >
-              S
+              SCOUT'S READ
             </span>
-            <div
+            <span
               style={{
-                fontFamily: "'JetBrains Mono', ui-monospace, monospace",
-                fontSize: 10,
-                color: SR.ink4,
-                letterSpacing: 1.4,
-                fontWeight: 700,
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                backgroundColor: HT.green,
               }}
-            >
-              SCOUT&apos;S READ
-            </div>
-            <div
-              style={{
-                marginLeft: "auto",
-                fontSize: 9.5,
-                color: SR.green,
-                fontFamily: "'JetBrains Mono', ui-monospace, monospace",
-                fontWeight: 700,
-                letterSpacing: 0.8,
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4,
-              }}
-            >
-              <span style={{ width: 5, height: 5, borderRadius: "50%", background: SR.green }} />
-              LIVE
-            </div>
+            />
           </div>
 
-          <div style={{ fontSize: 16, fontWeight: 700, color: SR.ink, letterSpacing: -0.3, lineHeight: 1.25, marginBottom: 10 }}>
+          {/* Headline */}
+          <div
+            style={{
+              fontSize: 20,
+              fontWeight: 700,
+              letterSpacing: -0.4,
+              color: HT.ink,
+              marginBottom: 12,
+              lineHeight: 1.3,
+            }}
+          >
             {SCOUTS_READ.headline}
           </div>
 
-          <div style={{ fontSize: 12.5, color: SR.ink2, lineHeight: 1.6, marginBottom: 14 }}>
+          {/* Body text */}
+          <div
+            style={{
+              fontSize: 13,
+              color: HT.ink3,
+              lineHeight: 1.6,
+              marginBottom: 16,
+            }}
+          >
             {SCOUTS_READ.body}
           </div>
 
-          {/* Key facts */}
+          {/* Key facts grid */}
           <div
             style={{
-              background: SR.brandTint,
-              border: "1px solid rgba(91,108,255,0.18)",
-              borderRadius: 10,
-              padding: "11px 13px",
-              marginBottom: 14,
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 8,
+              marginBottom: 16,
+              paddingBottom: 16,
+              borderBottom: `1px solid ${HT.divider}`,
             }}
           >
-            {SCOUTS_READ.bullets.map((b, i, arr) => (
-              <div
-                key={i}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "baseline",
-                  padding: "5px 0",
-                  borderBottom: i === arr.length - 1 ? "none" : "1px solid rgba(91,108,255,0.12)",
-                }}
-              >
-                <span style={{ fontSize: 11, color: SR.ink3 }}>{b.l}</span>
-                <span
+            {SCOUTS_READ.bullets.map((b, i) => (
+              <div key={i}>
+                <div
                   style={{
-                    fontSize: 11.5,
-                    color: SR.brand,
+                    fontSize: 10,
+                    color: HT.ink4,
+                    fontWeight: 500,
+                    marginBottom: 2,
+                  }}
+                >
+                  {b.l}
+                </div>
+                <div
+                  style={{
+                    fontSize: 13,
                     fontWeight: 600,
-                    fontFamily: "'JetBrains Mono', ui-monospace, monospace",
-                    fontVariantNumeric: "tabular-nums",
+                    color: HT.ink,
                   }}
                 >
                   {b.v}
-                </span>
+                </div>
               </div>
             ))}
           </div>
 
-          {/* Secondary reads */}
-          <div
-            style={{
-              fontFamily: "'JetBrains Mono', ui-monospace, monospace",
-              fontSize: 9.5,
-              color: SR.ink4,
-              letterSpacing: 1.2,
-              fontWeight: 700,
-              marginBottom: 7,
-            }}
-          >
-            NEXT STEPS
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 9, flex: 1 }}>
-            {SCOUTS_READ.secondary.map((s, i) => (
-              <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-                <span style={{ width: 5, height: 5, borderRadius: "50%", background: SR.violet, marginTop: 7, flexShrink: 0 }} />
-                <span style={{ fontSize: 11.5, color: SR.ink2, lineHeight: 1.5 }}>{s}</span>
-              </div>
-            ))}
+          {/* Next steps */}
+          <div>
+            <div
+              style={{
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: 9,
+                color: HT.ink5,
+                letterSpacing: 1.6,
+                fontWeight: 700,
+                marginBottom: 10,
+              }}
+            >
+              NEXT STEPS
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {SCOUTS_READ.secondary.map((s, i) => (
+                <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                  <span
+                    style={{
+                      width: 5,
+                      height: 5,
+                      borderRadius: "50%",
+                      backgroundColor: HT.brand,
+                      marginTop: 5,
+                      flexShrink: 0,
+                    }}
+                  />
+                  <span
+                    style={{
+                      fontSize: 11.5,
+                      color: HT.ink3,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {s}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>

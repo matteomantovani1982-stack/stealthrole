@@ -1,489 +1,374 @@
 "use client";
 
 import { useState } from "react";
-import { SR } from "@/lib/constants";
-import { useAuth } from "@/lib/auth-context";
 
-// Mock data
-const MOCK_EXPERIENCES = [
+const AC = {
+  bg: "#f6f7fb",
+  panel: "#ffffff",
+  panel2: "#fafbfd",
+  border: "rgba(15,18,40,0.08)",
+  border2: "rgba(15,18,40,0.14)",
+  divider: "rgba(15,18,40,0.06)",
+  ink: "#0c1030",
+  ink2: "rgba(12,16,48,0.82)",
+  ink3: "rgba(12,16,48,0.58)",
+  ink4: "rgba(12,16,48,0.40)",
+  ink5: "rgba(12,16,48,0.22)",
+  brand: "#5B6CFF",
+  brand2: "#4754E8",
+  brand3: "#7F60E8",
+  brandTint: "rgba(91,108,255,0.08)",
+  brandTint2: "rgba(91,108,255,0.14)",
+  good: "#16a34a",
+  warn: "#ca8a04",
+  bad: "#dc2626",
+};
+
+const EXPERIENCES = [
   {
     id: "exp1",
-    company: "TechCorp",
+    company: "Notion",
+    logo: "🔗",
     role: "Senior Product Manager",
-    dates: "2021 - Present",
-    bullets: [
-      "Led product roadmap that increased user retention by 42%",
-      "Managed cross-functional teams of 8 engineers and 3 designers"
-    ]
+    dates: "2023 – present",
+    bullets: ["Led Notion AI MVP", "Owned editor surfaces"]
   },
   {
     id: "exp2",
-    company: "StartupXYZ",
-    role: "Product Manager",
-    dates: "2019 - 2021",
-    bullets: [
-      "Grew user base from 10K to 500K in 18 months",
-      "Launched 3 major product initiatives"
-    ]
+    company: "Figma",
+    logo: "◆",
+    role: "Product Manager, Platform",
+    dates: "2020 – 2023",
+    bullets: ["Shipped FigJam plugins API", "Ran growth funnel rewrite"]
   },
   {
     id: "exp3",
-    company: "ConsultCo",
-    role: "Strategy Consultant",
-    dates: "2018 - 2019",
-    bullets: [
-      "Advised Fortune 500 companies on digital transformation",
-      "Delivered 12 client engagements with avg satisfaction 9.2/10"
-    ]
+    company: "Stripe",
+    logo: "₪",
+    role: "Associate PM, Atlas",
+    dates: "2017 – 2020",
+    bullets: ["First PM hire on Atlas"]
+  },
+  {
+    id: "exp4",
+    company: "McKinsey",
+    logo: "⟡",
+    role: "Business Analyst",
+    dates: "2015 – 2017",
+    bullets: []
   }
 ];
 
-const MOCK_SKILLS = [
-  "Product Strategy",
-  "SaaS",
-  "Go-to-market",
-  "Team Leadership",
-  "User Research",
-  "Roadmapping",
-  "Analytics",
-  "B2B Sales",
-  "Data Analysis",
-  "Communication",
-  "AI/ML",
-  "Mobile"
+const SKILLS = [
+  { name: "B2B SaaS", weight: 5 },
+  { name: "Editor surfaces", weight: 5 },
+  { name: "Growth PM", weight: 4 },
+  { name: "AI/ML products", weight: 4 },
+  { name: "DevTools", weight: 4 },
+  { name: "Series A→C scale", weight: 4 },
+  { name: "Roadmap strategy", weight: 5 },
+  { name: "User research", weight: 3 },
+  { name: "Pricing & packaging", weight: 3 },
+  { name: "Platform PM", weight: 3 },
+  { name: "Mobile", weight: 2 },
+  { name: "Marketplaces", weight: 2 },
+  { name: "Fintech adjacent", weight: 3 },
+  { name: "0→1", weight: 5 },
+  { name: "Hiring & team building", weight: 4 }
 ];
 
-const MOCK_TARGET_TITLES = ["VP Product", "Director of Product", "Chief Product Officer"];
-const MOCK_SENIORITY = "Manager";
-const MOCK_WORK_MODES = ["Remote", "Hybrid"];
-const MOCK_INDUSTRIES = ["SaaS", "Fintech", "Healthcare"];
+const DOCUMENTS = [
+  { name: "Resume_2024.pdf", type: "PDF", size: "2.4 MB", status: "Ready" },
+  { name: "Cover_Letter.docx", type: "DOCX", size: "1.1 MB", status: "Ready" },
+  { name: "Portfolio.pdf", type: "PDF", size: "5.8 MB", status: "Ready" },
+  { name: "Certificates.zip", type: "ZIP", size: "3.2 MB", status: "Archived" }
+];
+
+const STATS = [
+  { label: "Packs built", value: "14" },
+  { label: "Applications sent", value: "8" },
+  { label: "Replies", value: "5" },
+  { label: "Interviews", value: "3" },
+  { label: "Offers", value: "1" },
+  { label: "Hidden roles", value: "3" },
+  { label: "Avg time-to-pack", value: "4.2 min" }
+];
+
+const SOURCES = [
+  { name: "LinkedIn", status: "connected" },
+  { name: "Greenhouse", status: "connected" },
+  { name: "Lever", status: "connected" },
+  { name: "Workday", status: "connected" },
+  { name: "Calendar", status: "connected" },
+  { name: "Email", status: "reauthorize" },
+  { name: "GitHub", status: "disconnected" }
+];
 
 export default function ProfilePage() {
-  const { user } = useAuth();
   const [expandedExp, setExpandedExp] = useState<string | null>(null);
 
-  // Get initials from user name
-  const getInitials = (name: string | undefined): string => {
-    if (!name) return "U";
-    const parts = name.split(" ");
-    return (parts[0][0] + (parts[1]?.[0] || "")).toUpperCase();
-  };
-
-  const panelStyle = {
-    background: SR.panel,
-    border: `1px solid ${SR.border}`,
-    borderRadius: 14,
-    padding: 24,
+  const cardStyle = {
+    background: AC.panel,
+    border: `1px solid ${AC.border}`,
+    borderRadius: 12,
+    boxShadow: "0 1px 2px rgba(15,18,40,0.03)",
     marginBottom: 18
   };
 
-  const chipStyle = (active: boolean) => ({
-    borderRadius: 999,
-    padding: "4px 12px",
-    fontSize: 12,
-    fontWeight: 500,
-    backgroundColor: active ? SR.brandTint : "transparent",
-    color: active ? SR.brand : SR.ink4,
-    border: `1px solid ${active ? SR.brand : SR.border2}`,
-    cursor: "pointer",
-    display: "inline-block",
-    marginRight: 8,
-    marginBottom: 8
-  });
+  const titleBarStyle = {
+    background: AC.panel2,
+    padding: "12px 16px",
+    borderBottom: `1px solid ${AC.divider}`,
+    fontSize: 11,
+    fontWeight: 600,
+    color: AC.ink3,
+    textTransform: "uppercase" as const,
+    letterSpacing: 0.4
+  };
+
+  const contentStyle = { padding: 18 };
 
   return (
-    <div style={{ background: SR.bg, minHeight: "100vh", paddingTop: 24, paddingBottom: 40 }}>
-      {/* Main container */}
-      <div style={{ maxWidth: 1200, margin: "0 auto", paddingLeft: 24, paddingRight: 24 }}>
-        {/* Header section */}
-        <div style={{ marginBottom: 32 }}>
-          <h1 style={{ fontSize: 28, fontWeight: 600, color: SR.ink, margin: 0, marginBottom: 8 }}>
-            Profile
+    <div style={{ background: AC.bg, minHeight: "100vh", fontFamily: '"Inter, system-ui, sans-serif"' }}>
+      {/* Header */}
+      <div style={{
+        padding: "28px 36px 22px",
+        background: `linear-gradient(135deg, ${AC.brand} 0%, ${AC.brand3} 100%)`
+      }}>
+        <div style={{ maxWidth: 1440, margin: "0 auto" }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.7)", letterSpacing: 1, marginBottom: 12, fontFamily: "'JetBrains Mono', monospace" }}>
+            PROFILE · TRAIN THE SYSTEM
+          </div>
+          <h1 style={{ fontSize: 28, fontWeight: 600, color: "#fff", margin: "0 0 4px 0" }}>
+            Alex Moreno
           </h1>
-          <p style={{ fontSize: 14, color: SR.ink3, margin: 0 }}>
-            Train the Scout on your background.
+          <p style={{ fontSize: 13, color: "rgba(255,255,255,0.8)", margin: 0 }}>
+            Product leader · 9 years
           </p>
         </div>
+      </div>
 
-        {/* 2-column layout wrapper */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-          {/* LEFT COLUMN - Main content (~65%) */}
-          <div style={{ gridColumn: "1 / 2" }}>
+      {/* Main content */}
+      <div style={{ maxWidth: 1440, margin: "0 auto", padding: "0 36px 32px", display: "grid", gridTemplateColumns: "1fr 320px", gap: 18 }}>
 
-            {/* 1. Identity Card */}
-            <div style={panelStyle}>
-              <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
-                {/* Avatar circle */}
-                <div
-                  style={{
-                    width: 64,
-                    height: 64,
-                    borderRadius: "50%",
-                    background: SR.brand,
-                    color: "#fff",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: 24,
-                    fontWeight: 600,
-                    flexShrink: 0
-                  }}
-                >
-                  {getInitials(user?.full_name ?? undefined)}
+        {/* LEFT COLUMN */}
+        <div>
+
+          {/* Identity Card */}
+          <div style={cardStyle}>
+            <div style={titleBarStyle}>Identity</div>
+            <div style={{ ...contentStyle, display: "flex", gap: 18, alignItems: "flex-start" }}>
+              <div style={{
+                width: 88,
+                height: 88,
+                borderRadius: "50%",
+                background: `linear-gradient(135deg, ${AC.brand} 0%, ${AC.brand3} 100%)`,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#fff",
+                fontSize: 28,
+                fontWeight: 600,
+                flexShrink: 0,
+                fontFamily: "'JetBrains Mono', monospace"
+              }}>
+                AM
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center" }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: AC.ink }}>Senior Product Manager</div>
+                  <span style={{ fontSize: 9, fontWeight: 700, background: AC.brandTint2, color: AC.brand, padding: "2px 6px", borderRadius: 4 }}>OPERATOR</span>
+                  <span style={{ fontSize: 9, fontWeight: 700, background: "rgba(22,163,74,0.12)", color: AC.good, padding: "2px 6px", borderRadius: 4 }}>VERIFIED</span>
                 </div>
-
-                {/* User info */}
-                <div style={{ flex: 1 }}>
-                  <h2 style={{ fontSize: 16, fontWeight: 600, color: SR.ink, margin: 0, marginBottom: 4 }}>
-                    {user?.full_name || "User"}
-                  </h2>
-                  <p style={{ fontSize: 13, color: SR.ink3, margin: 0, marginBottom: 4 }}>
-                    {user?.email || "email@example.com"}
-                  </p>
-                  <p style={{ fontSize: 13, color: SR.ink4, margin: 0 }}>
-                    Senior Product Manager
-                  </p>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, fontSize: 13 }}>
+                  <div><div style={{ fontSize: 11, color: AC.ink4, fontWeight: 600, marginBottom: 2 }}>NAME</div><div style={{ color: AC.ink }}>Alex Moreno</div></div>
+                  <div><div style={{ fontSize: 11, color: AC.ink4, fontWeight: 600, marginBottom: 2 }}>TITLE</div><div style={{ color: AC.ink }}>Senior Product Manager</div></div>
+                  <div><div style={{ fontSize: 11, color: AC.ink4, fontWeight: 600, marginBottom: 2 }}>LOCATION</div><div style={{ color: AC.ink }}>San Francisco, CA</div></div>
+                  <div><div style={{ fontSize: 11, color: AC.ink4, fontWeight: 600, marginBottom: 2 }}>EMAIL</div><div style={{ color: AC.ink }}>alex@notion.com</div></div>
+                  <div><div style={{ fontSize: 11, color: AC.ink4, fontWeight: 600, marginBottom: 2 }}>PHONE</div><div style={{ color: AC.ink }}>+1 (415) 555-1234</div></div>
+                  <div><div style={{ fontSize: 11, color: AC.ink4, fontWeight: 600, marginBottom: 2 }}>LINKEDIN</div><div style={{ color: AC.brand }}>linkedin.com/in/amoreno</div></div>
                 </div>
               </div>
             </div>
+          </div>
 
-            {/* 2. Experience Section */}
-            <div style={panelStyle}>
-              <h3 style={{ fontSize: 14, fontWeight: 600, color: SR.ink, margin: 0, marginBottom: 16 }}>
-                Experience
-              </h3>
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                {MOCK_EXPERIENCES.map((exp) => (
-                  <div
-                    key={exp.id}
-                    onClick={() => setExpandedExp(expandedExp === exp.id ? null : exp.id)}
-                    style={{
-                      border: `1px solid ${SR.border}`,
-                      borderRadius: 8,
-                      padding: 12,
-                      cursor: "pointer",
-                      transition: "background 0.2s",
-                      background: expandedExp === exp.id ? SR.panelSoft : "transparent"
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: SR.ink }}>
-                          {exp.role}
+          {/* Experience Card */}
+          <div style={cardStyle}>
+            <div style={titleBarStyle}>Experience</div>
+            <div style={{ ...contentStyle, position: "relative" }}>
+              <div style={{ display: "flex", position: "relative" }}>
+                <div style={{ width: 2, background: AC.divider, marginRight: 20 }} />
+                <div style={{ flex: 1 }}>
+                  {EXPERIENCES.map((exp, idx) => (
+                    <div key={exp.id} style={{ marginBottom: idx < EXPERIENCES.length - 1 ? 24 : 0 }}>
+                      <div style={{ display: "flex", gap: 16, position: "relative" }}>
+                        <div style={{
+                          width: 11,
+                          height: 11,
+                          borderRadius: "50%",
+                          border: `2px solid ${AC.brand}`,
+                          background: "#fff",
+                          position: "absolute",
+                          left: -26.5,
+                          top: 3,
+                          flexShrink: 0
+                        }} />
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: AC.ink, marginBottom: 2 }}>{exp.role}</div>
+                          <div style={{ fontSize: 12, color: AC.ink3, marginBottom: 1 }}>{exp.company}</div>
+                          <div style={{ fontSize: 11, color: AC.ink4, marginBottom: 6 }}>{exp.dates}</div>
+                          {exp.bullets.length > 0 && (
+                            <ul style={{ margin: 0, padding: "0 0 0 16px", fontSize: 12, color: AC.ink3 }}>
+                              {exp.bullets.map((bullet, bidx) => (
+                                <li key={bidx} style={{ marginBottom: 2 }}>{bullet}</li>
+                              ))}
+                            </ul>
+                          )}
                         </div>
-                        <div style={{ fontSize: 12, color: SR.ink3, marginTop: 2 }}>
-                          {exp.company}
-                        </div>
-                        <div style={{ fontSize: 11, color: SR.ink4, marginTop: 2 }}>
-                          {exp.dates}
-                        </div>
-                      </div>
-                      <div style={{ fontSize: 12, color: SR.ink4 }}>
-                        {expandedExp === exp.id ? "▾" : "▸"}
                       </div>
                     </div>
-
-                    {expandedExp === exp.id && (
-                      <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${SR.border}` }}>
-                        {exp.bullets.map((bullet, idx) => (
-                          <div key={idx} style={{ fontSize: 12, color: SR.ink3, marginBottom: 6, paddingLeft: 16, position: "relative" }}>
-                            <span style={{ position: "absolute", left: 0 }}>•</span>
-                            {bullet}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-              <button
-                style={{
-                  marginTop: 16,
-                  padding: "8px 12px",
-                  background: "transparent",
-                  border: `1px solid ${SR.border}`,
+            </div>
+          </div>
+
+          {/* Skills Card */}
+          <div style={cardStyle}>
+            <div style={titleBarStyle}>Skills</div>
+            <div style={{ ...contentStyle, display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {SKILLS.map((skill) => (
+                <span key={skill.name} style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 4,
+                  padding: "5px 10px",
                   borderRadius: 6,
-                  color: SR.brand,
                   fontSize: 12,
-                  fontWeight: 600,
-                  cursor: "pointer"
-                }}
-              >
-                + Add Experience
-              </button>
+                  fontWeight: 500,
+                  background: skill.weight >= 4 ? AC.brandTint2 : AC.brandTint,
+                  color: skill.weight >= 4 ? AC.brand2 : AC.brand,
+                  whiteSpace: "nowrap"
+                }}>
+                  <span style={{ fontSize: 5, fontWeight: 700 }}>{"●".repeat(skill.weight)}</span>
+                  {skill.name}
+                </span>
+              ))}
             </div>
+          </div>
 
-            {/* 3. Skills Section */}
-            <div style={panelStyle}>
-              <h3 style={{ fontSize: 14, fontWeight: 600, color: SR.ink, margin: 0, marginBottom: 16 }}>
-                Skills & Expertise
-              </h3>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                {MOCK_SKILLS.map((skill) => (
-                  <span
-                    key={skill}
-                    style={{
-                      ...chipStyle(true),
-                      marginRight: 0,
-                      marginBottom: 8
-                    }}
-                  >
-                    {skill}
-                  </span>
+          {/* Target Search Card */}
+          <div style={cardStyle}>
+            <div style={titleBarStyle}>Target Search</div>
+            <div style={contentStyle}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                {[
+                  { label: "Roles", value: "VP Product, Director of Product, Chief Product Officer" },
+                  { label: "Work mode", value: "Remote, Hybrid" },
+                  { label: "Industries", value: "SaaS, Fintech, Healthcare" },
+                  { label: "Seniority", value: "Manager, Senior Manager" },
+                  { label: "Company size", value: "Series A–C" },
+                  { label: "Avoid", value: "Recruiting, Consulting" },
+                  { label: "Stage", value: "Funded (Series A+)" },
+                  { label: "Salary floor", value: "$200k + equity" },
+                  { label: "Equity floor", value: "0.1%" },
+                ].map((item, idx) => (
+                  <div key={idx}>
+                    <div style={{ fontSize: 11, color: AC.ink4, fontWeight: 600, marginBottom: 4, textTransform: "uppercase" }}>{item.label}</div>
+                    <div style={{ fontSize: 12, color: AC.ink3 }}>{item.value}</div>
+                  </div>
                 ))}
               </div>
             </div>
-
-            {/* 4. Target Search Section */}
-            <div style={panelStyle}>
-              <h3 style={{ fontSize: 14, fontWeight: 600, color: SR.ink, margin: 0, marginBottom: 16 }}>
-                Target Criteria
-              </h3>
-
-              {/* Target Titles */}
-              <div style={{ marginBottom: 20 }}>
-                <label style={{ fontSize: 11, fontWeight: 600, color: SR.ink4, textTransform: "uppercase", display: "block", marginBottom: 8 }}>
-                  Target Titles
-                </label>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  {MOCK_TARGET_TITLES.map((title) => (
-                    <span key={title} style={chipStyle(true)}>
-                      {title}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              {/* Seniority Level */}
-              <div style={{ marginBottom: 20 }}>
-                <label style={{ fontSize: 11, fontWeight: 600, color: SR.ink4, textTransform: "uppercase", display: "block", marginBottom: 8 }}>
-                  Seniority Level
-                </label>
-                <div style={chipStyle(true)}>
-                  {MOCK_SENIORITY}
-                </div>
-              </div>
-
-              {/* Work Modes */}
-              <div style={{ marginBottom: 20 }}>
-                <label style={{ fontSize: 11, fontWeight: 600, color: SR.ink4, textTransform: "uppercase", display: "block", marginBottom: 8 }}>
-                  Work Modes
-                </label>
-                <div style={{ display: "flex", gap: 8 }}>
-                  {MOCK_WORK_MODES.map((mode) => (
-                    <span key={mode} style={chipStyle(true)}>
-                      {mode}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              {/* Industries */}
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 600, color: SR.ink4, textTransform: "uppercase", display: "block", marginBottom: 8 }}>
-                  Industries
-                </label>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  {MOCK_INDUSTRIES.map((ind) => (
-                    <span key={ind} style={chipStyle(true)}>
-                      {ind}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* 5. Resume & Documents Section */}
-            <div style={panelStyle}>
-              <h3 style={{ fontSize: 14, fontWeight: 600, color: SR.ink, margin: 0, marginBottom: 16 }}>
-                Documents
-              </h3>
-
-              {/* Upload dropzone */}
-              <div
-                style={{
-                  border: `2px dashed ${SR.border2}`,
-                  borderRadius: 8,
-                  padding: 32,
-                  textAlign: "center",
-                  marginBottom: 16,
-                  cursor: "pointer"
-                }}
-              >
-                <div style={{ fontSize: 24, marginBottom: 8 }}>📄</div>
-                <div style={{ fontSize: 13, fontWeight: 500, color: SR.ink }}>
-                  Drop your CV here or click to upload
-                </div>
-                <div style={{ fontSize: 12, color: SR.ink4, marginTop: 4 }}>
-                  PDF, DOC, DOCX up to 10MB
-                </div>
-              </div>
-
-              {/* Documents table */}
-              <div style={{ borderTop: `1px solid ${SR.border}`, paddingTop: 16 }}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: 12, fontSize: 12, marginBottom: 8 }}>
-                  <div style={{ fontWeight: 600, color: SR.ink4 }}>Filename</div>
-                  <div style={{ fontWeight: 600, color: SR.ink4 }}>Type</div>
-                  <div style={{ fontWeight: 600, color: SR.ink4 }}>Date</div>
-                  <div style={{ fontWeight: 600, color: SR.ink4 }}>Status</div>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: 12, fontSize: 12, paddingTop: 8, borderTop: `1px solid ${SR.border}` }}>
-                  <div style={{ color: SR.ink }}>resume_2024.pdf</div>
-                  <div style={{ color: SR.ink3 }}>PDF</div>
-                  <div style={{ color: SR.ink3 }}>Jan 15, 2024</div>
-                  <span style={{
-                    padding: "2px 8px",
-                    borderRadius: 4,
-                    fontSize: 11,
-                    backgroundColor: "rgba(34, 197, 94, 0.08)",
-                    color: "#22c55e",
-                    fontWeight: 500
-                  }}>
-                    Ready
-                  </span>
-                </div>
-              </div>
-            </div>
-
           </div>
 
-          {/* RIGHT COLUMN - Sticky summary rail (~35%) */}
-          <div style={{ position: "sticky", top: 24, height: "fit-content" }}>
-
-            {/* Profile Completeness Card */}
-            <div style={panelStyle}>
-              <h4 style={{ fontSize: 12, fontWeight: 600, color: SR.ink4, textTransform: "uppercase", margin: 0, marginBottom: 16 }}>
-                Profile Completeness
-              </h4>
-
-              {/* Circular gauge */}
-              <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }}>
-                <div
-                  style={{
-                    width: 100,
-                    height: 100,
-                    borderRadius: "50%",
-                    background: `conic-gradient(${SR.brand} 0deg 216deg, ${SR.border} 216deg 360deg)`,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center"
-                  }}
-                >
-                  <div
-                    style={{
-                      width: 90,
-                      height: 90,
-                      borderRadius: "50%",
-                      background: SR.panel,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexDirection: "column"
-                    }}
-                  >
-                    <div style={{ fontSize: 24, fontWeight: 700, color: SR.brand }}>60%</div>
-                  </div>
-                </div>
+          {/* Documents Card */}
+          <div style={cardStyle}>
+            <div style={titleBarStyle}>Documents</div>
+            <div style={contentStyle}>
+              <div style={{
+                border: `2px dashed ${AC.border2}`,
+                borderRadius: 8,
+                padding: 24,
+                textAlign: "center",
+                marginBottom: 16,
+                background: AC.panel2,
+                cursor: "pointer"
+              }}>
+                <div style={{ fontSize: 20, marginBottom: 8 }}>📄</div>
+                <div style={{ fontSize: 13, fontWeight: 500, color: AC.ink, marginBottom: 2 }}>Drop documents here or click to upload</div>
+                <div style={{ fontSize: 11, color: AC.ink4 }}>PDF, DOC, DOCX up to 10MB</div>
               </div>
-
-              {/* Completion items */}
-              <div style={{ fontSize: 12 }}>
-                <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
-                  <span style={{ color: "#22c55e" }}>✓</span>
-                  <span style={{ color: SR.ink }}>Profile photo</span>
-                </div>
-                <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
-                  <span style={{ color: "#22c55e" }}>✓</span>
-                  <span style={{ color: SR.ink }}>Experience added</span>
-                </div>
-                <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
-                  <span style={{ color: "#22c55e" }}>✓</span>
-                  <span style={{ color: SR.ink }}>Skills listed</span>
-                </div>
-                <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
-                  <span style={{ color: SR.ink4 }}>✕</span>
-                  <span style={{ color: SR.ink4 }}>Education</span>
-                </div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <span style={{ color: SR.ink4 }}>✕</span>
-                  <span style={{ color: SR.ink4 }}>Certifications</span>
-                </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {DOCUMENTS.map((doc, idx) => (
+                  <div key={idx} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px", borderRadius: 6, background: AC.panel2 }}>
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 500, color: AC.ink }}>{doc.name}</div>
+                      <div style={{ fontSize: 11, color: AC.ink4 }}>{doc.type} · {doc.size}</div>
+                    </div>
+                    <span style={{ fontSize: 9, fontWeight: 700, background: AC.brandTint, color: AC.brand, padding: "2px 6px", borderRadius: 4 }}>{doc.status}</span>
+                  </div>
+                ))}
               </div>
             </div>
-
-            {/* Connected Sources Card */}
-            <div style={panelStyle}>
-              <h4 style={{ fontSize: 12, fontWeight: 600, color: SR.ink4, textTransform: "uppercase", margin: 0, marginBottom: 16 }}>
-                Connected Sources
-              </h4>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                {/* LinkedIn - Connected */}
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <span style={{ fontSize: 18 }}>in</span>
-                    <span style={{ fontSize: 13, fontWeight: 500, color: SR.ink }}>LinkedIn</span>
-                  </div>
-                  <span style={{
-                    padding: "2px 8px",
-                    borderRadius: 4,
-                    fontSize: 11,
-                    backgroundColor: "rgba(34, 197, 94, 0.08)",
-                    color: "#22c55e",
-                    fontWeight: 500
-                  }}>
-                    Connected
-                  </span>
-                </div>
-
-                {/* Gmail - Not Connected */}
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <span style={{ fontSize: 18 }}>✉</span>
-                    <span style={{ fontSize: 13, fontWeight: 500, color: SR.ink }}>Gmail</span>
-                  </div>
-                  <button
-                    style={{
-                      padding: "2px 8px",
-                      borderRadius: 4,
-                      fontSize: 11,
-                      backgroundColor: SR.border,
-                      color: SR.ink4,
-                      fontWeight: 500,
-                      border: "none",
-                      cursor: "pointer"
-                    }}
-                  >
-                    Connect
-                  </button>
-                </div>
-
-                {/* Calendar - Not Connected */}
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <span style={{ fontSize: 18 }}>📅</span>
-                    <span style={{ fontSize: 13, fontWeight: 500, color: SR.ink }}>Calendar</span>
-                  </div>
-                  <button
-                    style={{
-                      padding: "2px 8px",
-                      borderRadius: 4,
-                      fontSize: 11,
-                      backgroundColor: SR.border,
-                      color: SR.ink4,
-                      fontWeight: 500,
-                      border: "none",
-                      cursor: "pointer"
-                    }}
-                  >
-                    Connect
-                  </button>
-                </div>
-              </div>
-            </div>
-
           </div>
+
         </div>
+
+        {/* RIGHT COLUMN (STICKY) */}
+        <div style={{ position: "sticky", top: 18, height: "fit-content", display: "flex", flexDirection: "column", gap: 18 }}>
+
+          {/* Live Summary Card */}
+          <div style={cardStyle}>
+            <div style={titleBarStyle}>Live Summary</div>
+            <div style={contentStyle}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: AC.ink4, marginBottom: 8 }}>TARGET ROLES</div>
+              <div style={{ fontSize: 12, color: AC.ink, marginBottom: 12 }}>VP Product, Director of Product</div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: AC.ink4, marginBottom: 8 }}>SENIORITY</div>
+              <div style={{ fontSize: 12, color: AC.ink, marginBottom: 12 }}>Manager · 9 years experience</div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: AC.ink4, marginBottom: 8 }}>INDUSTRIES</div>
+              <div style={{ fontSize: 12, color: AC.ink }}>SaaS, Fintech, Healthcare</div>
+            </div>
+          </div>
+
+          {/* Operator Stats Card */}
+          <div style={cardStyle}>
+            <div style={titleBarStyle}>Operator Stats</div>
+            <div style={contentStyle}>
+              {STATS.map((stat, idx) => (
+                <div key={idx} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 8, paddingBottom: 8, borderBottom: `1px solid ${AC.divider}` }}>
+                  <div style={{ color: AC.ink4 }}>{stat.label}</div>
+                  <div style={{ fontWeight: 600, color: AC.ink, fontFamily: "'JetBrains Mono', monospace" }}>{stat.value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Connected Sources Card */}
+          <div style={cardStyle}>
+            <div style={titleBarStyle}>Connected Sources</div>
+            <div style={contentStyle}>
+              {SOURCES.map((source, idx) => (
+                <div key={idx} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, marginBottom: 8, paddingBottom: 8, borderBottom: idx < SOURCES.length - 1 ? `1px solid ${AC.divider}` : "none" }}>
+                  <div style={{ color: AC.ink }}>{source.name}</div>
+                  <span style={{
+                    fontSize: 9,
+                    fontWeight: 700,
+                    padding: "2px 6px",
+                    borderRadius: 4,
+                    background: source.status === "connected" ? "rgba(22,163,74,0.12)" : source.status === "reauthorize" ? "rgba(202,138,4,0.12)" : "rgba(12,16,48,0.08)",
+                    color: source.status === "connected" ? AC.good : source.status === "reauthorize" ? AC.warn : AC.ink4,
+                    textTransform: "capitalize"
+                  }}>
+                    {source.status}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+        </div>
+
       </div>
     </div>
   );
