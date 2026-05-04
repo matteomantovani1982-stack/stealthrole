@@ -1,9 +1,9 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useState, useEffect } from "react";
 import { useAuth } from "@/lib/auth-context";
 
-/* ── design tokens (matching sr-login.jsx from Claude Designer) ── */
+/* ── design tokens (from sr-login.jsx / sr-app-shell.jsx) ── */
 const SR = {
   bg: "#03040f",
   brand: "#7F8CFF",
@@ -11,12 +11,55 @@ const SR = {
   brand3: "#9F7AEA",
   ink: "rgba(255,255,255,0.92)",
   ink3: "rgba(255,255,255,0.62)",
-  ink5: "rgba(255,255,255,0.32)",
+  ink4: "rgba(255,255,255,0.32)",
+  ink5: "rgba(255,255,255,0.18)",
   border: "rgba(255,255,255,0.06)",
   border2: "rgba(255,255,255,0.10)",
 };
 
-/* ── Monitor frame ── */
+const MONO = "'JetBrains Mono', ui-monospace, monospace";
+const INTER = "Inter, system-ui, -apple-system, sans-serif";
+
+/* ── useCycle hook — cycles through items at interval ── */
+function useCycle(length: number, ms: number, offset = 0) {
+  const [i, setI] = useState(offset % Math.max(1, length));
+  useEffect(() => {
+    if (length <= 1) return;
+    const id = setInterval(() => setI((x) => (x + 1) % length), ms);
+    return () => clearInterval(id);
+  }, [length, ms]);
+  return i;
+}
+
+/* ── CycleFrame — cross-fade wrapper ── */
+function CycleFrame({
+  idx,
+  frames,
+}: {
+  idx: number;
+  frames: React.ReactNode[];
+}) {
+  return (
+    <div style={{ position: "relative", width: "100%", height: "100%" }}>
+      {frames.map((f, i) => (
+        <div
+          key={i}
+          style={{
+            position: "absolute",
+            inset: 0,
+            opacity: i === idx ? 1 : 0,
+            transition: "opacity .55s ease",
+            pointerEvents: i === idx ? "auto" : "none",
+          }}
+        >
+          {f}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ── MonitorFrame ── */
 function MonitorFrame({
   label,
   accent = "#7F8CFF",
@@ -53,7 +96,7 @@ function MonitorFrame({
           justifyContent: "space-between",
           borderBottom: "1px solid rgba(255,255,255,0.06)",
           background: "rgba(0,0,0,0.35)",
-          fontFamily: "'JetBrains Mono', monospace",
+          fontFamily: MONO,
           fontSize: 8,
           letterSpacing: 1,
           color: accent,
@@ -99,8 +142,33 @@ function MonitorFrame({
   );
 }
 
-/* ── Simplified site mockups ── */
+/* ═══════════════════════════════════════════════════════════════
+   SITE MOCKUPS — rich cycling content like the designer prototype
+   ═══════════════════════════════════════════════════════════════ */
+
 function SiteFT() {
+  const stories = [
+    {
+      kicker: "CORPORATE · EXCLUSIVE",
+      title:
+        "Ramp CFO departs; senior finance seat opens at hyper-growth fintech",
+      desc: "The speed-management unicorn is said to be moving quickly on a replacement, with three candidates in late-stage discussions.",
+      tags: ["RAMP", "CFO", "EXEC"],
+    },
+    {
+      kicker: "M&A · TECHNOLOGY",
+      title: "Stripe in advanced talks for $5B secondary share sale",
+      desc: "Tiger Global and Sequoia tipped as principal buyers; transaction implies a slight valuation reset.",
+      tags: ["STRIPE", "SECONDARY", "FINTECH"],
+    },
+    {
+      kicker: "AI · FUNDING",
+      title: "Anthropic close to $2B Series E led by Google, sources say",
+      desc: "Round expected to value the AI lab at $40B post-money; talent acquisition seen as a key use of proceeds.",
+      tags: ["ANTHROPIC", "AI", "SERIES E"],
+    },
+  ];
+  const idx = useCycle(stories.length, 5000, 0);
   return (
     <div
       style={{
@@ -108,6 +176,8 @@ function SiteFT() {
         background: "#fff1e5",
         color: "#1a1a1a",
         fontFamily: "Georgia, 'Times New Roman', serif",
+        display: "flex",
+        flexDirection: "column",
       }}
     >
       <div
@@ -127,171 +197,110 @@ function SiteFT() {
           style={{
             fontSize: 7,
             color: "#6b5a44",
-            fontFamily: "'JetBrains Mono', monospace",
+            fontFamily: MONO,
             letterSpacing: 1,
           }}
         >
-          LIVE
+          APRIL 24, 2026 · LIVE
         </div>
       </div>
-      <div style={{ padding: "8px 10px" }}>
-        <div
-          style={{
-            fontSize: 7,
-            color: "#a04040",
-            fontFamily: "'JetBrains Mono', monospace",
-            letterSpacing: 1.2,
-            marginBottom: 3,
-          }}
-        >
-          CORPORATE · EXCLUSIVE
-        </div>
-        <div
-          style={{
-            fontWeight: 700,
-            fontSize: 12,
-            lineHeight: 1.2,
-            color: "#0a0a0a",
-            marginBottom: 5,
-          }}
-        >
-          Ramp CFO departs; senior finance seat opens at hyper-growth fintech
-        </div>
-        <div
-          style={{ fontSize: 8.5, color: "#3a3a3a", lineHeight: 1.4, marginBottom: 6 }}
-        >
-          The speed-management unicorn is said to be moving quickly on a replacement.
-        </div>
-        <div style={{ display: "flex", gap: 4 }}>
-          {["RAMP", "CFO", "EXEC"].map((t) => (
-            <span
-              key={t}
-              style={{
-                fontFamily: "'JetBrains Mono', monospace",
-                fontSize: 7,
-                padding: "1px 5px",
-                border: "1px solid #b08060",
-                color: "#a04040",
-                borderRadius: 2,
-                letterSpacing: 0.8,
-              }}
-            >
-              {t}
-            </span>
+      <div style={{ flex: 1, position: "relative" }}>
+        <CycleFrame
+          idx={idx}
+          frames={stories.map((s, i) => (
+            <div key={i} style={{ padding: "8px 10px" }}>
+              <div
+                style={{
+                  fontSize: 7,
+                  color: "#a04040",
+                  fontFamily: MONO,
+                  letterSpacing: 1.2,
+                  marginBottom: 3,
+                }}
+              >
+                {s.kicker}
+              </div>
+              <div
+                style={{
+                  fontWeight: 700,
+                  fontSize: 12,
+                  lineHeight: 1.2,
+                  color: "#0a0a0a",
+                  marginBottom: 5,
+                }}
+              >
+                {s.title}
+              </div>
+              <div
+                style={{
+                  fontSize: 8.5,
+                  color: "#3a3a3a",
+                  lineHeight: 1.4,
+                  marginBottom: 6,
+                }}
+              >
+                {s.desc}
+              </div>
+              <div style={{ display: "flex", gap: 4 }}>
+                {s.tags.map((t, j) => (
+                  <span
+                    key={j}
+                    style={{
+                      fontFamily: MONO,
+                      fontSize: 7,
+                      padding: "1px 5px",
+                      border: "1px solid #b08060",
+                      color: "#a04040",
+                      borderRadius: 2,
+                      letterSpacing: 0.8,
+                    }}
+                  >
+                    {t}
+                  </span>
+                ))}
+              </div>
+            </div>
           ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SiteBloomberg() {
-  return (
-    <div
-      style={{
-        height: "100%",
-        background: "#000",
-        color: "#ff7a00",
-        fontFamily: "'JetBrains Mono', monospace",
-      }}
-    >
-      <div
-        style={{
-          padding: "4px 8px",
-          borderBottom: "1px solid #333",
-          display: "flex",
-          justifyContent: "space-between",
-          fontSize: 9,
-          fontWeight: 900,
-        }}
-      >
-        <span>BLOOMBERG</span>
-        <span style={{ color: "#22c55e", fontSize: 7 }}>● LIVE</span>
-      </div>
-      <div style={{ padding: "6px 8px", fontSize: 8 }}>
-        <div style={{ color: "#ff7a00", fontWeight: 700, fontSize: 11, marginBottom: 4 }}>
-          MARKETS
-        </div>
-        {[
-          { sym: "SPX", val: "5,248.32", chg: "+0.41%", up: true },
-          { sym: "AAPL", val: "198.12", chg: "+1.2%", up: true },
-          { sym: "TSLA", val: "174.88", chg: "-2.1%", up: false },
-          { sym: "NVDA", val: "892.14", chg: "+3.8%", up: true },
-        ].map((s) => (
-          <div
-            key={s.sym}
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              padding: "3px 0",
-              borderBottom: "1px solid #222",
-              fontSize: 8,
-            }}
-          >
-            <span style={{ color: "#ccc", fontWeight: 600 }}>{s.sym}</span>
-            <span style={{ color: "#999" }}>{s.val}</span>
-            <span style={{ color: s.up ? "#22c55e" : "#ef4444" }}>{s.chg}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function SiteLinkedIn() {
-  return (
-    <div
-      style={{
-        height: "100%",
-        background: "#fff",
-        fontFamily: "system-ui, sans-serif",
-      }}
-    >
-      <div
-        style={{
-          padding: "4px 8px",
-          background: "#0a66c2",
-          color: "#fff",
-          fontSize: 10,
-          fontWeight: 700,
-        }}
-      >
-        LinkedIn
-      </div>
-      <div style={{ padding: "8px" }}>
-        {[
-          { title: "VP of Growth", co: "Stripe", loc: "San Francisco" },
-          { title: "Head of Strategy", co: "Revolut", loc: "London" },
-        ].map((j, i) => (
-          <div
-            key={i}
-            style={{
-              padding: "6px 0",
-              borderBottom: "1px solid #eee",
-              fontSize: 9,
-              color: "#333",
-            }}
-          >
-            <div style={{ fontWeight: 700, color: "#0a66c2", fontSize: 10 }}>
-              {j.title}
-            </div>
-            <div style={{ color: "#666", marginTop: 1 }}>
-              {j.co} · {j.loc}
-            </div>
-          </div>
-        ))}
+        />
       </div>
     </div>
   );
 }
 
 function SiteReuters() {
+  const stories = [
+    {
+      tag: "BREAKING",
+      cat: "M&A",
+      title: "Stripe in advanced talks for $5B secondary, sources say",
+      desc: "Tiger Global, Sequoia tipped as buyers; valuation reset implied.",
+      time: "09:14 GMT",
+    },
+    {
+      tag: "EXCLUSIVE",
+      cat: "FUNDING",
+      title: "Anthropic raising $2B Series E led by Google, sources say",
+      desc: "Round values AI lab at $40B post; talent acquisition plans accelerate.",
+      time: "08:42 GMT",
+    },
+    {
+      tag: "WIRE",
+      cat: "PEOPLE",
+      title: "Ramp CFO to depart, plans new fintech venture",
+      desc: "Search for replacement underway; founder confirms internal memo.",
+      time: "07:55 GMT",
+    },
+  ];
+  const idx = useCycle(stories.length, 4200, 0);
   return (
     <div
       style={{
         height: "100%",
         background: "#fff",
-        fontFamily: "system-ui, sans-serif",
+        color: "#0a0a0a",
+        fontFamily: INTER,
+        display: "flex",
+        flexDirection: "column",
       }}
     >
       <div
@@ -308,180 +317,1063 @@ function SiteReuters() {
           style={{
             fontWeight: 900,
             fontSize: 11,
+            letterSpacing: -0.3,
             fontFamily: "'Times New Roman', serif",
           }}
         >
           REUTERS
         </div>
-        <div
-          style={{
-            fontFamily: "'JetBrains Mono', monospace",
-            fontSize: 7,
-            letterSpacing: 0.8,
-          }}
-        >
+        <div style={{ fontFamily: MONO, fontSize: 7, letterSpacing: 0.8 }}>
           ● LIVE WIRE
         </div>
       </div>
-      <div style={{ padding: "7px 9px" }}>
-        <div
-          style={{
-            display: "flex",
-            gap: 6,
-            fontSize: 7,
-            fontFamily: "'JetBrains Mono', monospace",
-            marginBottom: 4,
-          }}
-        >
-          <span
-            style={{
-              background: "#fa6400",
-              color: "#fff",
-              padding: "1px 5px",
-              borderRadius: 2,
-              fontWeight: 700,
-            }}
-          >
-            BREAKING
-          </span>
-          <span style={{ color: "#666" }}>M&A</span>
-        </div>
-        <div
-          style={{
-            fontWeight: 700,
-            fontSize: 11,
-            lineHeight: 1.2,
-            marginBottom: 4,
-            color: "#0a0a0a",
-          }}
-        >
-          Stripe in advanced talks for $5B secondary, sources say
-        </div>
-        <div style={{ fontSize: 8.5, color: "#555", lineHeight: 1.4 }}>
-          Tiger Global, Sequoia tipped as buyers; valuation reset implied.
-        </div>
+      <div style={{ flex: 1, position: "relative" }}>
+        <CycleFrame
+          idx={idx}
+          frames={stories.map((s, i) => (
+            <div key={i} style={{ padding: "7px 9px" }}>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 5,
+                  marginBottom: 4,
+                  alignItems: "center",
+                }}
+              >
+                <span
+                  style={{
+                    fontFamily: MONO,
+                    fontSize: 6.5,
+                    padding: "1px 4px",
+                    background: "#fa6400",
+                    color: "#000",
+                    fontWeight: 800,
+                    letterSpacing: 0.6,
+                  }}
+                >
+                  {s.tag}
+                </span>
+                <span
+                  style={{
+                    fontFamily: MONO,
+                    fontSize: 6.5,
+                    color: "#fa6400",
+                    letterSpacing: 0.8,
+                    fontWeight: 700,
+                  }}
+                >
+                  {s.cat}
+                </span>
+                <span
+                  style={{
+                    marginLeft: "auto",
+                    fontFamily: MONO,
+                    fontSize: 6.5,
+                    color: "#999",
+                  }}
+                >
+                  {s.time}
+                </span>
+              </div>
+              <div
+                style={{
+                  fontWeight: 800,
+                  fontSize: 11,
+                  lineHeight: 1.2,
+                  color: "#000",
+                  marginBottom: 4,
+                  letterSpacing: -0.3,
+                }}
+              >
+                {s.title}
+              </div>
+              <div style={{ fontSize: 8, color: "#444", lineHeight: 1.4 }}>
+                {s.desc}
+              </div>
+            </div>
+          ))}
+        />
+      </div>
+      <div
+        style={{
+          padding: "3px 8px",
+          background: "#000",
+          color: "#fa6400",
+          display: "flex",
+          justifyContent: "space-between",
+          fontFamily: MONO,
+          fontSize: 6.5,
+          letterSpacing: 0.6,
+        }}
+      >
+        <span>
+          WIRE · {idx + 1}/{stories.length}
+        </span>
+        <span style={{ color: "#fff" }}>RTRS · LIVE</span>
       </div>
     </div>
   );
 }
 
-function SiteTerminal() {
+function SiteBloomberg() {
+  const stories = [
+    {
+      time: "14:18 UTC",
+      kicker: "EXCLUSIVE",
+      title: "Anthropic Lifts Series E Ahead of Schedule, Sources Say",
+      rows: [
+        ["ANTH:US", "+8.2%", "#22c55e"],
+        ["GOOGL:US", "+1.1%", "#22c55e"],
+        ["MSFT:US", "+0.8%", "#22c55e"],
+        ["NVDA:US", "+2.3%", "#22c55e"],
+      ],
+    },
+    {
+      time: "13:42 UTC",
+      kicker: "BREAKING",
+      title: "Stripe Said to Tap Banks for Direct Listing Path in 2026",
+      rows: [
+        ["V:US", "-0.4%", "#ef4444"],
+        ["MA:US", "+0.2%", "#22c55e"],
+        ["ADYEY:US", "-1.1%", "#ef4444"],
+        ["AFRM:US", "+3.4%", "#22c55e"],
+      ],
+    },
+    {
+      time: "12:55 UTC",
+      kicker: "FIRST WORD",
+      title: "Databricks Boosts Hiring; 240 New Reqs Posted Quietly",
+      rows: [
+        ["MDB:US", "+1.7%", "#22c55e"],
+        ["SNOW:US", "-0.6%", "#ef4444"],
+        ["DDOG:US", "+2.1%", "#22c55e"],
+        ["NET:US", "+0.9%", "#22c55e"],
+      ],
+    },
+  ];
+  const idx = useCycle(stories.length, 4500, 2);
   return (
     <div
       style={{
         height: "100%",
-        background: "#0b1120",
-        fontFamily: "'JetBrains Mono', monospace",
-        color: "#22c55e",
-        fontSize: 8,
-        padding: "8px",
-        lineHeight: 1.6,
-      }}
-    >
-      <div style={{ color: "#7F8CFF", marginBottom: 4 }}>
-        ▸ SR.SCOUT — SIGNAL INTERCEPT
-      </div>
-      <div>RAMP · CFO wire +180M · ETA 9D</div>
-      <div style={{ color: "#fbbf24" }}>CONF 94% · HIRING SIGNAL CONFIRMED</div>
-      <div style={{ marginTop: 4 }}>KLARNA · Chief of Staff (unposted)</div>
-      <div style={{ color: "#fbbf24" }}>CONF 88% · FUNDING ROUND → HIRING</div>
-      <div style={{ marginTop: 4 }}>REVOLUT · GM Wealth confirmed</div>
-      <div style={{ color: "#ef4444" }}>PRIORITY · NETWORK MATCH FOUND</div>
-      <div style={{ marginTop: 6, color: "#7F8CFF" }}>
-        ▸ 1,267 SIGNALS / 24H
-      </div>
-    </div>
-  );
-}
-
-function SiteLayoffs() {
-  return (
-    <div
-      style={{
-        height: "100%",
-        background: "#fff",
-        fontFamily: "system-ui, sans-serif",
+        background: "#0d0d0d",
+        color: "#fff",
+        fontFamily: "Georgia, serif",
+        display: "flex",
+        flexDirection: "column",
       }}
     >
       <div
         style={{
           padding: "5px 8px",
-          borderBottom: "1px solid #eee",
-          fontSize: 10,
-          fontWeight: 700,
-          color: "#ef4444",
+          borderBottom: "2px solid #ff7a00",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
         }}
       >
-        LAYOFFS.FYI
+        <div
+          style={{
+            fontWeight: 900,
+            fontSize: 10,
+            letterSpacing: 0.5,
+            fontFamily: "Helvetica, Arial, sans-serif",
+          }}
+        >
+          <span style={{ color: "#ff7a00" }}>Bloomberg</span>{" "}
+          <span style={{ color: "#999", fontSize: 7, fontWeight: 600 }}>
+            TERMINAL
+          </span>
+        </div>
+        <div
+          style={{
+            fontFamily: MONO,
+            fontSize: 7,
+            color: "#ff7a00",
+            letterSpacing: 1,
+          }}
+        >
+          ● LIVE
+        </div>
       </div>
-      <div style={{ padding: "6px 8px", fontSize: 8 }}>
-        {[
-          { co: "Meta", n: "210", date: "Apr 22" },
-          { co: "Snap", n: "180", date: "Apr 20" },
-          { co: "Lyft", n: "120", date: "Apr 18" },
-        ].map((l, i) => (
-          <div
-            key={i}
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              padding: "4px 0",
-              borderBottom: "1px solid #f5f5f5",
-              color: "#333",
-            }}
-          >
-            <span style={{ fontWeight: 600 }}>{l.co}</span>
-            <span style={{ color: "#ef4444" }}>{l.n}</span>
-            <span style={{ color: "#999" }}>{l.date}</span>
-          </div>
-        ))}
+      <div style={{ flex: 1, position: "relative" }}>
+        <CycleFrame
+          idx={idx}
+          frames={stories.map((s, i) => (
+            <div key={i} style={{ padding: "8px 10px" }}>
+              <div
+                style={{
+                  fontFamily: MONO,
+                  fontSize: 7,
+                  color: "#ff7a00",
+                  letterSpacing: 1,
+                  marginBottom: 3,
+                }}
+              >
+                {s.kicker} · {s.time}
+              </div>
+              <div
+                style={{
+                  fontWeight: 700,
+                  fontSize: 11,
+                  lineHeight: 1.2,
+                  marginBottom: 6,
+                  color: "#fff",
+                }}
+              >
+                {s.title}
+              </div>
+              <div
+                style={{
+                  fontFamily: MONO,
+                  fontSize: 8,
+                  color: "#bbb",
+                  lineHeight: 1.6,
+                }}
+              >
+                {s.rows.map((r, j) => (
+                  <div key={j}>
+                    {r[0]} <span style={{ color: r[2] }}>{r[1]}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        />
       </div>
     </div>
   );
 }
 
 function SiteCrunchbase() {
+  const watchlists = [
+    {
+      title: "RECENT FUNDING · LAST 7D",
+      deals: [
+        {
+          logo: "R",
+          logoBg: "#000",
+          name: "Revolut",
+          sector: "Fintech · London",
+          round: "Series F",
+          amt: "$420M",
+          lead: "Tiger Global",
+        },
+        {
+          logo: "S",
+          logoBg: "#635bff",
+          name: "Stripe",
+          sector: "Payments · SF",
+          round: "Secondary",
+          amt: "$6.5B",
+          lead: "Sequoia",
+        },
+        {
+          logo: "A",
+          logoBg: "#d4a373",
+          name: "Anthropic",
+          sector: "AI · SF",
+          round: "Series E",
+          amt: "$2.0B",
+          lead: "Google",
+        },
+        {
+          logo: "D",
+          logoBg: "#774aef",
+          name: "Databricks",
+          sector: "Data · SF",
+          round: "Series J",
+          amt: "$10B",
+          lead: "Thrive",
+        },
+        {
+          logo: "P",
+          logoBg: "#0d9488",
+          name: "Perplexity",
+          sector: "AI Search · SF",
+          round: "Series C",
+          amt: "$520M",
+          lead: "IVP",
+        },
+        {
+          logo: "H",
+          logoBg: "#f97316",
+          name: "Hex",
+          sector: "Analytics · SF",
+          round: "Series C",
+          amt: "$150M",
+          lead: "Iconiq",
+        },
+      ],
+    },
+    {
+      title: "AI INFRA · TRENDING",
+      deals: [
+        {
+          logo: "T",
+          logoBg: "#0d9488",
+          name: "Together",
+          sector: "GPU Infra · SF",
+          round: "Series B",
+          amt: "$120M",
+          lead: "Salesforce",
+        },
+        {
+          logo: "F",
+          logoBg: "#ef4444",
+          name: "Fireworks",
+          sector: "Inference · SF",
+          round: "Series A",
+          amt: "$52M",
+          lead: "Benchmark",
+        },
+        {
+          logo: "M",
+          logoBg: "#7F8CFF",
+          name: "Modal Labs",
+          sector: "Compute · NYC",
+          round: "Seed+",
+          amt: "$16M",
+          lead: "Redpoint",
+        },
+        {
+          logo: "L",
+          logoBg: "#a78bfa",
+          name: "Lambda Labs",
+          sector: "Cloud GPU · SF",
+          round: "Series C",
+          amt: "$320M",
+          lead: "USIT",
+        },
+        {
+          logo: "R",
+          logoBg: "#22c55e",
+          name: "Replicate",
+          sector: "Model Hosting · SF",
+          round: "Series B",
+          amt: "$40M",
+          lead: "a16z",
+        },
+        {
+          logo: "O",
+          logoBg: "#fbbf24",
+          name: "Octo AI",
+          sector: "Inference · SEA",
+          round: "Series B",
+          amt: "$85M",
+          lead: "Tiger",
+        },
+      ],
+    },
+  ];
+  const idx = useCycle(watchlists.length, 6000, 0);
   return (
     <div
       style={{
         height: "100%",
-        background: "#fff",
-        fontFamily: "system-ui, sans-serif",
+        background: "#f5f7fa",
+        color: "#0a0a0a",
+        fontFamily: INTER,
+        display: "flex",
+        flexDirection: "column",
       }}
     >
       <div
         style={{
           padding: "5px 8px",
-          borderBottom: "1px solid #eee",
-          fontSize: 10,
-          fontWeight: 700,
-          color: "#0288d1",
+          background: "#0288d1",
+          color: "#fff",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
         }}
       >
-        CRUNCHBASE
+        <div style={{ fontWeight: 800, fontSize: 10, letterSpacing: 0.3 }}>
+          crunchbase
+        </div>
+        <div style={{ fontFamily: MONO, fontSize: 7, opacity: 0.85 }}>
+          {watchlists[idx].title}
+        </div>
       </div>
-      <div style={{ padding: "6px 8px" }}>
-        {[
-          { co: "Anthropic", round: "Series E", amt: "$2B", stage: "AI" },
-          { co: "Wiz", round: "Series D", amt: "$1B", stage: "Security" },
-        ].map((f, i) => (
+      <div
+        style={{
+          padding: "4px 8px",
+          background: "#e8eef3",
+          borderBottom: "1px solid #d6dde4",
+          display: "flex",
+          justifyContent: "space-between",
+          fontFamily: MONO,
+          fontSize: 6.5,
+          color: "#5a6470",
+          letterSpacing: 0.8,
+          fontWeight: 700,
+        }}
+      >
+        <span style={{ width: "42%" }}>COMPANY</span>
+        <span style={{ width: "22%" }}>ROUND</span>
+        <span style={{ width: "18%" }}>AMOUNT</span>
+        <span style={{ width: "18%", textAlign: "right" }}>LEAD</span>
+      </div>
+      <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+        <CycleFrame
+          idx={idx}
+          frames={watchlists.map((wl, i) => (
+            <div key={i}>
+              {wl.deals.map((d, j) => (
+                <div
+                  key={j}
+                  style={{
+                    padding: "4px 8px",
+                    display: "flex",
+                    alignItems: "center",
+                    borderBottom: "1px solid #e0e6ec",
+                    background: j % 2 ? "#f9fafb" : "#fff",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 5,
+                      width: "42%",
+                      minWidth: 0,
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 16,
+                        height: 16,
+                        borderRadius: 3,
+                        background: d.logoBg,
+                        color: "#fff",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontWeight: 900,
+                        fontSize: 8,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {d.logo}
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <div
+                        style={{
+                          fontWeight: 700,
+                          fontSize: 8.5,
+                          lineHeight: 1.1,
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {d.name}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 6.5,
+                          color: "#7a8290",
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {d.sector}
+                      </div>
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      width: "22%",
+                      fontSize: 7.5,
+                      color: "#0288d1",
+                      fontWeight: 600,
+                    }}
+                  >
+                    {d.round}
+                  </div>
+                  <div
+                    style={{
+                      width: "18%",
+                      fontSize: 8.5,
+                      fontWeight: 800,
+                      color: "#0a0a0a",
+                      fontFamily: MONO,
+                    }}
+                  >
+                    {d.amt}
+                  </div>
+                  <div
+                    style={{
+                      width: "18%",
+                      fontSize: 7,
+                      color: "#5a6470",
+                      textAlign: "right",
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {d.lead}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ))}
+        />
+      </div>
+    </div>
+  );
+}
+
+function SiteLinkedIn() {
+  const posts = [
+    {
+      initials: "NS",
+      name: "Nikolay Storonsky",
+      role: "CEO · Revolut · 1d",
+      body: "Huge week ahead. We're launching Revolut Wealth and building out the team. Top talent: let's talk.",
+      tags: ["#hiring", "#fintech", "#london"],
+    },
+    {
+      initials: "DK",
+      name: "Dario Kerkez",
+      role: "VP Engineering · Stripe · 6h",
+      body: "São Paulo office officially opens Monday. Hiring 200+ engineers and risk leaders across LATAM. DMs open.",
+      tags: ["#stripe", "#latam", "#hiring"],
+    },
+    {
+      initials: "AS",
+      name: "Avlok Kohli",
+      role: "CEO · AngelList · 2d",
+      body: "The hidden market is real — 62% of senior roles never get posted publicly. Here's what we saw last quarter.",
+      tags: ["#hiring", "#talent", "#data"],
+    },
+  ];
+  const idx = useCycle(posts.length, 4400, 1);
+  return (
+    <div
+      style={{
+        height: "100%",
+        background: "#f3f2ef",
+        color: "#0a0a0a",
+        fontFamily: INTER,
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      <div
+        style={{
+          padding: "4px 8px",
+          background: "#fff",
+          borderBottom: "1px solid #e0e0e0",
+          display: "flex",
+          alignItems: "center",
+          gap: 5,
+        }}
+      >
+        <span
+          style={{
+            background: "#0a66c2",
+            color: "#fff",
+            fontWeight: 900,
+            fontSize: 10,
+            padding: "1px 4px",
+            borderRadius: 2,
+            fontFamily: "Helvetica, Arial, sans-serif",
+          }}
+        >
+          in
+        </span>
+        <span style={{ fontWeight: 700, fontSize: 9, color: "#0a66c2" }}>
+          LinkedIn
+        </span>
+        <span
+          style={{
+            marginLeft: "auto",
+            fontSize: 7,
+            color: "#888",
+            fontFamily: MONO,
+          }}
+        >
+          POST {idx + 1}/{posts.length}
+        </span>
+      </div>
+      <div style={{ flex: 1, position: "relative", padding: 6 }}>
+        <CycleFrame
+          idx={idx}
+          frames={posts.map((p, i) => (
+            <div
+              key={i}
+              style={{
+                background: "#fff",
+                borderRadius: 6,
+                border: "1px solid #e0e0e0",
+                padding: 8,
+                height: "calc(100% - 0px)",
+                boxSizing: "border-box",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  marginBottom: 6,
+                }}
+              >
+                <div
+                  style={{
+                    width: 22,
+                    height: 22,
+                    borderRadius: "50%",
+                    background:
+                      "linear-gradient(135deg,#7F8CFF,#9F7AEA)",
+                    color: "#fff",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontWeight: 700,
+                    fontSize: 9,
+                  }}
+                >
+                  {p.initials}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    style={{
+                      fontSize: 9,
+                      fontWeight: 700,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {p.name}
+                  </div>
+                  <div style={{ fontSize: 7, color: "#666" }}>{p.role}</div>
+                </div>
+              </div>
+              <div
+                style={{ fontSize: 8.5, lineHeight: 1.4, color: "#0a0a0a" }}
+              >
+                {p.body}
+              </div>
+              <div style={{ display: "flex", gap: 4, marginTop: 5 }}>
+                {p.tags.map((t, j) => (
+                  <span
+                    key={j}
+                    style={{
+                      fontSize: 7,
+                      padding: "1px 4px",
+                      background: "#eef3fb",
+                      color: "#0a66c2",
+                      borderRadius: 2,
+                    }}
+                  >
+                    {t}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ))}
+        />
+      </div>
+    </div>
+  );
+}
+
+function SiteLayoffs() {
+  const events = [
+    {
+      co: "Twilio",
+      n: 120,
+      pct: 6,
+      team: "Sales · Customer Success",
+      date: "Apr 23",
+    },
+    {
+      co: "Cruise",
+      n: 900,
+      pct: 24,
+      team: "Robotaxi Ops · Eng",
+      date: "Apr 21",
+    },
+    {
+      co: "Klarna",
+      n: 500,
+      pct: 10,
+      team: "Risk · Compliance",
+      date: "Apr 19",
+    },
+  ];
+  const idx = useCycle(events.length, 3500, 1);
+  return (
+    <div
+      style={{
+        height: "100%",
+        background: "#fafafa",
+        color: "#0a0a0a",
+        fontFamily: INTER,
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      <div
+        style={{
+          padding: "5px 8px",
+          background: "#000",
+          color: "#fff",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          borderBottom: "2px solid #ef4444",
+        }}
+      >
+        <div style={{ fontWeight: 900, fontSize: 10, letterSpacing: -0.3 }}>
+          layoffs.fyi
+        </div>
+        <div
+          style={{
+            fontFamily: MONO,
+            fontSize: 7,
+            color: "#ef4444",
+            letterSpacing: 0.8,
+          }}
+        >
+          ● TRACKING · 2026
+        </div>
+      </div>
+      <div style={{ flex: 1, position: "relative" }}>
+        <CycleFrame
+          idx={idx}
+          frames={events.map((ev, i) => (
+            <div key={i} style={{ padding: "7px 9px" }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "baseline",
+                  marginBottom: 3,
+                }}
+              >
+                <div
+                  style={{
+                    fontWeight: 800,
+                    fontSize: 13,
+                    color: "#000",
+                    letterSpacing: -0.3,
+                  }}
+                >
+                  {ev.co}
+                </div>
+                <div style={{ fontFamily: MONO, fontSize: 7, color: "#888" }}>
+                  {ev.date}
+                </div>
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "flex-end",
+                  gap: 8,
+                  marginBottom: 5,
+                }}
+              >
+                <div>
+                  <div
+                    style={{
+                      fontFamily: MONO,
+                      fontSize: 6.5,
+                      color: "#888",
+                      letterSpacing: 0.6,
+                    }}
+                  >
+                    LAID OFF
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 18,
+                      fontWeight: 900,
+                      color: "#ef4444",
+                      letterSpacing: -0.6,
+                      fontFamily: MONO,
+                      lineHeight: 1,
+                    }}
+                  >
+                    {ev.n}
+                  </div>
+                </div>
+                <div style={{ paddingBottom: 1 }}>
+                  <div
+                    style={{
+                      fontFamily: MONO,
+                      fontSize: 6.5,
+                      color: "#888",
+                      letterSpacing: 0.6,
+                    }}
+                  >
+                    OF TOTAL
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 800,
+                      color: "#000",
+                      fontFamily: MONO,
+                    }}
+                  >
+                    {ev.pct}%
+                  </div>
+                </div>
+              </div>
+              <div style={{ fontSize: 7.5, color: "#444", lineHeight: 1.4 }}>
+                <div>
+                  <span style={{ color: "#888" }}>Teams:</span> {ev.team}
+                </div>
+              </div>
+            </div>
+          ))}
+        />
+      </div>
+    </div>
+  );
+}
+
+function SiteSecureTerminal() {
+  const lines = [
+    { c: "#a78bfa", t: "$ scout --mode=stealth" },
+    { c: "rgba(255,255,255,.6)", t: "connecting…" },
+    { c: "#22c55e", t: "✓ certificate verified" },
+    { c: "#22c55e", t: "✓ tunnel established" },
+    { c: "#22c55e", t: "✓ watching 142 companies" },
+    { c: "rgba(255,255,255,.5)", t: "47 new signals" },
+    { c: "#7F8CFF", t: "$ _" },
+  ];
+  return (
+    <div
+      style={{
+        height: "100%",
+        background: "#0a0d2a",
+        padding: "10px 12px",
+        color: "#fff",
+      }}
+    >
+      <div
+        style={{
+          fontFamily: MONO,
+          fontSize: 8,
+          color: "#22c55e",
+          letterSpacing: 1.5,
+          marginBottom: 4,
+        }}
+      >
+        STEALTH ROLE · SCOUT
+      </div>
+      <div
+        style={{
+          height: 1,
+          background: "rgba(127,140,255,0.18)",
+          marginBottom: 6,
+        }}
+      />
+      <div style={{ fontFamily: MONO, fontSize: 9, lineHeight: 1.5 }}>
+        {lines.map((l, i) => (
           <div
             key={i}
             style={{
-              padding: "5px 0",
-              borderBottom: "1px solid #f5f5f5",
-              fontSize: 9,
-              color: "#333",
+              color: l.c,
+              animation:
+                i === lines.length - 1
+                  ? "sr-blink 1.2s steps(2) infinite"
+                  : "none",
             }}
           >
-            <div style={{ fontWeight: 700, color: "#0288d1" }}>{f.co}</div>
-            <div style={{ display: "flex", gap: 8, color: "#666", marginTop: 2, fontSize: 8 }}>
-              <span>{f.round}</span>
-              <span style={{ fontWeight: 600, color: "#0288d1" }}>{f.amt}</span>
-              <span>{f.stage}</span>
-            </div>
+            {l.t}
           </div>
         ))}
+      </div>
+      <button
+        style={{
+          marginTop: 6,
+          width: "100%",
+          padding: "5px 8px",
+          border: "none",
+          background: `linear-gradient(135deg, ${SR.brand2}, ${SR.brand3})`,
+          color: "#fff",
+          fontFamily: INTER,
+          fontSize: 9,
+          letterSpacing: 0.2,
+          fontWeight: 600,
+          borderRadius: 3,
+          cursor: "pointer",
+          boxShadow: "0 4px 10px rgba(91,108,255,.3)",
+        }}
+      >
+        Sign in →
+      </button>
+    </div>
+  );
+}
+
+function SiteHiringBars() {
+  const bars = [42, 28, 56, 38, 64, 50, 72, 44, 58, 36, 68, 48, 62, 40];
+  return (
+    <div
+      style={{
+        height: "100%",
+        background: "#0a0d2a",
+        padding: "10px 12px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+        <div
+          style={{
+            fontFamily: INTER,
+            fontSize: 18,
+            fontWeight: 700,
+            color: "#fff",
+            letterSpacing: -0.5,
+          }}
+        >
+          +34%
+        </div>
+        <div
+          style={{
+            fontFamily: MONO,
+            fontSize: 7,
+            color: "rgba(255,255,255,.5)",
+            letterSpacing: 1,
+          }}
+        >
+          WoW · 12 COS
+        </div>
+      </div>
+      <div
+        style={{ flex: 1, display: "flex", gap: 3, alignItems: "flex-end" }}
+      >
+        {bars.map((b, i) => (
+          <div
+            key={i}
+            style={{
+              flex: 1,
+              height: `${b}%`,
+              borderRadius: "2px 2px 0 0",
+              background: "linear-gradient(180deg, #7F8CFF, #5B6CFF)",
+              opacity: 0.45 + (b / 100) * 0.55,
+              transformOrigin: "bottom",
+              animation: `sr-bar 2.${(i % 9) + 1}s ease-in-out ${i * 0.07}s infinite`,
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SiteTechCrunch() {
+  const features = [
+    {
+      tag: "EXCLUSIVE",
+      cat: "VENTURE",
+      title: "Scale AI quietly closes $1B at $14B valuation",
+      lede: "Round led by Accel; funds expected to drive go-to-market and applied research hiring.",
+    },
+    {
+      tag: "BREAKING",
+      cat: "FINTECH",
+      title: "Ramp's CFO exits to launch a new fintech venture",
+      lede: "The departure caps a six-month strategy review; founders confirm internal memo.",
+    },
+    {
+      tag: "SCOOP",
+      cat: "ENTERPRISE",
+      title: "Datadog in late talks to recruit VP Eng from AWS",
+      lede: "Two sources say an offer is expected within two weeks; comp package said to be substantial.",
+    },
+  ];
+  const idx = useCycle(features.length, 4800, 0);
+  return (
+    <div
+      style={{
+        height: "100%",
+        background: "#fff",
+        color: "#0a0a0a",
+        fontFamily: INTER,
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      <div
+        style={{
+          padding: "5px 8px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          borderBottom: "1px solid #e5e5e5",
+          background: "#0f9b56",
+        }}
+      >
+        <div
+          style={{
+            fontWeight: 900,
+            fontSize: 12,
+            letterSpacing: -0.4,
+            color: "#fff",
+          }}
+        >
+          TechCrunch
+        </div>
+        <div
+          style={{
+            fontFamily: MONO,
+            fontSize: 6.5,
+            color: "rgba(255,255,255,.85)",
+            letterSpacing: 0.6,
+          }}
+        >
+          · LIVE
+        </div>
+      </div>
+      <div style={{ flex: 1, position: "relative" }}>
+        <CycleFrame
+          idx={idx}
+          frames={features.map((f, i) => (
+            <div key={i} style={{ padding: "7px 9px 5px" }}>
+              <div
+                style={{
+                  fontFamily: MONO,
+                  fontSize: 6.5,
+                  color: "#0f9b56",
+                  letterSpacing: 1.2,
+                  marginBottom: 3,
+                  fontWeight: 800,
+                }}
+              >
+                {f.tag} · {f.cat}
+              </div>
+              <div
+                style={{
+                  fontWeight: 800,
+                  fontSize: 11,
+                  lineHeight: 1.2,
+                  marginBottom: 3,
+                  letterSpacing: -0.3,
+                  color: "#0a0a0a",
+                }}
+              >
+                {f.title}
+              </div>
+              <div
+                style={{ fontSize: 7.5, color: "#5a5a5a", lineHeight: 1.35 }}
+              >
+                {f.lede}
+              </div>
+            </div>
+          ))}
+        />
       </div>
     </div>
   );
@@ -504,7 +1396,7 @@ function HudTop() {
         borderBottom: `1px solid ${SR.border}`,
         background:
           "linear-gradient(180deg, rgba(11,15,42,.7), rgba(11,15,42,.3))",
-        fontFamily: "'JetBrains Mono', monospace",
+        fontFamily: MONO,
         fontSize: 9,
         letterSpacing: 1.6,
         color: "rgba(255,255,255,.5)",
@@ -537,6 +1429,7 @@ function HudTop() {
       <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
         <span>4,128 COMPANIES</span>
         <span>1,267 SIGNALS / 24H</span>
+        <span style={{ color: "rgba(255,255,255,.78)" }}>APR 24, 2026</span>
       </div>
     </div>
   );
@@ -571,7 +1464,7 @@ function HudBottomTicker() {
         display: "flex",
         alignItems: "center",
         overflow: "hidden",
-        fontFamily: "'JetBrains Mono', monospace",
+        fontFamily: MONO,
         fontSize: 9,
         letterSpacing: 1.4,
         zIndex: 20,
@@ -615,11 +1508,121 @@ function HudBottomTicker() {
   );
 }
 
-/* ── Monitor wall background ── */
+/* ── Monitor wall ── */
 function MonitorWall() {
+  /* Monitors positioned using the designer's exact pixel coordinates
+     on a 1440×900 canvas, scaled via percentage positioning */
+  const monitors: {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    label: string;
+    comp: React.ReactNode;
+    accent: string;
+    glow?: boolean;
+  }[] = [
+    // top row
+    {
+      x: 20,
+      y: 56,
+      w: 320,
+      h: 220,
+      label: "FT.COM · LIVE",
+      comp: <SiteFT />,
+      accent: "#a04040",
+    },
+    {
+      x: 360,
+      y: 56,
+      w: 290,
+      h: 200,
+      label: "CRUNCHBASE · NEW",
+      comp: <SiteCrunchbase />,
+      accent: "#0288d1",
+    },
+    {
+      x: 670,
+      y: 46,
+      w: 270,
+      h: 180,
+      label: "BLOOMBERG · TERMINAL",
+      comp: <SiteBloomberg />,
+      accent: "#ff7a00",
+    },
+    {
+      x: 960,
+      y: 56,
+      w: 320,
+      h: 250,
+      label: "SECURE TERMINAL · CH.07",
+      comp: <SiteSecureTerminal />,
+      accent: "#22c55e",
+      glow: true,
+    },
+
+    // middle row
+    {
+      x: 60,
+      y: 296,
+      w: 240,
+      h: 180,
+      label: "LINKEDIN · FEED",
+      comp: <SiteLinkedIn />,
+      accent: "#0a66c2",
+    },
+    {
+      x: 320,
+      y: 276,
+      w: 240,
+      h: 200,
+      label: "REUTERS · BREAKING",
+      comp: <SiteReuters />,
+      accent: "#ff8000",
+    },
+    {
+      x: 670,
+      y: 246,
+      w: 270,
+      h: 170,
+      label: "TECHCRUNCH · LIVE",
+      comp: <SiteTechCrunch />,
+      accent: "#0f9b56",
+    },
+
+    // bottom row
+    {
+      x: 60,
+      y: 496,
+      w: 250,
+      h: 200,
+      label: "LAYOFFS.FYI",
+      comp: <SiteLayoffs />,
+      accent: "#ef4444",
+    },
+    {
+      x: 330,
+      y: 496,
+      w: 220,
+      h: 180,
+      label: "CRUNCHBASE · WATCHLIST",
+      comp: <SiteCrunchbase />,
+      accent: "#0288d1",
+    },
+    {
+      x: 960,
+      y: 326,
+      w: 320,
+      h: 190,
+      label: "HIRING VELOCITY",
+      comp: <SiteHiringBars />,
+      accent: "#7F8CFF",
+    },
+  ];
+
   return (
-    <div style={{ position: "absolute", inset: 0, opacity: 1 }}>
-      {/* Background gradient */}
+    <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
+      {/* Background */}
       <div
         style={{
           position: "absolute",
@@ -640,73 +1643,36 @@ function MonitorWall() {
         }}
       />
 
-      {/* Monitor frames */}
-      <MonitorFrame
-        label="FT.COM · LIVE"
-        accent="#a04040"
-        style={{ left: "2%", top: "8%", width: "22%", height: "28%" }}
+      {/* Monitors — scaled to fill viewport width */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          /* Scale monitors designed for 1440×900 to fill viewport */
+        }}
       >
-        <SiteFT />
-      </MonitorFrame>
+        {monitors.map((m, i) => (
+          <MonitorFrame
+            key={i}
+            label={m.label}
+            accent={m.accent}
+            glow={m.glow}
+            style={{
+              left: `${(m.x / 1440) * 100}%`,
+              top: `${(m.y / 900) * 100}%`,
+              width: `${(m.w / 1440) * 100}%`,
+              height: `${(m.h / 900) * 100}%`,
+              minWidth: 180,
+              minHeight: 120,
+              opacity: 0.96,
+            }}
+          >
+            {m.comp}
+          </MonitorFrame>
+        ))}
+      </div>
 
-      <MonitorFrame
-        label="CRUNCHBASE · NEW"
-        accent="#0288d1"
-        style={{ left: "26%", top: "8%", width: "18%", height: "25%" }}
-      >
-        <SiteCrunchbase />
-      </MonitorFrame>
-
-      <MonitorFrame
-        label="BLOOMBERG · TERMINAL"
-        accent="#ff7a00"
-        style={{ left: "46%", top: "6%", width: "18%", height: "24%" }}
-      >
-        <SiteBloomberg />
-      </MonitorFrame>
-
-      <MonitorFrame
-        label="SECURE TERMINAL · CH.07"
-        accent="#22c55e"
-        glow
-        style={{ left: "66%", top: "8%", width: "22%", height: "30%" }}
-      >
-        <SiteTerminal />
-      </MonitorFrame>
-
-      <MonitorFrame
-        label="LINKEDIN · FEED"
-        accent="#0a66c2"
-        style={{ left: "5%", top: "40%", width: "16%", height: "24%" }}
-      >
-        <SiteLinkedIn />
-      </MonitorFrame>
-
-      <MonitorFrame
-        label="REUTERS · BREAKING"
-        accent="#ff8000"
-        style={{ left: "23%", top: "37%", width: "18%", height: "26%" }}
-      >
-        <SiteReuters />
-      </MonitorFrame>
-
-      <MonitorFrame
-        label="LAYOFFS.FYI"
-        accent="#ef4444"
-        style={{ left: "5%", top: "68%", width: "17%", height: "24%" }}
-      >
-        <SiteLayoffs />
-      </MonitorFrame>
-
-      <MonitorFrame
-        label="CRUNCHBASE · WATCHLIST"
-        accent="#0288d1"
-        style={{ left: "46%", top: "56%", width: "18%", height: "22%" }}
-      >
-        <SiteCrunchbase />
-      </MonitorFrame>
-
-      {/* Glass haze overlay */}
+      {/* glass haze */}
       <div
         style={{
           position: "absolute",
@@ -716,6 +1682,7 @@ function MonitorWall() {
           pointerEvents: "none",
         }}
       />
+      {/* Indigo glow center */}
       <div
         style={{
           position: "absolute",
@@ -725,13 +1692,23 @@ function MonitorWall() {
           pointerEvents: "none",
         }}
       />
+      {/* Heavy radial veil to push center forward (from designer SRLoginB) */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          background:
+            "radial-gradient(ellipse 42% 50% at 50% 52%, rgba(3,4,15,.92) 0%, rgba(3,4,15,.72) 35%, rgba(3,4,15,.38) 60%, rgba(3,4,15,.05) 85%)",
+          pointerEvents: "none",
+        }}
+      />
     </div>
   );
 }
 
-/* ═══════════════════════════════════════════════════════════════════
-   LOGIN PAGE — Command Deck (Variation A from Claude Designer)
-   ═══════════════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════
+   LOGIN PAGE — Command Deck (from Claude Designer sr-login.jsx)
+   ═══════════════════════════════════════════════════════════════ */
 export default function LoginPage() {
   const { login, register } = useAuth();
   const [isRegister, setIsRegister] = useState(false);
@@ -795,7 +1772,7 @@ export default function LoginPage() {
     borderRadius: 10,
     fontSize: 13.5,
     color: SR.ink,
-    fontFamily: "Inter, system-ui, sans-serif",
+    fontFamily: INTER,
     outline: "none",
   };
 
@@ -853,6 +1830,25 @@ export default function LoginPage() {
             opacity: 0.95;
           }
         }
+        @keyframes sr-blink {
+          0%,
+          90%,
+          100% {
+            opacity: 1;
+          }
+          95% {
+            opacity: 0.2;
+          }
+        }
+        @keyframes sr-bar {
+          0%,
+          100% {
+            transform: scaleY(0.4);
+          }
+          50% {
+            transform: scaleY(1);
+          }
+        }
         @media (max-width: 900px) {
           .sr-monitor-wall {
             display: none !important;
@@ -880,7 +1876,7 @@ export default function LoginPage() {
           overflow: "hidden",
           background: SR.bg,
           color: SR.ink,
-          fontFamily: "Inter, system-ui, sans-serif",
+          fontFamily: INTER,
         }}
       >
         {/* Monitor wall background */}
@@ -932,7 +1928,7 @@ export default function LoginPage() {
         >
           <div
             style={{
-              fontFamily: "'JetBrains Mono', monospace",
+              fontFamily: MONO,
               fontSize: 10,
               letterSpacing: 2,
               color: SR.brand,
@@ -1193,7 +2189,7 @@ export default function LoginPage() {
                   color: "#fff",
                   fontWeight: 600,
                   fontSize: 14,
-                  fontFamily: "Inter, system-ui, sans-serif",
+                  fontFamily: INTER,
                   borderRadius: 11,
                   boxShadow:
                     "0 8px 22px rgba(91,108,255,.32), inset 0 1px 0 rgba(255,255,255,.18)",
